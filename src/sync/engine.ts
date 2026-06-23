@@ -32,7 +32,7 @@ function parseLocation(location: string): { file: string; line: number } | null 
   const file = location.slice(0, lastColon);
   const lineStr = location.slice(lastColon + 1);
   const line = parseInt(lineStr, 10);
-  if (!file || isNaN(line)) return null;
+  if (!file || isNaN(line) || line < 0) return null;
   return { file, line };
 }
 
@@ -86,7 +86,7 @@ export async function syncSymbol(
           // (e.g., src/foo.ts vs ./src/foo.ts or inconsistent slash direction).
           if (path.normalize(loc.file) !== path.normalize(doc.file)) {
             result.warnings.push(`Inline doc for ${symbol.name}: repaired file mismatch — updated doc_sections.file from ${relPath(doc.file, projectRoot)} to ${relPath(loc.file, projectRoot)}`);
-            db.prepare("UPDATE doc_sections SET file = ?, updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
+            db.prepare("UPDATE doc_sections SET file = ?, content_hash = '', updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
@@ -372,6 +372,23 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
           }
         }
       }
+      // For const/let/var patterns: if the line has an opening paren with no
+      // matching close, accumulate multi-line signature (e.g. arrow functions
+      // with multi-line parameter lists).
+      const parenIdx2 = trimmed.indexOf('(');
+      if (parenIdx2 >= 0 && findMatchingClose(trimmed, parenIdx2) < 0) {
+        let multiLineSig2 = trimmed;
+        let lineIdx2 = i;
+        let closeParen2 = -1;
+        while (closeParen2 < 0 && lineIdx2 + 1 < processedLines.length) {
+          lineIdx2++;
+          multiLineSig2 += '\n' + processedLines[lineIdx2];
+          closeParen2 = findMatchingClose(multiLineSig2, parenIdx2);
+        }
+        if (closeParen2 >= 0) {
+          return { signature: multiLineSig2.trim() };
+        }
+      }
       return { signature: trimmed };
     }
     // Test method regex against codeOnly to avoid matching inside comments/strings.
@@ -395,6 +412,7 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
         if (closing >= 0 && closing < multiLineSig.length - 1) {
           const after = multiLineSig.slice(closing + 1).trimStart();
           if (after.startsWith('{') || after.startsWith(':')) {
+            if (after.endsWith(';')) continue;  // overload/interface declaration
             return { signature: multiLineSig.trim() };
           }
         }

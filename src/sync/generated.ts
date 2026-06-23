@@ -173,8 +173,21 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   const isOpenApiFile = (file.endsWith('.yaml') || file.endsWith('.yml')) && (
     file.toLowerCase().includes('openapi') ||
     file.toLowerCase().includes('swagger') ||
-    /\/api[-\/]?(docs|spec|schema)/i.test(file)
+    /\/api[-\/]?(docs|spec|schema)/i.test(file) ||
+    /\/openapi\//i.test(file)
   );
+  // When filename/path heuristics miss (e.g. spec.yaml in a non-standard dir),
+  // check the first few non-comment lines for OpenAPI/Swagger version headers.
+  if (!isOpenApiFile && (file.endsWith('.yaml') || file.endsWith('.yml'))) {
+    try {
+      const firstBytes = fs.readFileSync(path.join(projectRoot, file), 'utf-8').slice(0, 1024);
+      if (/^(openapi|swagger):\s*["']?\d/i.test(firstBytes)) {
+        // Content confirms this is an OpenAPI spec — treat as generated
+        const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
+        if (typeof cmd === 'string' && validateCommandSafety(cmd)) return cmd;
+      }
+    } catch { /* file unreadable — not an OpenAPI spec for our purposes */ }
+  }
   if (isOpenApiFile) {
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;

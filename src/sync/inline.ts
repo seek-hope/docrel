@@ -89,6 +89,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
   }
 
+  // Diagnostic: log when non-comment signature count differs significantly
+  // from full-content count, helping debug comment-stripping edge cases.
+  if (sigCount >= 0) {
+    const fullCount = countOccurrences(content, input.oldSignature);
+    if (Math.abs(sigCount - fullCount) > 1) {
+      console.warn(`DocRel: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
+    }
+  }
+
   if (sigCount === 1) {
     // Guard against replacing the wrong occurrence: if the old signature
     // appears once in non-comment code but multiple times in the full content
