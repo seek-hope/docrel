@@ -63,8 +63,8 @@ program
   .command('impact')
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')
-  .action(async (paths: string[]) => {
-    const impact = await docrelImpact(db, paths);
+  .action((paths: string[]) => {
+    const impact = docrelImpact(db, paths);
     console.log(JSON.stringify(impact, null, 2));
   });
 

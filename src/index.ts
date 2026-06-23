@@ -74,7 +74,7 @@ server.tool(
     paths: z.array(z.string()).describe('List of changed file paths'),
   },
   async ({ paths }) => {
-    const impact = await docrelImpact(db, paths);
+    const impact = docrelImpact(db, paths);
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
     };

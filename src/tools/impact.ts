@@ -21,10 +21,14 @@ export interface ImpactReport {
   }>;
 }
 
-export async function docrelImpact(
+function escapeLike(str: string): string {
+  return str.replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
+export function docrelImpact(
   db: Database.Database,
   changedFiles: string[],
-): Promise<ImpactReport> {
+): ImpactReport {
   const affectedSymbols: ImpactReport['affectedSymbols'] = [];
   const affectedDocs: ImpactReport['affectedDocs'] = [];
   const seenDocIds = new Set<string>();
@@ -33,10 +37,12 @@ export async function docrelImpact(
 
   for (const file of changedFiles) {
     try {
-      // Query DB for symbols in this file, then join through mappings to docs
+      const escaped = escapeLike(file);
+      // Exact match OR location matches "file:line" format
       const allSymbols = db.prepare(
-        'SELECT id, name, kind, location FROM symbols WHERE location LIKE ?',
-      ).all(`${file}%`) as Array<{ id: string; name: string; kind: string; location: string }>;
+        `SELECT id, name, kind, location FROM symbols
+         WHERE location = ? OR location LIKE ? || ':%' ESCAPE '\\'`
+      ).all(file, escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
       for (const dbSym of allSymbols) {
         if (seenSymbolIds.has(dbSym.id)) continue;
@@ -61,8 +67,8 @@ export async function docrelImpact(
           }
         }
       }
-    } catch {
-      // Skip files that cause errors (e.g., unindexed)
+    } catch (err: any) {
+      console.error(`Warning: Skipping ${file} due to error: ${err.message}`);
     }
   }
 
