@@ -98,7 +98,10 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       maxBuffer: 10 * 1024 * 1024, // 10 MB output limit
     });
     if (result.error) {
-      const fullOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
+      // F6: Use consistent labeled ordering for both error paths.
+      // Always put stderr first (where most diagnostic output appears),
+      // then stdout. Label each section so operators know what's what.
+      const fullOutput = ['[stderr]', result.stderr, '[stdout]', result.stdout].filter(Boolean).join('\n');
       const truncated = fullOutput ? fullOutput.slice(-500) : '';
       if (fullOutput) console.error('DocRel: generator error output (truncated):', truncated);
       return {
@@ -107,7 +110,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       };
     }
     if (result.status !== 0) {
-      const fullOutput = [result.stderr, result.stdout].filter(Boolean).join('\n') || `exit code ${result.status}`;
+      const fullOutput = ['[stderr]', result.stderr, '[stdout]', result.stdout].filter(Boolean).join('\n') || `exit code ${result.status}`;
       const truncated = fullOutput.slice(-500);
       console.error('DocRel: generator non-zero exit:', truncated);
       return {

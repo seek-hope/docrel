@@ -35,12 +35,42 @@ function isFuzzySubstring(needle: string, haystack: string): boolean {
   if (h.includes(n) || n.includes(h)) return true;
   // Significant prefix overlap (at least 4 chars or 60% of the shorter string)
   const minLen = Math.min(n.length, h.length);
-  const threshold = Math.max(4, Math.floor(minLen * 0.6));
+  const prefixThreshold = Math.max(4, Math.floor(minLen * 0.6));
   let matchLen = 0;
   for (let i = 0; i < minLen && n[i] === h[i]; i++) {
     matchLen++;
   }
-  return matchLen >= threshold;
+  if (matchLen >= prefixThreshold) return true;
+  // F9: Add longest common substring check to catch mid-string and suffix
+  // overlaps (e.g., 'loginUser' vs 'userLogin' share 'user' in the middle).
+  // Require at least 4 chars or 50% of the shorter string.
+  const lcsLen = longestCommonSubstring(n, h);
+  const lcsThreshold = Math.max(4, Math.floor(minLen * 0.5));
+  return lcsLen >= lcsThreshold;
+}
+
+/** Compute the length of the longest common substring of a and b. */
+function longestCommonSubstring(a: string, b: string): number {
+  if (!a || !b) return 0;
+  let maxLen = 0;
+  // Use a 1D DP array for O(n*m) time, O(min(n,m)) space
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  const dp = new Uint16Array(shorter.length + 1);
+  for (let i = 1; i <= longer.length; i++) {
+    let prev = 0;
+    for (let j = 1; j <= shorter.length; j++) {
+      const temp = dp[j];
+      if (longer[i - 1] === shorter[j - 1]) {
+        dp[j] = prev + 1;
+        if (dp[j] > maxLen) maxLen = dp[j];
+      } else {
+        dp[j] = 0;
+      }
+      prev = temp;
+    }
+  }
+  return maxLen;
 }
 
 // ── File-name helper ─────────────────────────────────────────────────────────

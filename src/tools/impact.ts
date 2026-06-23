@@ -77,6 +77,15 @@ export function docrelImpact(
          WHERE location LIKE ? || ':%' ESCAPE '\\'`
       ).all(escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
+      // F8: Hoist fileReal computation outside the inner loop.
+      // `file` does not change per symbol, so computing realpathSync for
+      // every matching symbol wastes filesystem I/O on large codebases.
+      const root = projectRoot ?? process.cwd();
+      let fileReal = file;
+      try {
+        fileReal = fs.realpathSync(path.resolve(root, file));
+      } catch { /* realpath may fail — fall back to literal comparison */ }
+
       for (const dbSym of candidateSymbols) {
         // Verify the file portion of the location exactly matches.
         // Resolve symlinks for comparison so that symlinked directories
@@ -84,11 +93,8 @@ export function docrelImpact(
         const lastColon = dbSym.location.lastIndexOf(':');
         const locFile = lastColon > 0 ? dbSym.location.slice(0, lastColon) : dbSym.location;
         let locReal = locFile;
-        let fileReal = file;
         try {
-          const root = projectRoot ?? process.cwd();
           locReal = fs.realpathSync(path.resolve(root, locFile));
-          fileReal = fs.realpathSync(path.resolve(root, file));
         } catch { /* realpath may fail — fall back to literal comparison */ }
         if (locReal !== fileReal) continue;
 

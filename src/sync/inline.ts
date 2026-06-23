@@ -30,6 +30,18 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   let content: string;
   try {
     fd = fs.openSync(resolved, 'r');
+    // F12: Post-open containment verification via /proc/self/fd on Linux.
+    // Between validatePath's realpathSync (line 22) and openSync (line 32),
+    // a symlink at `resolved` could be swapped to a different target.
+    // Verifying the fd's real path closes this gap, matching openAndValidate
+    // in standalone.ts.
+    if (process.platform === 'linux') {
+      const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
+      if (!fdReal.startsWith(projectRoot + path.sep) && fdReal !== projectRoot) {
+        console.warn('DocRel: updateInlineDoc failed — path traversal detected via fd:', resolved);
+        return false;
+      }
+    }
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
       console.warn('DocRel: updateInlineDoc failed — not a regular file:', resolved);
@@ -151,11 +163,14 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   // Post-replacement validation: verify the new signature and docstring appear
   // exactly once in the final content. A count != 1 indicates a mis-replacement.
-  if (sigCount === 1 && countOccurrences(content, input.newSignature) !== 1) {
+  // F20: Use sigInputEmpty/docInputEmpty as guards instead of sigCount/docCount,
+  // so validation runs whenever a replacement was expected regardless of whether
+  // the old count was exactly 1.
+  if (sigInputEmpty === false && countOccurrences(content, input.newSignature) !== 1) {
     console.warn('DocRel: updateInlineDoc post-validation failed — new signature count != 1');
     return false;
   }
-  if (docCount === 1 && countOccurrences(content, input.newDocstring) !== 1) {
+  if (docInputEmpty === false && countOccurrences(content, input.newDocstring) !== 1) {
     console.warn('DocRel: updateInlineDoc post-validation failed — new docstring count != 1');
     return false;
   }
@@ -205,17 +220,27 @@ function countOccurrences(content: string, search: string): number {
 export function extractDocstring(file: string, symbolName: string, projectRoot: string): string | null {
   if (!projectRoot) return null;
   const resolved = validatePath(file, projectRoot);
-  if (!resolved || !fs.existsSync(resolved)) return null;
+  if (!resolved) return null;
 
-  let stat: fs.Stats;
+  // F13: Replace sequential existsSync/statSync/readFileSync calls on
+  // `resolved` with a single fd-based approach. Each transition between
+  // these calls is a TOCTOU window where a symlink could be swapped.
+  // Using openSync + fstatSync + readFileSync on the same fd guarantees
+  // all operations target the same inode (matching updateInlineDoc).
+  let content: string;
+  let fd: number | undefined;
   try {
-    stat = fs.statSync(resolved);
+    fd = fs.openSync(resolved, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
+    content = fs.readFileSync(fd, 'utf-8');
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
-  if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
-
-  let content = fs.readFileSync(resolved, 'utf-8');
   // Strip all multi-line block comments (/* ... */) from the full content
   // before per-line processing. Use a state machine instead of a regex to
   // avoid catastrophic backtracking on files with unclosed block comments.
@@ -501,9 +526,21 @@ export function stripCommentsAndStrings(line: string): string {
       }
       continue;
     }
-    // Line comment
+    // Line comment — F7: Only treat // as a comment start when the
+    // preceding character is whitespace, line-start, or a comment-safe
+    // token. In JavaScript/TypeScript, `/` can start a regex literal
+    // (e.g., `/foo/g` or `/https:\/\//.test(url)`). A `//` inside a
+    // regex literal is NOT a comment. The heuristic: `//` at position 0
+    // or preceded by whitespace/semicolon/brace is a comment; otherwise
+    // it may be inside a regex literal.
     if (c === '/' && next === '/') {
-      break; // rest of line is comment
+      const prev = i > 0 ? line[i - 1] : ' ';
+      if (i === 0 || prev === ' ' || prev === '\t' || prev === ';' ||
+          prev === '{' || prev === '}' || prev === '(' || prev === ',' ||
+          prev === '\n' || prev === '\r') {
+        break; // rest of line is comment
+      }
+      // Otherwise, likely a regex literal — keep the slashes and continue
     }
     // Block comment start
     if (c === '/' && next === '*') {
