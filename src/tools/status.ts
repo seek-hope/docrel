@@ -11,6 +11,7 @@ export interface StatusReport {
   syncPercentage: number;
   pendingChanges: number;
   lastScan: string | null;
+  error?: string;
 }
 
 export function docrelStatus(db: Database.Database): StatusReport {
@@ -32,9 +33,12 @@ export function docrelStatus(db: Database.Database): StatusReport {
         "SELECT COUNT(*) as c FROM changelog WHERE sync_status = 'pending'",
       ).get() as { c: number }).c;
 
-      // Query the latest scan timestamp from the database
+      // Query the last scan timestamp from the metadata table.
+      // MAX(updated_at) FROM symbols reflects the last time a symbol changed,
+      // not the last scan time — unchanged symbols retain old timestamps,
+      // so a scan that detects zero changes would show a stale timestamp.
       const lastScanRow = db.prepare(
-        'SELECT MAX(updated_at) as lastScan FROM symbols'
+        "SELECT value as lastScan FROM metadata WHERE key = 'last_scan_at'"
       ).get() as { lastScan: string | null } | undefined;
       const lastScan = lastScanRow?.lastScan ?? null;
 
@@ -56,6 +60,7 @@ export function docrelStatus(db: Database.Database): StatusReport {
       totalSymbols: 0, linkedSymbols: 0, linkedPercentage: 0,
       syncedDocs: 0, staleDocs: 0, totalDocs: 0,
       syncPercentage: 0, pendingChanges: 0, lastScan: null,
+      error: err.message,
     };
   }
 }

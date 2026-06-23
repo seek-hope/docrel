@@ -11,7 +11,7 @@ function safeStringify(obj: unknown): string {
 export interface SymbolRow {
   id: string;
   name: string;
-  kind: 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable';
+  kind: 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' | 'unknown';
   project: string;
   location: string;
   signature: string;

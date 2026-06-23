@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number;
@@ -16,7 +16,7 @@ export function runMigrations(db: Database.Database): void {
       CREATE TABLE IF NOT EXISTS symbols (
         id            TEXT PRIMARY KEY,
         name          TEXT NOT NULL,
-        kind          TEXT NOT NULL CHECK(kind IN ('function','class','module','api_endpoint','type','interface','variable')),
+        kind          TEXT NOT NULL CHECK(kind IN ('function','class','module','api_endpoint','type','interface','variable','unknown')),
         project       TEXT NOT NULL DEFAULT '',
         location      TEXT NOT NULL DEFAULT '',
         signature     TEXT NOT NULL DEFAULT '',
@@ -62,6 +62,12 @@ export function runMigrations(db: Database.Database): void {
 
       CREATE INDEX IF NOT EXISTS idx_changelog_symbol ON changelog(symbol_id);
       CREATE INDEX IF NOT EXISTS idx_changelog_status ON changelog(sync_status);
+
+      CREATE TABLE IF NOT EXISTS metadata (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
 
     // Add raw_signature column for existing V0/V1 databases.

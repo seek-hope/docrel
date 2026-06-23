@@ -115,6 +115,13 @@ export async function scanProject(
     }
   }
 
+  // Record the scan timestamp so status reports show when a scan last ran,
+  // not when the last symbol change occurred. Unchanged symbols retain their
+  // old updated_at, so MAX(updated_at) can be misleading after no-change scans.
+  db.prepare(
+    "INSERT INTO metadata (key, value, updated_at) VALUES ('last_scan_at', datetime('now'), datetime('now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).run();
+
   return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols };
 }
 
@@ -130,11 +137,11 @@ function detectLanguage(file: string): string {
   return LANG_MAP[ext] ?? ext;
 }
 
-function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' {
+function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' | 'unknown' {
   const mapped = KIND_MAP[kind.toLowerCase()];
   if (!mapped) {
-    console.warn(`DocRel: Unknown symbol kind '${kind}' — treating as 'function'`);
-    return 'function';
+    console.warn(`DocRel: Unknown symbol kind '${kind}' — storing as 'unknown'`);
+    return 'unknown';
   }
   return mapped;
 }
