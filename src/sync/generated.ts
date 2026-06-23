@@ -19,6 +19,15 @@ const ALLOWED_BINARIES = new Set([
   'typedoc', 'openapi-generator',
 ]);
 
+/** Shared shell-metacharacter and length validation. Used by both splitCommand
+ *  and detectGenerator to keep validation with command discovery, preventing
+ *  a future refactor from silently accepting arbitrary package.json scripts. */
+function validateCommandSafety(cmd: string): boolean {
+  if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return false;
+  if (cmd.length > MAX_COMMAND_LENGTH) return false;
+  return true;
+}
+
 /**
  * Split a generator command string into [binary, ...args].
  * The command is expected to be a safe space-delimited command without shell metacharacters.
@@ -29,10 +38,7 @@ const ALLOWED_BINARIES = new Set([
  *      when the allowlist is expanded in the future.
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
-  // Reject commands with shell metacharacters, including \r (CR), \t (TAB),
-  // and \x00 (null byte) which would bypass the \s split downstream.
-  if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
-  if (cmd.length > MAX_COMMAND_LENGTH) return null;
+  if (!validateCommandSafety(cmd)) return null;
   const parts = cmd.trim().split(/\s+/);
   if (parts.length === 0) return null;
   if (parts.length > MAX_ARGS + 1) return null;
@@ -154,9 +160,8 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     if (scripts['generate:api'] && scripts['generate:openapi']) {
       console.warn(`DocRel: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
     }
-    // Validate it's a safe command (no shell metacharacters)
-    if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
-    if (cmd.length > MAX_COMMAND_LENGTH) return null;
+    // Validate it's a safe command (no shell metacharacters, length check)
+    if (!validateCommandSafety(cmd)) return null;
     return cmd;
   }
 
@@ -164,8 +169,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
     const cmd = scripts['docs:generate'];
     if (typeof cmd !== 'string') return null;
-    if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
-    if (cmd.length > MAX_COMMAND_LENGTH) return null;
+    if (!validateCommandSafety(cmd)) return null;
     return cmd;
   }
 

@@ -31,6 +31,7 @@ export interface ScanReport {
   totalSymbols: number;
   newSymbols: number;
   updatedSymbols: number;
+  failedDirs: string[];
 }
 
 export async function scanProject(
@@ -38,9 +39,10 @@ export async function scanProject(
   db: Database.Database,
   config: DocRelConfig,
 ): Promise<ScanReport> {
+  const failedDirs: string[] = [];
   if (config.code_dirs.length === 0) {
     console.warn('Warning: No code directories configured. Set code_dirs in .docrel/config.yaml');
-    return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0 };
+    return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs };
   }
 
   let newSymbols = 0;
@@ -52,7 +54,13 @@ export async function scanProject(
       // Use codegraph_explore to discover all symbols in each code directory
       const result = await codegraph.explore(`symbols in ${codeDir}/`, 50);
 
+      const MAX_SYMBOLS_PER_DIR = 10000;
+      let dirSymbolCount = 0;
       for (const sym of result.symbols) {
+        if (dirSymbolCount++ >= MAX_SYMBOLS_PER_DIR) {
+          console.warn(`DocRel: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
+          break;
+        }
         const lang = detectLanguage(sym.file);
         // Include line number in the FQN to disambiguate same-named symbols
         // in different scopes within the same file (e.g., method foo in class A
@@ -120,6 +128,7 @@ export async function scanProject(
       }
     } catch (err: any) {
       const safeName = codeDir.replace(/[\x00-\x1f\x7f]/g, '');
+      failedDirs.push(safeName);
       console.warn(`DocRel: Failed to scan directory '${safeName}': ${err.message}`);
     }
   }
@@ -150,7 +159,7 @@ export async function scanProject(
     "INSERT INTO metadata (key, value, updated_at) VALUES ('last_scan_at', datetime('now'), datetime('now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
   ).run();
 
-  return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols };
+  return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols, failedDirs };
 }
 
 function detectLanguage(file: string): string {
@@ -159,7 +168,7 @@ function detectLanguage(file: string): string {
   // should not use the filename as a language label.
   if (parts.length <= 1) return 'unknown';
 
-  const ext = parts.pop()?.toLowerCase();
+  const ext = parts[parts.length - 1]?.toLowerCase();
   if (!ext) return 'unknown';
 
   return LANG_MAP[ext] ?? ext;

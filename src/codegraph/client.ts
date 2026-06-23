@@ -67,11 +67,18 @@ export class CodegraphClient {
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
-          const result = await currentClient.callTool(
-            { name: 'codegraph_status', arguments: {} },
-            undefined,
-            { signal: controller.signal },
-          );
+          // Wrap in Promise.race to enforce a hard timeout even if the MCP
+          // SDK/transport does not respect the AbortSignal.
+          const result = await Promise.race([
+            currentClient.callTool(
+              { name: 'codegraph_status', arguments: {} },
+              undefined,
+              { signal: controller.signal },
+            ),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS)
+            ),
+          ]);
           clearTimeout(timeout);
           if (!result.isError) return;
         } catch {
@@ -80,11 +87,16 @@ export class CodegraphClient {
           try {
             const controller2 = new AbortController();
             const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
-            const result2 = await currentClient.callTool(
-              { name: 'codegraph_status', arguments: {} },
-              undefined,
-              { signal: controller2.signal },
-            );
+            const result2 = await Promise.race([
+              currentClient.callTool(
+                { name: 'codegraph_status', arguments: {} },
+                undefined,
+                { signal: controller2.signal },
+              ),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS)
+              ),
+            ]);
             clearTimeout(timeout2);
             if (!result2.isError) return;
           } catch {}
@@ -366,7 +378,7 @@ export class CodegraphClient {
     // have changed its output format or returned an error message. Log a
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
-      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed. Sample: ${content.slice(0, 200)}`);
+      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed. Sample (first 80 chars): ${content.slice(0, 80)}`);
     }
 
     return { symbols, files };

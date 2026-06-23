@@ -19,13 +19,20 @@ function validateCacheEntry(raw: unknown): CacheEntry | null {
   return { lastCheck: obj.lastCheck, latestVersion: obj.latestVersion };
 }
 
+let cacheWriteWarned = false;
+
 function cachePath(): string {
   // Use a user-specific cache directory (XDG-style) instead of os.tmpdir().
   // os.tmpdir() is world-writable and the deterministic filename would allow
   // an attacker on a multi-user system to pre-create a symlink at the path
   // and corrupt arbitrary files when docrel writes the cache.
   const cacheDir = path.join(os.homedir(), '.cache', 'docrel');
-  try { fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 }); } catch { /* best-effort */ }
+  try { fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 }); } catch {
+    if (!cacheWriteWarned) {
+      cacheWriteWarned = true;
+      console.warn(`DocRel: cannot create update-check cache directory at ${cacheDir} — update checks may hit npm registry on every invocation`);
+    }
+  }
   return path.join(cacheDir, 'update-check.json');
 }
 

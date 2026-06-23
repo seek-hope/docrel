@@ -67,8 +67,14 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
   const sigCount = sigInputEmpty
     ? -2 : countOccurrences(contentNoComments, input.oldSignature);
+  // Use content with non-JSDoc comments and strings stripped for docstring
+  // counting. This prevents oldDocstring text appearing inside string literals
+  // or non-JSDoc comments from inflating the count. JSDoc comments (/** */),
+  // line comments (//), and string literals are stripped, so only the actual
+  // docstring in the JSDoc block should produce a match.
+  const contentNoJsdocStrings = stripNonJsdocBlockComments(content);
   const docCount = docInputEmpty
-    ? -2 : countOccurrences(content, input.oldDocstring);
+    ? -2 : countOccurrences(contentNoJsdocStrings, input.oldDocstring);
 
   // Distinguish aborted searches (>10,000 char) from genuinely empty inputs.
   // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH.
@@ -542,12 +548,19 @@ function splitParams(paramsStr: string): string[] {
   let depth = 0;
   let current = '';
   let inString: string | null = null; // '"', "'", or '`' when inside a string literal
+  let nestDepth = 0; // tracks ${...} nesting inside template literals
   for (let i = 0; i < paramsStr.length; i++) {
     const ch = paramsStr[i];
     if (inString) {
       current += ch;
       if (ch === '\\') { current += paramsStr[i + 1] ?? ''; i++; continue; }
-      if (ch === inString) inString = null;
+      // Handle ${...} nesting inside template literals — prevent inner
+      // backticks from prematurely terminating the string tracking.
+      if (inString === '`') {
+        if (ch === '$' && paramsStr[i + 1] === '{') { nestDepth++; continue; }
+        if (ch === '}' && nestDepth > 0) { nestDepth--; continue; }
+      }
+      if (ch === inString && nestDepth === 0) inString = null;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === '`') {

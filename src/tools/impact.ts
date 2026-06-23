@@ -1,5 +1,6 @@
 // src/tools/impact.ts
 import type Database from 'better-sqlite3';
+import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
@@ -75,10 +76,18 @@ export function docrelImpact(
       ).all(escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
       for (const dbSym of candidateSymbols) {
-        // Verify the file portion of the location exactly matches
+        // Verify the file portion of the location exactly matches.
+        // Resolve symlinks for comparison so that symlinked directories
+        // (e.g., src/ -> ../shared/src/) don't cause false mismatches.
         const lastColon = dbSym.location.lastIndexOf(':');
         const locFile = lastColon > 0 ? dbSym.location.slice(0, lastColon) : dbSym.location;
-        if (locFile !== file) continue;
+        let locReal = locFile;
+        let fileReal = file;
+        try {
+          locReal = fs.realpathSync(locFile);
+          fileReal = fs.realpathSync(file);
+        } catch { /* realpath may fail — fall back to literal comparison */ }
+        if (locReal !== fileReal) continue;
 
         if (seenSymbolIds.has(dbSym.id)) continue;
         seenSymbolIds.add(dbSym.id);

@@ -22,16 +22,16 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
   if (confidence < 0 || confidence > 1) {
     throw new Error(`confidence must be between 0.0 and 1.0, got ${confidence}`);
   }
-  // Use UPSERT to preserve created_at on updates. INSERT OR REPLACE would
-  // delete and re-insert the row, resetting created_at to datetime('now').
-  db.prepare(`
+  // Use UPSERT with RETURNING * to atomically insert and read back in one
+  // statement, matching the pattern in symbols.ts and docs.ts. This eliminates
+  // the TOCTOU gap from the previous separate SELECT after INSERT.
+  const row = db.prepare(`
     INSERT INTO mappings (symbol_id, doc_id, rel_type, confidence)
     VALUES (?, ?, ?, ?)
     ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET
       confidence = excluded.confidence
-  `).run(input.symbol_id, input.doc_id, input.rel_type, confidence);
-
-  const row = getMapping(db, input.symbol_id, input.doc_id, input.rel_type);
+    RETURNING *
+  `).get(input.symbol_id, input.doc_id, input.rel_type, confidence) as MappingRow | undefined;
   if (!row) throw new Error(`Mapping was not found after insert for ${input.symbol_id} -> ${input.doc_id}`);
   return row;
 }
