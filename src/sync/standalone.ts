@@ -57,8 +57,12 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
 
   let content = validated.content;
 
-  // Find the section by anchor (heading) using line-by-line parsing
-  const sectionContent = findSectionContent(resolved, input.anchor, projectRoot);
+  // Guard against empty oldContent — String.includes('') always returns true
+  if (!input.oldContent || !input.newContent) return false;
+
+  // Find the section by anchor (heading) using line-by-line parsing.
+  // Pass the already-read content to avoid a TOCTOU race from a second disk read.
+  const sectionContent = findSectionContentFromString(content, input.anchor);
   if (!sectionContent) return false;
   if (!sectionContent.includes(input.oldContent)) return false;
 
@@ -109,13 +113,24 @@ export function findSectionContent(file: string, anchor: string, projectRoot?: s
   if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
 
   const content = fs.readFileSync(resolved, 'utf-8');
+  return findSectionContentFromString(content, anchor);
+}
+
+/**
+ * Extract a markdown section from an already-read content string.
+ * Avoids a second disk read (TOCTOU-safe when the caller already read the file).
+ */
+export function findSectionContentFromString(content: string, anchor: string): string | null {
+  if (!anchor) return null;
+
   const lines = content.split('\n');
   let startLine = -1;
   let startLevel = 0;
 
   const escapedAnchor = escapeRegex(anchor);
+  // Require exact heading match — nothing after the anchor text except optional trailing whitespace
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}(?![A-Za-z0-9_-])`));
+    const match = lines[i].match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}\\s*$`));
     if (match) {
       startLine = i;
       startLevel = match[1].length;
