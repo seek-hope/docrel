@@ -1,5 +1,7 @@
 // src/tools/review.ts — mapping audit: unlinked symbols, orphaned sections, implied refs
 import type Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
@@ -96,10 +98,12 @@ function findImplied(db: Database.Database, projectRoot: string): ImpliedReferen
 
   for (const doc of docRows) {
     try {
-      const fs = require('node:fs');
-      const path = require('node:path');
       const fullPath = path.resolve(projectRoot, doc.file);
       if (!fs.existsSync(fullPath)) continue;
+
+      // Enforce size limit before reading to prevent OOM from large files
+      const stat = fs.statSync(fullPath);
+      if (stat.size > 1 * 1024 * 1024) continue; // 1 MB per doc file for review
 
       const content = fs.readFileSync(fullPath, 'utf-8');
       const lines = content.split('\n');

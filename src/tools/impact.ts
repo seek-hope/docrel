@@ -116,7 +116,8 @@ export function docrelImpact(
       }
     } catch (err: any) {
       const sanitized = (err instanceof Error ? err.message : String(err))
-        .replace(/\/home\/[^/]+/g, '<home>')
+        .replace(/\/(?:home|opt|var|etc|tmp|mnt|srv)\/[^\s:,)]*/g, '<path>')
+        .replace(/[A-Z]:\\[^\s:,)]*/g, '<path>')
         .slice(0, 200);
       console.error(`Warning: Skipping ${file} due to error: ${sanitized}`);
       errors.push({ file, message: sanitized });
