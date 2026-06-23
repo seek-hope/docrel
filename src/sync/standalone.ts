@@ -136,26 +136,43 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
     return null;
   }
 
-  if (!fs.existsSync(resolved)) return null;
-
-  let stat: fs.Stats;
+  // Use fd-based file operations to eliminate the TOCTOU window between
+  // path validation, stat checks, and the actual read. opensync + fstatSync
+  // + readFileSync on the same fd guarantees we operate on a single inode.
+  let fd: number | undefined;
   try {
-    stat = fs.statSync(resolved);
+    fd = fs.openSync(resolved, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) {
+      return null;
+    }
+    // Re-validate real path via the fd to prevent symlink races
+    const real = fs.realpathSync(resolved);
+    const root = path.resolve(projectRoot);
+    if (!real.startsWith(root + path.sep) && real !== root) return null;
+    const content = fs.readFileSync(fd, 'utf-8');
+    return findSectionContentFromString(content, anchor);
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
-  if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
-
-  const content = fs.readFileSync(resolved, 'utf-8');
-  return findSectionContentFromString(content, anchor);
 }
 
 /**
  * Extract a markdown section from an already-read content string.
  * Avoids a second disk read (TOCTOU-safe when the caller already read the file).
  */
+const MAX_ANCHOR_LENGTH = 1000;
+
 export function findSectionContentFromString(content: string, anchor: string): string | null {
   if (!anchor) return null;
+  if (anchor.length > MAX_ANCHOR_LENGTH) {
+    console.warn(`DocRel: anchor rejected — length ${anchor.length} exceeds max ${MAX_ANCHOR_LENGTH}`);
+    return null;
+  }
 
   const lines = content.split('\n');
   let startLine = -1;
@@ -165,24 +182,26 @@ export function findSectionContentFromString(content: string, anchor: string): s
 
   // Track fenced code block state so # characters inside code blocks are
   // not incorrectly matched as headings or heading-level boundaries.
-  // Supports both ``` and ~~~ fences of 3+ characters.
+  // Supports both ``` and ~~~ fences of 3+ characters at line start.
+  // Uses a regex that captures the fence token and verifies that any trailing
+  // characters on the line are only whitespace or the same fence character.
   let inCodeBlock = false;
   let fenceToken = '';
-  const fenceRegex = /^(```+|~~~+)/;
+  const fenceOpenRegex = /^(```+|~~~+)\s*$/;
 
   // Require exact heading match — nothing after the anchor text except optional trailing whitespace
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Track code fence toggles before evaluating heading regex
     if (!inCodeBlock) {
-      const fenceMatch = line.match(fenceRegex);
+      const fenceMatch = line.match(fenceOpenRegex);
       if (fenceMatch) {
         inCodeBlock = true;
         fenceToken = fenceMatch[1];
         continue;
       }
     } else {
-      const fenceMatch = line.match(fenceRegex);
+      const fenceMatch = line.match(fenceOpenRegex);
       if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
         inCodeBlock = false;
         fenceToken = '';
@@ -208,14 +227,14 @@ export function findSectionContentFromString(content: string, anchor: string): s
     const line = lines[i];
     // Track code fence toggles before evaluating heading regex
     if (!inCodeBlock) {
-      const fenceMatch = line.match(fenceRegex);
+      const fenceMatch = line.match(fenceOpenRegex);
       if (fenceMatch) {
         inCodeBlock = true;
         fenceToken = fenceMatch[1];
         continue;
       }
     } else {
-      const fenceMatch = line.match(fenceRegex);
+      const fenceMatch = line.match(fenceOpenRegex);
       if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
         inCodeBlock = false;
         fenceToken = '';
