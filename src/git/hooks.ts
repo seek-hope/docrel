@@ -247,6 +247,16 @@ export function installHooks(projectRoot: string, force = false): void {
     throw new Error(`Resolved docrel binary at ${docrelBin} does not appear to work: ${err.message}`);
   }
 
+  // Re-verify the binary just before shell quoting to close the TOCTOU window
+  // between initial verification and use. A concurrent binary swap (extremely
+  // unlikely, requires nanosecond-precision timing and write access) could
+  // otherwise bypass the initial check.
+  try {
+    execFileSync(docrelBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
+  } catch (err: any) {
+    throw new Error(`Re-verification of docrel binary at ${docrelBin} failed: ${err.message}`);
+  }
+
   // Properly escape the binary path for single-quoted shell context using the
   // standard shell quoting trick: replace every ' with '\''.
   // This handles ALL possible filename characters including single quotes,

@@ -559,12 +559,20 @@ function stripHtmlTags(html: string): string {
   return html.replace(/<[^>]+>/g, '');
 }
 
+const MAX_CODE_REFS_PER_FILE = 10_000;
+
 function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
   const refs: CodeRef[] = [];
   const seen = new Set<string>();
   const lines = text.split('\n');
 
   for (let i = 0; i < lines.length; i++) {
+    // Cap total refs per section to prevent memory exhaustion from crafted
+    // input (e.g., 10 MB file consisting entirely of `func()` repeats).
+    if (refs.length >= MAX_CODE_REFS_PER_FILE) {
+      console.warn(`DocRel: extractHtmlCodeRefs reached limit of ${MAX_CODE_REFS_PER_FILE} refs — stopping extraction`);
+      break;
+    }
     const lineNum = baseLine + i;
 
     // <code> elements

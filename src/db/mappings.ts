@@ -50,6 +50,26 @@ export function listAllMappings(db: Database.Database): MappingRow[] {
   return db.prepare('SELECT * FROM mappings ORDER BY symbol_id').all() as MappingRow[];
 }
 
+/** Update the confidence of an existing mapping. Returns the updated row or null if not found. */
+export function updateConfidence(
+  db: Database.Database,
+  symbolId: string,
+  docId: string,
+  relType: string,
+  confidence: number,
+): MappingRow | null {
+  if (!symbolId || !docId) return null;
+  if (confidence < 0 || confidence > 1) {
+    throw new Error(`confidence must be between 0.0 and 1.0, got ${confidence}`);
+  }
+  const row = db.prepare(`
+    UPDATE mappings SET confidence = ?
+    WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?
+    RETURNING *
+  `).get(confidence, symbolId, docId, relType) as MappingRow | undefined;
+  return row ?? null;
+}
+
 export function deleteMapping(db: Database.Database, symbolId: string, docId: string, relType: string): boolean {
   if (!symbolId || !docId) return false;
   const info = db.prepare(

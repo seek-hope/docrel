@@ -103,7 +103,12 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
     if (!stat.isFile()) return null;
     if (stat.size > MAX_DOC_FILE_SIZE) return null;
     content = fs.readFileSync(fd, 'utf-8');
-  } catch {
+  } catch (err) {
+    // Log non-ENOENT errors so operators are aware of permission issues
+    // (EACCES) or I/O errors (EIO) rather than silently skipping files.
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn(`DocRel: parseFile failed for ${absPath}:`, (err as NodeJS.ErrnoException)?.message ?? err);
+    }
     return null;
   } finally {
     if (fd !== undefined) {

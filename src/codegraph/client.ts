@@ -196,6 +196,11 @@ export class CodegraphClient {
     // TOCTOU guard: verify the binary hasn't been swapped since realpathSync.
     // Compare inode and device — if they differ, a local attacker replaced the
     // file between resolution and spawn.
+    // NOTE: fs.statSync may return cached metadata from the kernel's buffer
+    // cache, especially on NFS or network filesystems. On local ext4/xfs with
+    // default mount options, attribute caching windows are short enough that
+    // this provides meaningful defense. For stronger guarantees, the binary
+    // could be opened and referenced via /proc/self/fd/<n>.
     if (realStat) {
       const fs = await import('node:fs');
       const currentStat = fs.statSync(cmd);

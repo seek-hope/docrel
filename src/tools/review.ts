@@ -2,6 +2,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertDbOpen } from '../db/connection.js';
 
 export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
@@ -99,15 +100,19 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
   const existingPairs = new Set(mapRows.map((r) => `${r.symbol_name}::${r.doc_file}#${r.doc_anchor}`));
 
   for (const doc of docRows) {
+    let fd: number | undefined;
     try {
       const fullPath = path.resolve(projectRoot, doc.file);
-      if (!fs.existsSync(fullPath)) continue;
 
-      // Enforce size limit before reading to prevent OOM from large files
-      const stat = fs.statSync(fullPath);
+      // Use fd-based approach (same pattern as standalone.ts:openAndValidate
+      // and inline.ts:updateInlineDoc) to eliminate the TOCTOU window between
+      // existsSync/statSync/readFileSync on the same path.
+      fd = fs.openSync(fullPath, 'r');
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) continue;
       if (stat.size > 1 * 1024 * 1024) continue; // 1 MB per doc file for review
 
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const content = fs.readFileSync(fd, 'utf-8');
       const lines = content.split('\n');
 
       // Find the section content
@@ -164,6 +169,10 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
       // but the user gets a count in the summary.
       const code = (err as NodeJS.ErrnoException)?.code ?? 'UNKNOWN';
       skippedFiles.push(`${doc.file} (${code})`);
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch { /* best effort */ }
+      }
     }
   }
 
@@ -189,6 +198,7 @@ function escapeRegex(str: string): string {
 }
 
 export function docrelReview(db: Database.Database, projectRoot: string): ReviewReport {
+  assertDbOpen(db);
   const unlinkedSymbols = findUnlinked(db);
   const orphanedSections = findOrphaned(db);
   const { references: impliedReferences, skippedFiles } = findImplied(db, projectRoot);

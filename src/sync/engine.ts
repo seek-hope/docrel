@@ -86,7 +86,10 @@ export async function syncSymbol(
           // (e.g., src/foo.ts vs ./src/foo.ts or inconsistent slash direction).
           if (path.normalize(loc.file) !== path.normalize(doc.file)) {
             result.warnings.push(`Inline doc for ${symbol.name}: repaired file mismatch — updated doc_sections.file from ${relPath(doc.file, projectRoot)} to ${relPath(loc.file, projectRoot)}`);
-            db.prepare("UPDATE doc_sections SET file = ?, content_hash = '', updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
+            // Reset both content_hash and status so the doc is re-evaluated.
+            // Clearing content_hash alone relies on a subsequent scan to detect
+            // the change; resetting status ensures the doc is re-synced regardless.
+            db.prepare("UPDATE doc_sections SET file = ?, content_hash = '', status = 'stale', updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
@@ -254,7 +257,10 @@ export async function syncSymbol(
           result.errors.push(`Unknown doc_type '${doc.doc_type}' for doc ${doc.id} — cannot sync`);
       }
     } catch (err: any) {
-      console.error(`DocRel: Error syncing doc ${mapping.doc_id}:`, err);
+      // Log only the doc_id (SHA-256 hash), not the raw error which may
+      // contain absolute paths. Process supervisors (Docker, systemd) may
+      // capture stderr.
+      console.error(`DocRel: Error syncing doc ${mapping.doc_id}`);
       result.errors.push(`Error syncing doc ${mapping.doc_id}: internal error — check server logs`);
     }
   }

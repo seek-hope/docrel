@@ -179,14 +179,26 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   // When filename/path heuristics miss (e.g. spec.yaml in a non-standard dir),
   // check the first few non-comment lines for OpenAPI/Swagger version headers.
   if (!isOpenApiFile && (file.endsWith('.yaml') || file.endsWith('.yml'))) {
+    // Use fd-based read with a fixed-size buffer to avoid loading the entire
+    // file into memory. A large OpenAPI spec (e.g., 200 MB) would be fully
+    // read and then 99.5% discarded by .slice(0, 1024).
+    let fd: number | undefined;
     try {
-      const firstBytes = fs.readFileSync(path.join(projectRoot, file), 'utf-8').slice(0, 1024);
+      fd = fs.openSync(path.join(projectRoot, file), 'r');
+      const buf = Buffer.alloc(1024);
+      const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
+      const firstBytes = buf.toString('utf-8', 0, bytesRead);
       if (/^(openapi|swagger):\s*["']?\d/i.test(firstBytes)) {
         // Content confirms this is an OpenAPI spec — treat as generated
         const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
         if (typeof cmd === 'string' && validateCommandSafety(cmd)) return cmd;
       }
     } catch { /* file unreadable — not an OpenAPI spec for our purposes */ }
+    finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch { /* best effort */ }
+      }
+    }
   }
   if (isOpenApiFile) {
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];

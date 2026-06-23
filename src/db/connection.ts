@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
+import { escapeRegex } from '../utils/fs.js';
 
 const connections = new Map<string, Database.Database>();
 const closedConnections = new WeakSet<Database.Database>();
@@ -99,7 +100,7 @@ export function getDb(projectRoot: string): Database.Database {
     // path (which is present in EACCES,mkdirSync,and Database constructor
     // errors) to MCP clients and CLI users.
     const sanitized = err instanceof Error
-      ? err.message.replace(resolved, '<projectRoot>')
+      ? err.message.replace(new RegExp(escapeRegex(resolved), 'g'), '<projectRoot>')
       : String(err);
     throw new Error(`Failed to initialize DocRel database in .docrel/: ${sanitized}`);
   }
