@@ -22,11 +22,14 @@ export interface SyncResult {
 /** Parse a "file:line" location into { file, line }. Returns null if invalid. */
 function parseLocation(location: string): { file: string; line: number } | null {
   if (!location) return null;
-  // Use regex anchored at end to correctly handle Windows paths with drive letters
-  const match = location.match(/^(.+):(\d+)$/);
-  if (!match) return null;
-  const file = match[1];
-  const line = parseInt(match[2], 10);
+  // Use lastIndexOf to find the final colon, which is the line-number separator.
+  // This correctly handles Windows paths with drive letters (C:\foo\bar.ts:42)
+  // and UNC paths (\\server\share\file.ts:42) where the path itself may contain colons.
+  const lastColon = location.lastIndexOf(':');
+  if (lastColon <= 0) return null;
+  const file = location.slice(0, lastColon);
+  const lineStr = location.slice(lastColon + 1);
+  const line = parseInt(lineStr, 10);
   if (!file || isNaN(line)) return null;
   return { file, line };
 }
@@ -71,9 +74,11 @@ export async function syncSymbol(
             // Use raw_signature (human-readable) for JSDoc generation, not the hash
             const newSig = symbol.raw_signature || symbol.signature;
             // Guard against empty signatures — skip replacement to avoid garbled docs
-            const newDocstring = newSig
-              ? generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig)
-              : oldDocstring;
+            if (!newSig) {
+              result.errors.push(`Skipped inline sync for ${symbol.name}: empty signature`);
+              continue;
+            }
+            const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
             // Extract current signature from the source to use as oldSignature
             const currentSig = extractCurrentSignature(loc.file, symbol.name, projectRoot);
@@ -109,10 +114,15 @@ export async function syncSymbol(
             if (sectionContent) {
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
-                db.prepare("UPDATE doc_sections SET content_hash = ?, updated_at = datetime('now') WHERE id = ?")
-                  .run(newHash, doc.id);
-                markDocSynced(db, doc.id);
-                result.docsUpdated.push(doc.file);
+                const info = db.prepare(
+                  "UPDATE doc_sections SET content_hash = ?, updated_at = datetime('now') WHERE id = ?"
+                ).run(newHash, doc.id);
+                if (info.changes === 0) {
+                  result.errors.push(`Standalone doc section ${doc.id} not found — race condition?`);
+                } else {
+                  markDocSynced(db, doc.id);
+                  result.docsUpdated.push(doc.file);
+                }
               }
             }
           } else if (strategy === 'mark_stale') {
@@ -194,12 +204,15 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   if (lines.length > MAX_LINES) return null;
 
   const escaped = escapeRegex(symbolName);
-  // Match only symbol definitions, not references or usage sites
+  // Match only symbol definitions, not references or usage sites.
+  // Covers: function/class/const/let/var/interface/type AND class method definitions
+  // like 'async login(...) {' or 'login(data) {' which lack a keyword prefix.
   const symRegex = new RegExp(
     `(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${escaped}\\b` +
     `|(?:export\\s+(?:default\\s+)?)?(?:const|let|var)\\s+${escaped}\\b\\s*=` +
     `|\\binterface\\s+${escaped}\\b` +
-    `|\\btype\\s+${escaped}\\b\\s*=`,
+    `|\\btype\\s+${escaped}\\b\\s*=` +
+    `|(?:async\\s+)?${escaped}\\s*\\([^)]*\\)\\s*[{:]`,
   );
 
   for (const line of lines) {
