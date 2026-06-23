@@ -10,6 +10,7 @@ import { docrelImpact } from './tools/impact.js';
 import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
+import { installHooks } from './git/hooks.js';
 
 const program = new Command();
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
@@ -106,6 +107,14 @@ program
       process.exit(1);
     }
     console.log(JSON.stringify(diff, null, 2));
+  });
+
+program
+  .command('install-hooks')
+  .description('Install DocRel git hooks in .git/hooks/')
+  .action(() => {
+    installHooks(projectRoot);
+    console.log('DocRel hooks installed successfully.');
   });
 
 program.parse();
