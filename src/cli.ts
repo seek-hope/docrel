@@ -48,18 +48,19 @@ program
   .option('--no-scan', 'Skip scanning the codebase (requires codegraph)')
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
-    notifyIfOutdated(); // fire-and-forget update check
-    const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
-    const docrelDir = path.join(projectRoot, '.docrel');
-    let steps: string[] = [];
+    try {
+      notifyIfOutdated(); // fire-and-forget update check
+      const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
+      const docrelDir = path.join(projectRoot, '.docrel');
+      let steps: string[] = [];
 
-    // 1. Create .docrel/ directory
-    fs.mkdirSync(docrelDir, { recursive: true });
-    steps.push('Created .docrel/ directory');
+      // 1. Create .docrel/ directory
+      fs.mkdirSync(docrelDir, { recursive: true });
+      steps.push('Created .docrel/ directory');
 
-    // 2. Write default config if missing (or --force)
-    if (!fs.existsSync(configPath) || opts.force) {
-      const defaultConfig = `# DocRel configuration — see https://github.com/seek-hope/docrel
+      // 2. Write default config if missing (or --force)
+      if (!fs.existsSync(configPath) || opts.force) {
+        const defaultConfig = `# DocRel configuration — see https://github.com/seek-hope/docrel
 project: ${path.basename(projectRoot)}
 doc_dirs:
   - docs
@@ -72,42 +73,46 @@ strategies:
   generated: auto_update    # TypeDoc/OpenAPI — re-run generator
   architecture: mark_stale  # Architecture docs — flag for review only
 `;
-      fs.writeFileSync(configPath, defaultConfig, 'utf-8');
-      steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docrel/config.yaml`);
-    } else {
-      steps.push('.docrel/config.yaml already exists (use --force to overwrite)');
-    }
-
-    // 3. Initialize database
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    steps.push('Initialized database (.git/docrel.db)');
-
-    // 4. Install git hooks (unless --no-hooks)
-    if (opts.hooks) {
-      installHooks(projectRoot, opts.force);
-      steps.push('Installed git hooks (pre-commit, post-commit, pre-push)');
-    } else {
-      steps.push('Skipped git hooks (run \'docrel install-hooks\' later)');
-    }
-
-    // 5. Scan codebase (unless --no-scan)
-    if (opts.scan) {
-      const available = await codegraph.isAvailable();
-      if (available) {
-        const report = await scanProject(codegraph, db, config);
-        steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
+        fs.writeFileSync(configPath, defaultConfig, 'utf-8');
+        steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docrel/config.yaml`);
       } else {
-        steps.push('Skipped scan: codegraph not available (run \'docrel scan\' later)');
+        steps.push('.docrel/config.yaml already exists (use --force to overwrite)');
       }
-    } else {
-      steps.push('Skipped scan (run \'docrel scan\' later or omit --no-scan)');
-    }
 
-    // 6. Summary
-    console.log('DocRel initialized!\n');
-    steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
-    console.log(`\nNext: docrel status   — check documentation health`);
+      // 3. Initialize database
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+      steps.push('Initialized database (.git/docrel.db)');
+
+      // 4. Install git hooks (unless --no-hooks)
+      if (opts.hooks) {
+        installHooks(projectRoot, opts.force);
+        steps.push('Installed git hooks (pre-commit, post-commit, pre-push)');
+      } else {
+        steps.push('Skipped git hooks (run \'docrel install-hooks\' later)');
+      }
+
+      // 5. Scan codebase (unless --no-scan)
+      if (opts.scan) {
+        const available = await codegraph.isAvailable();
+        if (available) {
+          const report = await scanProject(codegraph, db, config);
+          steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
+        } else {
+          steps.push('Skipped scan: codegraph not available (run \'docrel scan\' later)');
+        }
+      } else {
+        steps.push('Skipped scan (run \'docrel scan\' later or omit --no-scan)');
+      }
+
+      // 6. Summary
+      console.log('DocRel initialized!\n');
+      steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+      console.log(`\nNext: docrel status   — check documentation health`);
+    } catch (err: any) {
+      console.error('Init failed:', err.message);
+      process.exit(1);
+    }
   });
 
 program

@@ -187,6 +187,14 @@ async function shutdown(): Promise<void> {
 
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
+process.on('uncaughtException', (err) => {
+  console.error('DocRel: uncaught exception:', err);
+  shutdown();
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('DocRel: unhandled rejection:', reason);
+  shutdown();
+});
 
 async function main() {
   const transport = new StdioServerTransport();
