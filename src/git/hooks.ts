@@ -107,12 +107,21 @@ export function installHooks(projectRoot: string, force = false): void {
   const gitPath = path.join(projectRoot, '.git');
   let gitDir = gitPath;
 
-  if (fs.existsSync(gitPath) && !fs.statSync(gitPath).isDirectory()) {
+  let isWorktreeGit = false;
+  try { isWorktreeGit = fs.existsSync(gitPath) && !fs.statSync(gitPath).isDirectory(); } catch { /* stat failed — treat as not a worktree */ }
+  if (isWorktreeGit) {
     try {
       const content = fs.readFileSync(gitPath, 'utf-8');
       const match = content.match(/gitdir:\s*(.+)/);
       if (match?.[1]) {
         gitDir = path.resolve(projectRoot, match[1].trim());
+        // Validate containment: prevent path traversal if the .git file
+        // references an absolute path outside the project root (e.g., /etc).
+        // Follows the same pattern as src/db/connection.ts lines 33-36.
+        const root = path.resolve(projectRoot);
+        if (!gitDir.startsWith(root + path.sep) && gitDir !== root) {
+          gitDir = gitPath; // fall back to .git path
+        }
       }
     } catch { /* fall through to using .git path */ }
   }
@@ -155,7 +164,7 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r "${docrelBin}" impact --
+git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r "${docrelBin}" impact --
 `;
 
   const prePushScript = `#!/bin/sh

@@ -4,6 +4,12 @@ set -e
 
 PROJECT_ROOT="${1:-$(pwd)}"
 
+# Validate that PROJECT_ROOT is a real git repository before writing hooks
+if [ ! -d "$PROJECT_ROOT/.git" ]; then
+  echo "Error: $PROJECT_ROOT is not a git repository (no .git directory found)" >&2
+  exit 1
+fi
+
 cat > "$PROJECT_ROOT/.git/hooks/pre-commit" << 'EOF'
 #!/bin/sh
 docrel check --strict
