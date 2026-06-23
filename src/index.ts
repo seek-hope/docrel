@@ -15,10 +15,15 @@ import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 
+const DOCREL_DEBUG = process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true';
+
 /** Sanitize an error for MCP client responses. Logs the full error to stderr
  *  and returns a generic message that does not disclose internal paths or details. */
 function sanitizeError(err: unknown): string {
-  console.error('DocRel MCP tool error:', err);
+  console.error('DocRel MCP tool error:', err instanceof Error ? err.message : err);
+  if (DOCREL_DEBUG && err instanceof Error && err.stack) {
+    console.error('DocRel MCP tool error (debug stack):', err.stack);
+  }
   return 'Internal error — check server logs.';
 }
 
@@ -196,7 +201,7 @@ server.tool(
 // ── Start ──────────────────────────────────────────────────────
 let shuttingDown = false;
 
-async function shutdown(): Promise<void> {
+async function shutdown(code: number = 0): Promise<void> {
   // Set the flag FIRST to prevent re-entrancy from uncaughtException firing
   // concurrently with unhandledRejection (which Node can deliver synchronously
   // during exception handling).
@@ -208,20 +213,28 @@ async function shutdown(): Promise<void> {
   try { closeAllDbs(); } catch {}
   // Use exitCode to let the event loop drain gracefully instead of
   // immediately terminating — gives async cleanup a chance to finish.
-  process.exitCode = 0;
+  // Exit code reflects the reason for shutdown: 0 for clean termination
+  // (SIGINT/SIGTERM), 1 for crashes (uncaughtException/unhandledRejection).
+  process.exitCode = code;
   // Force-exit after a short grace period in case something is still pending
-  setTimeout(() => { process.exit(0); }, 500).unref();
+  setTimeout(() => { process.exit(code); }, 500).unref();
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown(0));
+process.on('SIGTERM', () => shutdown(0));
 process.on('uncaughtException', (err) => {
-  console.error('DocRel: uncaught exception:', err);
-  shutdown();
+  console.error('DocRel: uncaught exception:', err instanceof Error ? err.message : err);
+  if (DOCREL_DEBUG && err instanceof Error && err.stack) {
+    console.error('DocRel: uncaught exception (debug stack):', err.stack);
+  }
+  shutdown(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('DocRel: unhandled rejection:', reason);
-  shutdown();
+  console.error('DocRel: unhandled rejection:', reason instanceof Error ? reason.message : reason);
+  if (DOCREL_DEBUG && reason instanceof Error && reason.stack) {
+    console.error('DocRel: unhandled rejection (debug stack):', reason.stack);
+  }
+  shutdown(1);
 });
 
 async function main() {
@@ -231,6 +244,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  console.error('Fatal error:', err instanceof Error ? err.message : err);
+  if (DOCREL_DEBUG && err instanceof Error && err.stack) {
+    console.error('Fatal error (debug stack):', err.stack);
+  }
   process.exit(1);
 });
