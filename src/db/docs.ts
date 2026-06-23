@@ -63,10 +63,36 @@ export function listDocSections(db: Database.Database, filter?: { doc_type?: str
   return db.prepare(query).all(...params) as DocSectionRow[];
 }
 
-export function markDocStale(db: Database.Database, id: string): void {
-  db.prepare("UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?").run(id);
+export function markDocStale(db: Database.Database, id: string): boolean {
+  const info = db.prepare("UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?").run(id);
+  if (info.changes === 0) {
+    console.warn(`DocRel: markDocStale called for non-existent doc: ${id}`);
+    return false;
+  }
+  return true;
 }
 
-export function markDocSynced(db: Database.Database, id: string): void {
-  db.prepare("UPDATE doc_sections SET status = 'in_sync', updated_at = datetime('now') WHERE id = ?").run(id);
+export function markDocSynced(db: Database.Database, id: string): boolean {
+  const info = db.prepare("UPDATE doc_sections SET status = 'in_sync', updated_at = datetime('now') WHERE id = ?").run(id);
+  if (info.changes === 0) {
+    console.warn(`DocRel: markDocSynced called for non-existent doc: ${id}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Atomically update both content_hash and status in a single UPDATE statement.
+ * This prevents a crash between separate UPDATE calls from leaving the doc in
+ * an inconsistent state (content_hash updated but status still 'stale').
+ */
+export function markDocSyncedWithHash(db: Database.Database, id: string, newHash: string): boolean {
+  const info = db.prepare(
+    "UPDATE doc_sections SET content_hash = ?, status = 'in_sync', updated_at = datetime('now') WHERE id = ?"
+  ).run(newHash, id);
+  if (info.changes === 0) {
+    console.warn(`DocRel: markDocSyncedWithHash called for non-existent doc: ${id}`);
+    return false;
+  }
+  return true;
 }

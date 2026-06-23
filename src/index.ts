@@ -15,6 +15,13 @@ import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 
+/** Sanitize an error for MCP client responses. Logs the full error to stderr
+ *  and returns a generic message that does not disclose internal paths or details. */
+function sanitizeError(err: unknown): string {
+  console.error('DocRel MCP tool error:', err);
+  return 'Internal error — check server logs.';
+}
+
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
 
 let config: DocRelConfig;
@@ -47,7 +54,7 @@ server.tool(
         content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );
@@ -64,12 +71,28 @@ server.tool(
     try {
       const report = docrelCheck(db, strict);
       if (file) {
+        // Propagate error context into filtered responses so MCP clients
+        // can detect that the check failed, even when file-filtering would
+        // otherwise produce an empty staleDocs list.
+        if (report.error) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: JSON.stringify({
+                passed: false,
+                staleDocs: [],
+                summary: `Check failed for ${file}: ${report.error}`,
+                error: report.error,
+              }, null, 2),
+            }],
+          };
+        }
         const filtered = report.staleDocs.filter((d) => d.file === file);
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
-              passed: strict ? filtered.length === 0 : true,
+              passed: report.passed && (strict ? filtered.length === 0 : true),
               staleDocs: filtered,
               summary: `${filtered.length} stale doc(s) in ${file}`,
             }, null, 2),
@@ -80,7 +103,7 @@ server.tool(
         content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );
@@ -99,7 +122,7 @@ server.tool(
         content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );
@@ -118,7 +141,7 @@ server.tool(
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );
@@ -140,7 +163,7 @@ server.tool(
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );
@@ -158,13 +181,14 @@ server.tool(
       if (!diff) {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Symbol not found' }) }],
+          isError: true,
         };
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(diff, null, 2) }],
       };
     } catch (err: any) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
   },
 );

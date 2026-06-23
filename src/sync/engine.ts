@@ -6,7 +6,7 @@ import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getSymbol } from '../db/symbols.js';
-import { getDocSection, markDocStale, markDocSynced } from '../db/docs.js';
+import { getDocSection, markDocStale, markDocSynced, markDocSyncedWithHash } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
 import { findSectionContent } from './standalone.js';
@@ -61,6 +61,12 @@ export async function syncSymbol(
       if (!doc) continue;
 
       const strategy = config.strategies[doc.doc_type];
+      if (!strategy) {
+        console.warn(`DocRel: No strategy configured for doc_type '${doc.doc_type}' — marking doc ${doc.id} as stale`);
+        markDocStale(db, doc.id);
+        result.docsStaled.push(doc.file);
+        continue;
+      }
 
       try {
         switch (doc.doc_type) {
@@ -118,13 +124,13 @@ export async function syncSymbol(
             if (sectionContent) {
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
-                const info = db.prepare(
-                  "UPDATE doc_sections SET content_hash = ?, updated_at = datetime('now') WHERE id = ?"
-                ).run(newHash, doc.id);
-                if (info.changes === 0) {
+                // Atomically update both content_hash and status in a single
+                // UPDATE to prevent a crash between the two from leaving the
+                // doc in a permanently stale state (hash updated, status stale).
+                const ok = markDocSyncedWithHash(db, doc.id, newHash);
+                if (!ok) {
                   result.errors.push(`Standalone doc section ${doc.id} not found — race condition?`);
                 } else {
-                  markDocSynced(db, doc.id);
                   result.docsUpdated.push(doc.file);
                 }
               }
@@ -177,11 +183,13 @@ export async function syncSymbol(
           result.errors.push(`Unknown doc_type '${doc.doc_type}' for doc ${doc.id} — cannot sync`);
       }
     } catch (err: any) {
-      result.errors.push(`Error syncing doc ${mapping.doc_id}: ${err.message}`);
+      console.error(`DocRel: Error syncing doc ${mapping.doc_id}:`, err);
+      result.errors.push(`Error syncing doc ${mapping.doc_id}: internal error — check server logs`);
     }
   }
   } catch (err: any) {
-    result.errors.push(`Catastrophic sync error for ${symbolId}: ${err.message}`);
+    console.error(`DocRel: Catastrophic sync error for ${symbolId}:`, err);
+    result.errors.push(`Catastrophic sync error: internal error — check server logs`);
   }
 
   return result;

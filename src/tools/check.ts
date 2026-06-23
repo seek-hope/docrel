@@ -54,16 +54,15 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
 
     return { passed, staleDocs, summary };
   } catch (err: any) {
-    console.error('docrelCheck failed:', err.message);
-    // Preserve strict-mode intent: in non-strict mode, passing is always true
-    // even on error. In strict mode, errors block the check (fail-closed).
-    // Add a distinct error field so callers can distinguish "everything fine"
-    // from "could not check".
+    console.error('docrelCheck failed:', err);
+    // Database errors always indicate the check could not run — the result
+    // is not trustworthy regardless of strict mode. Return passed: false
+    // with a sanitized error message to prevent information disclosure.
     return {
-      passed: strict ? false : true,
+      passed: false,
       staleDocs: [],
       summary: `Database error: check server logs for details.`,
-      error: err.message,
+      error: 'Database query error — check server logs for details',
     };
   }
 }
