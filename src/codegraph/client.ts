@@ -339,7 +339,7 @@ export class CodegraphClient {
     // have changed its output format or returned an error message. Log a
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
-      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars. First 200:`, content.slice(0, 200));
+      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed`);
     }
 
     return { symbols, files };

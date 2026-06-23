@@ -55,12 +55,12 @@ export function docrelStatus(db: Database.Database): StatusReport {
       };
     })();
   } catch (err: any) {
-    console.error('docrelStatus failed:', err.message);
+    console.error('docrelStatus failed:', err);
     return {
       totalSymbols: 0, linkedSymbols: 0, linkedPercentage: 0,
       syncedDocs: 0, staleDocs: 0, totalDocs: 0,
       syncPercentage: 0, pendingChanges: 0, lastScan: null,
-      error: err.message,
+      error: 'Database query error — check server logs for details',
     };
   }
 }
