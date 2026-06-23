@@ -13,8 +13,13 @@ export function symbolId(language: string, fqn: string, kind: string): string {
 }
 
 export function docSectionId(file: string, anchor: string): string {
+  // Return empty string for invalid input instead of throwing, so a single
+  // bad doc section (e.g., from a malformed mapping) does not abort the
+  // operation. Callers can check and skip empty results.
+  // This matches the behavior of symbolId() for consistency.
   if (file == null || anchor == null) {
-    throw new Error('docSectionId: file and anchor are required');
+    console.warn(`DocRel: docSectionId received null/undefined argument — skipping`);
+    return '';
   }
   const normalized = `${file.trim()}#${anchor.trim()}`;
   return crypto.createHash('sha256').update(normalized).digest('hex');
