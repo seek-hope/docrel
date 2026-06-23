@@ -64,6 +64,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
     ? countOccurrences(content, input.oldDocstring) : -1;
 
+  // Distinguish aborted searches (>10,000 char) from genuine non-matches.
+  // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH,
+  // which means the old signature/docstring is likely from a corrupted record.
+  if (sigCount === -1) {
+    console.warn(`DocRel: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+  } else if (docCount === -1) {
+    console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+  }
+
   if (sigCount === 1) {
     // Guard against replacing the wrong occurrence: if the old signature
     // appears once in non-comment code but multiple times in the full content
@@ -243,7 +252,10 @@ function stripNonJsdocBlockComments(content: string): string {
       out.push(ch); i++;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === '"') { i++; break; }
         i++;
       }
@@ -253,7 +265,10 @@ function stripNonJsdocBlockComments(content: string): string {
       out.push(ch); i++;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === "'") { i++; break; }
         i++;
       }
@@ -264,7 +279,10 @@ function stripNonJsdocBlockComments(content: string): string {
       let nestDepth = 0;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === '$' && content[i + 1] === '{') {
           nestDepth++; i++; continue;
         }
@@ -317,7 +335,10 @@ function stripAllBlockComments(content: string): string {
       out.push(ch); i++;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === '"') { i++; break; }
         i++;
       }
@@ -327,7 +348,10 @@ function stripAllBlockComments(content: string): string {
       out.push(ch); i++;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === "'") { i++; break; }
         i++;
       }
@@ -338,7 +362,10 @@ function stripAllBlockComments(content: string): string {
       let nestDepth = 0;
       while (i < content.length) {
         out.push(content[i]);
-        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          out.push(content[i + 1] ?? ''); i += 2; continue;
+        }
         if (content[i] === '$' && content[i + 1] === '{') {
           nestDepth++; i++; continue;
         }
@@ -381,7 +408,10 @@ function stripCommentsAndStrings(line: string): string {
     if (c === '"') {
       i++;
       while (i < line.length) {
-        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '\\') {
+          if (i + 1 >= line.length) { i++; break; }
+          i += 2; continue;
+        }
         if (line[i] === '"') { i++; break; }
         i++;
       }
@@ -391,7 +421,10 @@ function stripCommentsAndStrings(line: string): string {
     if (c === "'") {
       i++;
       while (i < line.length) {
-        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '\\') {
+          if (i + 1 >= line.length) { i++; break; }
+          i += 2; continue;
+        }
         if (line[i] === "'") { i++; break; }
         i++;
       }
@@ -404,7 +437,10 @@ function stripCommentsAndStrings(line: string): string {
       i++;
       let nestDepth = 0;
       while (i < line.length) {
-        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '\\') {
+          if (i + 1 >= line.length) { i++; break; }
+          i += 2; continue;
+        }
         if (line[i] === '$' && line[i + 1] === '{') {
           nestDepth++;
           i += 2;
@@ -488,12 +524,27 @@ function extractParams(signature: string): Array<{ name: string; type: string }>
   }).filter((p) => p.name.length > 0);
 }
 
-/** Split comma-separated params, respecting nested angle brackets and parentheses. */
+/** Split comma-separated params, respecting nested angle brackets, parentheses,
+ *  AND string literals. A comma inside a quoted string (e.g. name: string = "hello, world")
+ *  is not a delimiter. */
 function splitParams(paramsStr: string): string[] {
   const result: string[] = [];
   let depth = 0;
   let current = '';
-  for (const ch of paramsStr) {
+  let inString: string | null = null; // '"', "'", or '`' when inside a string literal
+  for (let i = 0; i < paramsStr.length; i++) {
+    const ch = paramsStr[i];
+    if (inString) {
+      current += ch;
+      if (ch === '\\') { current += paramsStr[i + 1] ?? ''; i++; continue; }
+      if (ch === inString) inString = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      inString = ch;
+      current += ch;
+      continue;
+    }
     if (ch === '<' || ch === '(' || ch === '{' || ch === '[') depth++;
     else if (ch === '>' || ch === ')' || ch === '}' || ch === ']') depth--;
     if (ch === ',' && depth === 0) {
