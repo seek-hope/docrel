@@ -170,7 +170,15 @@ server.tool(
 );
 
 // ── Start ──────────────────────────────────────────────────────
+let shuttingDown = false;
+
 async function shutdown(): Promise<void> {
+  // Guard against concurrent SIGINT+SIGTERM. If both signals arrive in
+  // quick succession, two invocations of shutdown would run concurrently,
+  // and the first process.exit(0) could cut short the second's cleanup.
+  if (shuttingDown) return;
+  shuttingDown = true;
+
   console.error('DocRel MCP Server shutting down...');
   try { await codegraph.close(); } catch {}
   try { closeDb(); } catch {}
