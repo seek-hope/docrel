@@ -13,30 +13,34 @@ export interface StatusReport {
 }
 
 export function docrelStatus(db: Database.Database): StatusReport {
-  const totalSymbols = (db.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }).c;
-  const linkedSymbols = (db.prepare(
-    'SELECT COUNT(DISTINCT symbol_id) as c FROM mappings',
-  ).get() as { c: number }).c;
-  const totalDocs = (db.prepare('SELECT COUNT(*) as c FROM doc_sections').get() as { c: number }).c;
-  const syncedDocs = (db.prepare(
-    "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'in_sync'",
-  ).get() as { c: number }).c;
-  const staleDocs = (db.prepare(
-    "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'stale'",
-  ).get() as { c: number }).c;
-  const pendingChanges = (db.prepare(
-    "SELECT COUNT(*) as c FROM changelog WHERE sync_status = 'pending'",
-  ).get() as { c: number }).c;
+  const result = db.transaction(() => {
+    const totalSymbols = (db.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }).c;
+    const linkedSymbols = (db.prepare(
+      'SELECT COUNT(DISTINCT symbol_id) as c FROM mappings',
+    ).get() as { c: number }).c;
+    const totalDocs = (db.prepare('SELECT COUNT(*) as c FROM doc_sections').get() as { c: number }).c;
+    const syncedDocs = (db.prepare(
+      "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'in_sync'",
+    ).get() as { c: number }).c;
+    const staleDocs = (db.prepare(
+      "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'stale'",
+    ).get() as { c: number }).c;
+    const pendingChanges = (db.prepare(
+      "SELECT COUNT(*) as c FROM changelog WHERE sync_status = 'pending'",
+    ).get() as { c: number }).c;
 
-  return {
-    totalSymbols,
-    linkedSymbols,
-    linkedPercentage: totalSymbols > 0 ? Math.round((linkedSymbols / totalSymbols) * 100) : 0,
-    syncedDocs,
-    staleDocs,
-    totalDocs,
-    syncPercentage: totalDocs > 0 ? Math.round((syncedDocs / totalDocs) * 100) : 100,
-    pendingChanges,
-    lastScan: null,
-  };
+    return {
+      totalSymbols,
+      linkedSymbols,
+      linkedPercentage: totalSymbols > 0 ? Math.round((linkedSymbols / totalSymbols) * 100) : 0,
+      syncedDocs,
+      staleDocs,
+      totalDocs,
+      syncPercentage: totalDocs > 0 ? Math.round((syncedDocs / totalDocs) * 100) : 100,
+      pendingChanges,
+      lastScan: null as string | null,
+    };
+  })();
+
+  return result;
 }
