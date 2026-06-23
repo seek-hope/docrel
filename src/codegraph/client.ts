@@ -344,6 +344,46 @@ export class CodegraphClient {
     return this.parseSearchOutput(content);
   }
 
+  /** Query codegraph for the current signature of a single symbol.
+   *  Uses codegraph_explore with maxFiles=1 for a focused result.
+   *  Extracts the definition line (function/class/const/etc.) from the
+   *  returned source code blocks. Returns null if no definition found. */
+  async getSymbolSignature(symbolName: string, file?: string): Promise<string | null> {
+    const client = await this.ensureConnected();
+
+    const query = file ? `${symbolName} in ${file}` : symbolName;
+    const result = await client.callTool({
+      name: 'codegraph_explore',
+      arguments: { query, maxFiles: 1 },
+    });
+
+    const content = extractTextContent(result.content);
+    if (!content) return null;
+
+    // Scan the raw codegraph output for the definition line of this symbol.
+    // The output format is markdown with source code blocks. Look for lines
+    // that match known definition patterns for this symbol name.
+    const escaped = symbolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const defPattern = new RegExp(
+      `(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class|const|let|var|interface|type|enum)\\s+${escaped}\\b|` +
+      `(?:async\\s+)?\\b${escaped}\\s*\\(`,
+    );
+
+    const lines = content.split('\n');
+    // Walk backwards from the end — the most relevant definition is usually
+    // the last match (closest to the symbol's actual definition block).
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (defPattern.test(line)) {
+        // Trim leading line-number prefix like "123| " or "  123| "
+        const sig = line.replace(/^\s*\d+\s*\|\s*/, '').trim();
+        if (sig) return sig;
+      }
+    }
+
+    return null;
+  }
+
   async close(): Promise<void> {
     if (this.client) {
       try {

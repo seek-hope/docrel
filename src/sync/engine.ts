@@ -52,11 +52,47 @@ function parseLocation(location: string): { file: string; line: number } | null 
   return { file, line };
 }
 
+/** Extract the current signature for a symbol. Tries codegraph first
+ *  (either cached raw_signature or a fresh query), then falls back to
+ *  regex-based source file parsing. */
+async function getCurrentSignature(
+  symbol: import('../db/symbols.js').SymbolRow,
+  codegraph: CodegraphClient | undefined,
+  projectRoot: string,
+): Promise<{ signature: string | null; reason?: string; source: 'codegraph_raw' | 'codegraph_query' | 'regex' | 'none' }> {
+  // 1. Use the cached raw_signature from DB (populated by codegraph during scan)
+  if (symbol.raw_signature) {
+    return { signature: symbol.raw_signature, source: 'codegraph_raw' };
+  }
+
+  // 2. Try a fresh codegraph query
+  if (codegraph) {
+    try {
+      const loc = parseLocation(symbol.location);
+      const sig = await codegraph.getSymbolSignature(symbol.name, loc?.file);
+      if (sig) {
+        return { signature: sig, source: 'codegraph_query' };
+      }
+    } catch {
+      // codegraph query failed — fall through to regex
+    }
+  }
+
+  // 3. Fall back to regex-based extraction from the source file
+  const loc = parseLocation(symbol.location);
+  if (!loc) {
+    return { signature: null, reason: 'invalid or missing source file location', source: 'none' };
+  }
+  const result = extractCurrentSignature(loc.file, symbol.name, projectRoot);
+  return { signature: result.signature, reason: result.reason, source: result.signature ? 'regex' : 'none' };
+}
+
 export async function syncSymbol(
   db: Database.Database,
   config: DocRelConfig,
   symbolId: string,
   projectRoot: string,
+  codegraph?: CodegraphClient,
 ): Promise<SyncResult> {
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [], warnings: [], requiresReview: false, proposedChanges: [] };
 
@@ -128,16 +164,14 @@ export async function syncSymbol(
             const newSig = symbol.raw_signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, oldDocstring, newSig);
 
-            // Extract current signature from the source to use as oldSignature.
-            // If extraction fails (signature is null), skip the updateInlineDoc
-            // call entirely to avoid wasted I/O (file open, read, comment stripping,
-            // and occurrence counting with empty oldSignature).
-            const extractResult = extractCurrentSignature(loc.file, symbol.name, projectRoot);
-            if (extractResult.signature === null) {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${extractResult.reason ?? 'could not extract current signature'}`);
+            // Get current signature — prefer codegraph (cached or fresh query),
+            // fall back to regex-based source file parsing.
+            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot);
+            if (sigResult.signature === null) {
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${sigResult.reason ?? 'could not extract current signature'}`);
               continue;
             }
-            const oldSig = extractResult.signature;
+            const oldSig = sigResult.signature;
 
             const updated = updateInlineDoc({
               file: loc.file,
@@ -330,7 +364,7 @@ export async function syncAllStale(
 
   const synced: SyncResult[] = [];
   for (const symbolId of uniqueSymbolIds) {
-    synced.push(await syncSymbol(db, config, symbolId, projectRoot));
+    synced.push(await syncSymbol(db, config, symbolId, projectRoot, codegraph));
   }
 
   return { synced, totalStale: staleDocs.length };

@@ -180,7 +180,7 @@ server.tool(
   },
   async ({ symbol_id }) => {
     try {
-      const result = await syncSymbol(db, config, symbol_id, projectRoot);
+      const result = await syncSymbol(db, config, symbol_id, projectRoot, codegraph);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -394,6 +394,111 @@ server.tool(
             integratedAs: result.agent,
             filesCreated: result.filesCreated,
             summary: result.summary,
+          }, null, 2),
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_watch ─────────────────────────────────────────────
+server.tool(
+  'docrel_watch',
+  'Return the list of paths DocRel would watch. The actual file watcher runs via the CLI (`docrel watch`), not through MCP. Use docrel_refresh for lightweight polling instead.',
+  async () => {
+    try {
+      const watchPaths: string[] = [];
+      for (const dir of config.code_dirs) {
+        const p = path.join(projectRoot, dir);
+        if (fs.existsSync(p)) watchPaths.push(dir);
+      }
+      for (const dir of config.doc_dirs) {
+        const p = path.join(projectRoot, dir);
+        if (fs.existsSync(p)) watchPaths.push(dir);
+      }
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            watching: true,
+            paths: watchPaths,
+            hint: 'For persistent file watching, run `docrel watch` in the CLI. For agent polling, use docrel_refresh periodically.',
+          }, null, 2),
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_refresh ────────────────────────────────────────────
+server.tool(
+  'docrel_refresh',
+  'Re-scan the codebase for symbol changes and return new/updated symbols since the last scan. Lightweight alternative to persistent watching — agents should poll this periodically.',
+  {
+    full: z.boolean().optional().default(false).describe('Also re-scan documentation files and auto-link'),
+  },
+  async ({ full }) => {
+    try {
+      const available = await extractor.isAvailable();
+      if (!available) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No symbol extractor is available.' }) }],
+          isError: true,
+        };
+      }
+
+      const symbolReport = await scanProject(extractor, db, config);
+
+      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
+      let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
+
+      if (full) {
+        const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
+        let newDocs = 0;
+        let newMappings = 0;
+
+        for (const section of sections) {
+          const id = docSectionId(section.file, section.anchor);
+          if (!id) continue;
+          const hash = contentHash(section.content);
+          const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+          upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+          if (!existing) newDocs++;
+          for (const ref of section.codeRefs) {
+            const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
+            const matched = db.prepare('SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1').get(cleanName, ref.symbolName) as { id: string } | undefined;
+            if (matched) {
+              try {
+                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', review_status: 'auto' });
+                newMappings++;
+              } catch { /* skip duplicates */ }
+            }
+          }
+        }
+
+        docReport = {
+          totalFiles: report.totalFiles,
+          totalSections: report.totalSections,
+          newDocSections: newDocs,
+          newMappings,
+          failedFiles: report.failedFiles,
+        };
+
+        const allSymbols = listSymbols(db);
+        linkResult = autoLink(db, allSymbols, sections);
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            symbols: symbolReport,
+            docs: docReport,
+            autoLink: linkResult,
           }, null, 2),
         }],
       };
