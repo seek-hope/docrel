@@ -14,6 +14,15 @@ import { stripCommentsAndStrings, stripAllBlockComments } from './inline.js';
 import { findSectionContent } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
 
+/** A single proposed change when strategy is 'prompt' — the caller should
+ *  present this diff to the user/agent for manual approval. */
+export interface ProposedChange {
+  file: string;
+  anchor?: string;
+  reason: string;
+  symbolName: string;
+}
+
 export interface SyncResult {
   symbolId: string;
   docsUpdated: string[];
@@ -21,6 +30,11 @@ export interface SyncResult {
   docsChecked: string[];
   errors: string[];
   warnings: string[];
+  /** When true, at least one doc requires manual review before changes are applied. */
+  requiresReview: boolean;
+  /** Structured diff of proposed changes that were NOT applied. Caller (CLI/MCP)
+   *  should present these to the user/agent for approval. */
+  proposedChanges: ProposedChange[];
 }
 
 /** Parse a "file:line" location into { file, line }. Returns null if invalid. */
@@ -44,7 +58,7 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
 ): Promise<SyncResult> {
-  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [], warnings: [] };
+  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [], warnings: [], requiresReview: false, proposedChanges: [] };
 
   try {
     assertDbOpen(db);
@@ -213,9 +227,17 @@ export async function syncSymbol(
               result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
             }
           } else if (strategy === 'prompt') {
-            // 'prompt' is a documented strategy for manual review — treat as
-            // a warning rather than an error to avoid polluting sync results.
-            result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy requires manual review. Docs will not be auto-synced.`);
+            // Build a structured diff of proposed changes for the caller
+            // (CLI or MCP) to present to the user/agent for approval.
+            // Changes are NOT applied — the doc remains in its current state.
+            result.requiresReview = true;
+            result.proposedChanges.push({
+              file: doc.file,
+              anchor: doc.anchor,
+              reason: `Standalone doc section '${doc.anchor}' in ${relPath(doc.file, projectRoot)} is linked to symbol '${symbol.name}' (${symbol.kind}) which may have changed. Manual content review is required.`,
+              symbolName: symbol.name,
+            });
+            result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy — changes withheld pending manual review.`);
             result.docsChecked.push(doc.file);
           }
           break;

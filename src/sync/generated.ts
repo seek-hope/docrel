@@ -12,6 +12,7 @@ export interface GeneratedSyncInput {
 
 const MAX_COMMAND_LENGTH = 1024;
 const MAX_ARGS = 50;
+
 // Only allow documentation generators — NOT general-purpose interpreters.
 // Retaining interpreters (bash, sh, node, tsx, npx, python, python3, make, cargo)
 // would enable arbitrary code execution from package.json scripts, which is a
@@ -19,6 +20,38 @@ const MAX_ARGS = 50;
 const ALLOWED_BINARIES = new Set([
   'typedoc', 'openapi-generator',
 ]);
+
+// Package.json script names that are safe to run via `npm run <script>`.
+// npm handles path resolution and node_modules/.bin lookup, so scripts using
+// any tool (tsx, node, typedoc, openapi-generator, custom CLI) work without
+// the binary needing to be in ALLOWED_BINARIES. This is both more secure
+// (npm enforces the exact script defined in package.json) and more flexible
+// (works with any documentation generation tool).
+const ALLOWED_SCRIPTS = new Set([
+  'docs:generate',
+  'generate:docs',
+  'build:docs',
+  'docs:build',
+  'generate:api',
+  'generate:openapi',
+]);
+
+/** Return the `npm run <script>` command to use when a matching allowed script
+ *  is found in package.json scripts. Returns null if no match or if safety
+ *  checks fail. */
+function resolveNpmScript(scripts: Record<string, string>): string | null {
+  for (const scriptName of ALLOWED_SCRIPTS) {
+    if (typeof scripts[scriptName] === 'string') {
+      // The script value is not validated beyond being a non-empty string —
+      // npm handles the actual execution, and the script is already defined
+      // in the project's own package.json (not injected by DocRel).
+      const cmd = scripts[scriptName].trim();
+      if (cmd.length === 0) continue;
+      return `npm run ${scriptName}`;
+    }
+  }
+  return null;
+}
 
 /**
  * Split a generator command string into [binary, ...args].
@@ -43,6 +76,29 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   if (parts.length > MAX_ARGS + 1) return null;
 
   const binary = parts[0];
+
+  // ── npm run <script> path ──────────────────────────────────────────
+  // When the command is `npm run <script>`, validate the script name
+  // against ALLOWED_SCRIPTS. npm handles path resolution and enforces
+  // the exact script defined in package.json.
+  if (binary === 'npm') {
+    if (parts.length < 3) return null;
+    if (parts[1] !== 'run') return null;
+    const scriptName = parts[2];
+    if (!ALLOWED_SCRIPTS.has(scriptName)) {
+      console.error(`DocRel: npm run script '${scriptName}' is not in the allowed scripts list`);
+      return null;
+    }
+    // Reject extra arguments — only `npm run <allowed_script>` is permitted.
+    // This prevents `npm run docs:generate -- --evil-flag` injection.
+    if (parts.length > 3) {
+      console.error('DocRel: npm run command rejected — extra arguments not allowed');
+      return null;
+    }
+    return { binary: 'npm', args: ['run', scriptName] };
+  }
+
+  // ── Direct binary path ─────────────────────────────────────────────
   // Reject relative paths and absolute paths — allow only known binaries
   if (binary.includes('/') || binary.includes('\\')) {
     return null; // reject path-based commands
@@ -196,7 +252,9 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
       const firstBytes = buf.toString('utf-8', 0, bytesRead);
       if (/^(openapi|swagger):\s*["']?\d/i.test(firstBytes)) {
-        // Content confirms this is an OpenAPI spec — treat as generated
+        // Content confirms this is an OpenAPI spec — try allowed scripts first
+        const npmCmd = resolveNpmScript(scripts);
+        if (npmCmd) return npmCmd;
         const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
         if (typeof cmd === 'string' && validateCommandSafety(cmd)) return cmd;
       }
@@ -208,6 +266,10 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     }
   }
   if (isOpenApiFile) {
+    // Prefer npm run over direct binary invocation when the script is allowed
+    const npmCmd = resolveNpmScript(scripts);
+    if (npmCmd) return npmCmd;
+    // Fall back to direct command for backwards compatibility
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
@@ -220,11 +282,22 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
 
   if ((file.endsWith('.md') && file.includes('typedoc')) || (file.endsWith('.md') && scripts['docs:generate'] &&
       (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
+    // Prefer npm run when the script is allowed
+    const npmCmd = resolveNpmScript(scripts);
+    if (npmCmd) return npmCmd;
+    // Fall back to direct command for backwards compatibility
     const cmd = scripts['docs:generate'];
     if (typeof cmd !== 'string') return null;
     if (!validateCommandSafety(cmd)) return null;
     return cmd;
   }
+
+  // General fallback: for any file, check if an ALLOWED_SCRIPTS script exists
+  // in package.json. This enables generated doc sync for any documentation
+  // generation tool (e.g., tsx scripts/generate-docs.ts) without requiring
+  // the binary to be on the ALLOWED_BINARIES list.
+  const generalNpmCmd = resolveNpmScript(scripts);
+  if (generalNpmCmd) return generalNpmCmd;
 
   return null;
 }

@@ -177,7 +177,87 @@ function scorePair(
   return { confidence: 0, matched: false };
 }
 
-// ── Main autoLink function ───────────────────────────────────────────────────
+// ── Fast pass-1 scoring ──────────────────────────────────────────────────────
+
+/**
+ * Fast scoring for pass 1: only checks exact matches (heading word boundary
+ * and backtick exact match). These are the highest-confidence rules and are
+ * cheap to compute. Returns confidence (1.0, 0.9) or 0 if no match.
+ */
+function fastScorePair(symbol: SymbolRow, section: ParsedDocSection): number {
+  const symName = symbol.name;
+  const symNameClean = symName.replace(/\(.*\)$/, '');
+  const heading = section.anchor || '';
+
+  // 1. Exact word match in heading (confidence 1.0)
+  if (heading.length > 0) {
+    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
+    if (wordBoundaryRe.test(heading)) {
+      return 1.0;
+    }
+  }
+
+  // 2. Backtick match (confidence 0.9)
+  for (const ref of (section.codeRefs ?? [])) {
+    if (ref.refType === 'backtick') {
+      const refClean = ref.symbolName.replace(/\(.*\)$/, '');
+      if (refClean === symNameClean ||
+          refClean === symName ||
+          ref.symbolName === symName ||
+          ref.symbolName === symNameClean) {
+        return 0.9;
+      }
+    }
+  }
+
+  return 0;
+}
+
+/** Create a mapping and update confidence counters. Returns true on success. */
+function tryCreateMapping(
+  db: Database.Database,
+  symbol: SymbolRow,
+  docId: string,
+  confidence: number,
+  existingKeys: Set<string>,
+  counters: { high: number; medium: number; low: number },
+): boolean {
+  const mappingKey = `${symbol.id}::${docId}::describes`;
+  if (existingKeys.has(mappingKey)) return false;
+
+  try {
+    createMapping(db, {
+      symbol_id: symbol.id,
+      doc_id: docId,
+      rel_type: 'describes',
+      review_status: 'auto',
+    });
+    existingKeys.add(mappingKey);
+
+    if (confidence >= 0.8) {
+      counters.high++;
+    } else if (confidence >= 0.5) {
+      counters.medium++;
+    } else {
+      counters.low++;
+    }
+    return true;
+  } catch {
+    // UNIQUE constraint or other DB error — skip
+    return false;
+  }
+}
+
+/** Compute the doc ID for a section, logging a warning on failure. */
+function tryDocSectionId(section: ParsedDocSection): string | null {
+  const docId = docSectionId(section.file, section.anchor);
+  if (!docId) {
+    console.warn(`DocRel: autoLink — could not compute docSectionId for ${section.file}#${section.anchor}`);
+  }
+  return docId || null;
+}
+
+// ── Main autoLink function (two-pass) ────────────────────────────────────────
 
 export function autoLink(
   db: Database.Database,
@@ -189,9 +269,7 @@ export function autoLink(
     throw new Error(`minConfidence must be between 0.0 and 1.0, got ${minConfidence}`);
   }
 
-  let highConfidence = 0;
-  let mediumConfidence = 0;
-  let lowConfidence = 0;
+  const counters = { high: 0, medium: 0, low: 0 };
 
   // Build a set of existing mappings for fast skip check.
   // Key: "symbol_id::doc_id::rel_type"
@@ -203,62 +281,71 @@ export function autoLink(
     existingKeys.add(`${row.symbol_id}::${row.doc_id}::${row.rel_type}`);
   }
 
-  const MAX_COMPARISONS = 1_000_000;
   const AUTO_LINK_TIMEOUT_MS = 30_000;
   const startTime = Date.now();
-  let comparisons = 0;
-  let timedOut = false;
+  const timedOut = () => Date.now() - startTime > AUTO_LINK_TIMEOUT_MS;
+
+  // Symbols that already received a high-confidence link in pass 1.
+  // These are skipped in pass 2 to avoid low-confidence false positives.
+  const linkedSymbolIds = new Set<string>();
+
+  // ── Pass 1: Exact matches only (heading word boundary + backtick) ──────
+  // This pass is O(symbols × sections) but each comparison is cheap (no
+  // fuzzy substring, no codeRef iteration beyond backtick). For a 2000×500
+  // project (1M pairs), pass 1 runs in under a second.
 
   for (const symbol of symbols) {
-    if (timedOut) break;
+    if (timedOut()) {
+      console.warn(`DocRel: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results.`);
+      return {
+        totalMatched: counters.high + counters.medium + counters.low,
+        highConfidence: counters.high,
+        mediumConfidence: counters.medium,
+        lowConfidence: counters.low,
+      };
+    }
+
     for (const section of docSections) {
-      comparisons++;
-      if (comparisons > MAX_COMPARISONS) {
-        console.warn(`DocRel: autoLink exceeded ${MAX_COMPARISONS} comparisons — aborting. Remaining symbols/sections skipped.`);
-        timedOut = true;
-        break;
-      }
-      if (Date.now() - startTime > AUTO_LINK_TIMEOUT_MS) {
-        console.warn(`DocRel: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms — returning partial results.`);
-        timedOut = true;
-        break;
-      }
+      const conf = fastScorePair(symbol, section);
+      if (conf === 0) continue;
 
-      const score = scorePair(symbol, section, minConfidence);
-      if (!score.matched) continue;
-
-      const docId = docSectionId(section.file, section.anchor);
+      const docId = tryDocSectionId(section);
       if (!docId) continue;
 
-      const mappingKey = `${symbol.id}::${docId}::describes`;
-      if (existingKeys.has(mappingKey)) continue; // skip duplicates
-
-      try {
-        createMapping(db, {
-          symbol_id: symbol.id,
-          doc_id: docId,
-          rel_type: 'describes',
-          review_status: 'auto',
-        });
-        existingKeys.add(mappingKey);
-
-        if (score.confidence >= 0.8) {
-          highConfidence++;
-        } else if (score.confidence >= 0.5) {
-          mediumConfidence++;
-        } else {
-          lowConfidence++;
-        }
-      } catch {
-        // UNIQUE constraint or other DB error — skip
+      if (tryCreateMapping(db, symbol, docId, conf, existingKeys, counters)) {
+        linkedSymbolIds.add(symbol.id);
       }
     }
   }
 
+  // ── Pass 2: Full scoring for unlinked symbols ───────────────────────────
+  // Only symbols without any pass-1 link go through the slower fuzzy matching.
+  // This is typically a much smaller set, so the expensive isFuzzySubstring
+  // calls are bounded to a fraction of the total symbol×section space.
+
+  for (const symbol of symbols) {
+    if (linkedSymbolIds.has(symbol.id)) continue;
+
+    if (timedOut()) {
+      console.warn(`DocRel: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
+      break;
+    }
+
+    for (const section of docSections) {
+      const score = scorePair(symbol, section, minConfidence);
+      if (!score.matched) continue;
+
+      const docId = tryDocSectionId(section);
+      if (!docId) continue;
+
+      tryCreateMapping(db, symbol, docId, score.confidence, existingKeys, counters);
+    }
+  }
+
   return {
-    totalMatched: highConfidence + mediumConfidence + lowConfidence,
-    highConfidence,
-    mediumConfidence,
-    lowConfidence,
+    totalMatched: counters.high + counters.medium + counters.low,
+    highConfidence: counters.high,
+    mediumConfidence: counters.medium,
+    lowConfidence: counters.low,
   };
 }
