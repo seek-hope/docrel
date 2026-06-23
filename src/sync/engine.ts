@@ -63,7 +63,7 @@ export async function syncSymbol(
             continue;
           }
           if (strategy === 'auto_update') {
-            const oldDocstring = extractDocstring(loc.file, symbol.name) ?? '';
+            const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
             const newSig = symbol.signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
@@ -74,7 +74,7 @@ export async function syncSymbol(
               newSignature: '',
               oldDocstring,
               newDocstring,
-            });
+            }, projectRoot);
             markDocSynced(db, doc.id);
             result.docsUpdated.push(doc.file);
           } else {

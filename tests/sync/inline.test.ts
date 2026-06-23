@@ -25,7 +25,7 @@ describe('updateInlineDoc', () => {
       newSignature: '',
       oldDocstring: '',
       newDocstring: '',
-    });
+    }, tmpDir);
     expect(result).toBe(false);
   });
 
@@ -40,7 +40,7 @@ describe('updateInlineDoc', () => {
       newSignature: '',
       oldDocstring: '/** Old doc */',
       newDocstring: '/** New doc */',
-    });
+    }, tmpDir);
     expect(result).toBe(true);
 
     const updated = fs.readFileSync(testFile, 'utf-8');
@@ -59,7 +59,7 @@ describe('updateInlineDoc', () => {
       newSignature: 'function foo(x: number, y: string): void',
       oldDocstring: '/** Doc */',
       newDocstring: '/** Updated doc */',
-    });
+    }, tmpDir);
     expect(result).toBe(true);
 
     const updated = fs.readFileSync(testFile, 'utf-8');

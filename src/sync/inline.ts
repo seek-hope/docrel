@@ -1,5 +1,6 @@
 // src/sync/inline.ts
 import fs from 'node:fs';
+import path from 'node:path';
 
 export interface InlineSyncInput {
   file: string;
@@ -10,44 +11,88 @@ export interface InlineSyncInput {
   newDocstring: string;
 }
 
-export function updateInlineDoc(input: InlineSyncInput): boolean {
-  if (!fs.existsSync(input.file)) return false;
+/** Resolve and validate that filePath is within projectRoot. Returns resolved path or null. */
+function validatePath(filePath: string, projectRoot: string): string | null {
+  const resolved = path.resolve(projectRoot, filePath);
+  const root = path.resolve(projectRoot);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+  // Resolve symlinks to ensure the real path is also within project root
+  try {
+    const real = fs.realpathSync(resolved);
+    if (!real.startsWith(root + path.sep) && real !== root) return null;
+  } catch {
+    // File doesn't exist yet — trust the resolved path
+  }
+  return resolved;
+}
 
-  let content = fs.readFileSync(input.file, 'utf-8');
+export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): boolean {
+  const resolved = validatePath(input.file, projectRoot);
+  if (!resolved) return false;
 
-  // Find the symbol definition and its associated docstring/comment
-  // Replace the old signature/docstring with new.
-  //
-  // NOTE: String.replace() replaces the first occurrence anywhere in the file.
-  // This is a known limitation: if the old text appears earlier in the file
-  // than the intended symbol (e.g. in an import, a type declaration, or
-  // another symbol's docstring), that earlier occurrence will be replaced
-  // instead. Callers should pass the most specific context string available
-  // (e.g. include surrounding lines) to minimise false matches.
-  // A full AST-based approach is planned for v2.
+  if (!fs.existsSync(resolved)) return false;
+
+  let content = fs.readFileSync(resolved, 'utf-8');
+
+  let replaced = false;
+
+  // Only replace if the old text appears exactly once (avoid ambiguity)
   if (input.oldSignature && input.newSignature) {
-    content = content.replace(input.oldSignature, input.newSignature);
+    const count = countOccurrences(content, input.oldSignature);
+    if (count === 1) {
+      content = content.replace(input.oldSignature, input.newSignature);
+      replaced = true;
+    }
+    // If count is 0 or >1, skip to avoid replacing wrong text
   }
 
   if (input.oldDocstring && input.newDocstring) {
-    content = content.replace(input.oldDocstring, input.newDocstring);
+    const count = countOccurrences(content, input.oldDocstring);
+    if (count === 1) {
+      content = content.replace(input.oldDocstring, input.newDocstring);
+      replaced = true;
+    }
   }
 
-  fs.writeFileSync(input.file, content, 'utf-8');
+  if (!replaced) return false;
+
+  // Atomic write: write to temp file then rename
+  const tmpPath = resolved + '.docrel.tmp';
+  try {
+    fs.writeFileSync(tmpPath, content, 'utf-8');
+    fs.renameSync(tmpPath, resolved);
+  } catch {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    return false;
+  }
+
   return true;
 }
 
-export function extractDocstring(file: string, symbolName: string): string | null {
-  if (!fs.existsSync(file)) return null;
+function countOccurrences(content: string, search: string): number {
+  return (content.match(escapeRegexGlobal(search)) || []).length;
+}
 
-  const content = fs.readFileSync(file, 'utf-8');
+function escapeRegexGlobal(str: string): RegExp {
+  return new RegExp(str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+}
+
+export function extractDocstring(file: string, symbolName: string, projectRoot?: string): string | null {
+  const resolved = projectRoot ? validatePath(file, projectRoot) : file;
+  if (!resolved || !fs.existsSync(resolved)) return null;
+
+  const content = fs.readFileSync(resolved, 'utf-8');
   const lines = content.split('\n');
-  const symbolLine = lines.findIndex((l) =>
-    l.includes(`function ${symbolName}`) ||
-    l.includes(`class ${symbolName}`) ||
-    l.includes(`const ${symbolName}`) ||
-    l.includes(`${symbolName}(`),
-  );
+  const symbolLine = lines.findIndex((l) => {
+    // Skip lines that are inside string literals or comments
+    const codePart = l.replace(/("[^"]*"|'[^']*'|`[^`]*`|\/\/.*|\/\*.*?\*\/)/g, '');
+    return (
+      codePart.includes(`function ${symbolName}`) ||
+      codePart.includes(`class ${symbolName}`) ||
+      codePart.includes(`const ${symbolName}`) ||
+      codePart.includes(`${symbolName}(`)
+    );
+  });
 
   if (symbolLine < 0) return null;
 
