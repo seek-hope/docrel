@@ -30,6 +30,12 @@ export function docrelStatus(db: Database.Database): StatusReport {
         "SELECT COUNT(*) as c FROM changelog WHERE sync_status = 'pending'",
       ).get() as { c: number }).c;
 
+      // Query the latest scan timestamp from the database
+      const lastScanRow = db.prepare(
+        'SELECT MAX(updated_at) as lastScan FROM symbols'
+      ).get() as { lastScan: string | null } | undefined;
+      const lastScan = lastScanRow?.lastScan ?? null;
+
       return {
         totalSymbols,
         linkedSymbols,
@@ -39,7 +45,7 @@ export function docrelStatus(db: Database.Database): StatusReport {
         totalDocs,
         syncPercentage: totalDocs > 0 ? Math.round((syncedDocs / totalDocs) * 100) : 100,
         pendingChanges,
-        lastScan: null as string | null,
+        lastScan,
       };
     })();
   } catch (err: any) {
