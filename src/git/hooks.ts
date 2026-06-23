@@ -49,6 +49,13 @@ export async function postCommitHook(
   const log = await git.log({ maxCount: 1 });
   if (!log.latest) return;
 
+  // Check if the commit has a parent (fails on first commit)
+  const hasParent = await git.raw(['rev-parse', `${log.latest.hash}^`])
+    .then(() => true)
+    .catch(() => false);
+
+  if (!hasParent) return;
+
   const diff = await git.diff([`${log.latest.hash}^`, log.latest.hash]);
   if (!diff) return;
 
@@ -92,7 +99,10 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-docrel impact $(git diff --name-only HEAD~1..HEAD 2>/dev/null || echo "")
+changed=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || echo "")
+if [ -n "$changed" ]; then
+  docrel impact -- $changed
+fi
 `;
 
   const prePushScript = `#!/bin/sh
@@ -105,9 +115,23 @@ if [ $? -ne 0 ]; then
 fi
 `;
 
-  fs.writeFileSync(preCommitPath, preCommitScript, { mode: 0o755 });
-  fs.writeFileSync(postCommitPath, postCommitScript, { mode: 0o755 });
-  fs.writeFileSync(prePushPath, prePushScript, { mode: 0o755 });
+  const hooks = [
+    { path: preCommitPath, script: preCommitScript, name: 'pre-commit' },
+    { path: postCommitPath, script: postCommitScript, name: 'post-commit' },
+    { path: prePushPath, script: prePushScript, name: 'pre-push' },
+  ];
+
+  for (const hook of hooks) {
+    if (fs.existsSync(hook.path)) {
+      console.warn(`DocRel: ${hook.name} hook already exists — skipping (use --force to override)`);
+      continue;
+    }
+    try {
+      fs.writeFileSync(hook.path, hook.script, { mode: 0o755 });
+    } catch (err: any) {
+      throw new Error(`Failed to install ${hook.name} hook: ${err.message}`);
+    }
+  }
 
   console.log('DocRel hooks installed in .git/hooks/');
 }
