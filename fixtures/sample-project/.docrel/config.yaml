@@ -1,0 +1,12 @@
+# fixtures/sample-project/.docrel/config.yaml
+project: sample-project
+doc_dirs:
+  - docs
+  - README.md
+code_dirs:
+  - src
+strategies:
+  inline: auto_update
+  standalone: auto_update
+  generated: auto_update
+  architecture: mark_stale
