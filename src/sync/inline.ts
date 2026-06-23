@@ -18,6 +18,22 @@ const MAX_SEARCH_LENGTH = 10_000; // Practical limit to prevent ReDoS from craft
 /** Resolve and validate that filePath is within projectRoot. Returns resolved path or null. */
 import { validatePath, escapeRegex, escapeRegexGlobal } from '../utils/fs.js';
 
+// ---------------------------------------------------------------------------
+// Doc style detection
+// ---------------------------------------------------------------------------
+
+type DocStyle = 'jsdoc' | 'python' | 'go' | 'rust';
+
+function detectDocStyle(file: string): DocStyle {
+  const ext = path.extname(file).toLowerCase();
+  switch (ext) {
+    case '.py':  return 'python';
+    case '.go':  return 'go';
+    case '.rs':  return 'rust';
+    default:     return 'jsdoc'; // .ts .tsx .js .jsx .mjs .cjs .mts .cts
+  }
+}
+
 export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): boolean {
   const resolved = validatePath(input.file, projectRoot);
   if (!resolved) {
@@ -63,116 +79,160 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   let replaced = false;
 
-  // Compute occurrence counts on the ORIGINAL content before any mutations.
-  // Strip all comments and strings from the content used to count signature
-  // occurrences — prevents the old signature text inside a docstring from
-  // inflating the count and causing the signature replacement to be skipped.
-  // Strip ALL block comments (including JSDoc) first, then per-line
-  // comments and strings, so JSDoc body lines (e.g., '* Processes login()')
-  // do not inflate the occurrence count.
-  const contentNoComments = stripCommentsAndStrings(stripAllBlockComments(content));
-  // Check for empty input separately from countOccurrences returning -1
-  // (which means the search string exceeds MAX_SEARCH_LENGTH).
-  // Previously both cases set sigCount/docCount to -1, conflating "empty input"
-  // with "oversized search string" in the warning messages below.
-  const sigInputEmpty = !input.oldSignature?.trim() || !input.newSignature?.trim();
-  const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
-  const sigCount = sigInputEmpty
-    ? -2 : countOccurrences(contentNoComments, input.oldSignature);
-  // Use content with non-JSDoc comments and strings stripped for docstring
-  // counting. This prevents oldDocstring text appearing inside string literals
-  // or non-JSDoc comments from inflating the count. JSDoc comments (/** */),
-  // line comments (//), and string literals are stripped, so only the actual
-  // docstring in the JSDoc block should produce a match.
-  const contentNoJsdocStrings = stripNonJsdocBlockComments(content);
-  const docCount = docInputEmpty
-    ? -2 : countOccurrences(contentNoJsdocStrings, input.oldDocstring);
+  const style = detectDocStyle(input.file);
 
-  // Distinguish aborted searches (>10,000 char) from genuinely empty inputs.
-  // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH.
-  if (sigCount === -2) {
-    console.warn('DocRel: updateInlineDoc skipped signature — old or new signature is empty');
-  } else if (sigCount === -1) {
-    console.warn(`DocRel: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
-  }
-  if (docCount === -2) {
-    console.warn('DocRel: updateInlineDoc skipped docstring — old or new docstring is empty');
-  } else if (docCount === -1) {
-    console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
-  }
-
-  // Diagnostic: log when non-comment signature count differs significantly
-  // from full-content count. Comment-stripped vs full-content count differences
-  // are expected when signatures appear in JSDoc example blocks — the guards at
-  // lines 105-108 and 140-143 already protect against actual mismatches.
-  if (sigCount >= 0) {
-    const fullCount = countOccurrences(content, input.oldSignature);
-    if (Math.abs(sigCount - fullCount) > 1) {
-      console.debug(`DocRel: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
-    }
-  }
-
-  if (sigCount === 1) {
-    // Guard against replacing the wrong occurrence: if the old signature
-    // appears once in non-comment code but multiple times in the full content
-    // (e.g., once in a comment before the definition), skip the replacement
-    // to avoid corrupting the wrong location.
-    if (countOccurrences(content, input.oldSignature) !== 1) {
-      console.warn(`DocRel: updateInlineDoc skipped signature replacement — old signature count mismatch (non-comment: 1, full: ${countOccurrences(content, input.oldSignature)})`);
+  // ------------------------------------------------------------------
+  // Non-JSDoc languages: use language-specific docstring replacement
+  // ------------------------------------------------------------------
+  if (style !== 'jsdoc') {
+    const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
+    if (docInputEmpty) {
+      console.warn('DocRel: updateInlineDoc skipped docstring — old or new docstring is empty');
       return false;
     }
-    // Use function-based replacement to avoid $ special-pattern injection.
-    // String.replace interprets $&, $', $`, $$, and $n as special patterns,
-    // which would silently corrupt replacement text containing these sequences.
-    content = content.replace(input.oldSignature, () => input.newSignature);
+
+    let result: string | null = null;
+    switch (style) {
+      case 'python':
+        result = replacePythonDocstring(content, input.symbolName, input.oldDocstring, input.newDocstring);
+        break;
+      case 'go':
+        result = replaceGoDocComment(content, input.symbolName, input.oldDocstring, input.newDocstring);
+        break;
+      case 'rust':
+        result = replaceRustDocComment(content, input.symbolName, input.oldDocstring, input.newDocstring);
+        break;
+    }
+
+    if (result === null) {
+      console.warn(`DocRel: updateInlineDoc — could not replace ${style} docstring for ${input.symbolName} in ${input.file}`);
+      return false;
+    }
+
+    content = result;
     replaced = true;
-  } else if (sigCount > 1) {
-    console.warn(`DocRel: updateInlineDoc skipped signature — old signature count is ${sigCount} (expected 1)`);
-  }
-  // If count is 0 or >1, skip to avoid replacing wrong text
 
-  if (docCount === 1) {
-    content = content.replace(input.oldDocstring, () => input.newDocstring);
-    replaced = true;
-  } else if (docCount > 1) {
-    console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
-  }
+    // Post-replacement sanity: verify new docstring appears exactly once
+    if (countOccurrences(content, input.newDocstring) !== 1) {
+      console.warn('DocRel: updateInlineDoc post-validation failed — new docstring count != 1');
+      return false;
+    }
+  } else {
+    // ------------------------------------------------------------------
+    // JSDoc (TypeScript / JavaScript) path — existing logic unchanged
+    // ------------------------------------------------------------------
 
-  // If the signature was supposed to be replaced but was skipped due to
-  // ambiguity (sigCount > 1), refuse to return true even when the docstring
-  // replacement succeeded. A stale signature paired with a fresh docstring
-  // would incorrectly mark the doc as in_sync when it's only partially updated.
-  if (replaced && sigCount > 1) {
-    console.warn('DocRel: updateInlineDoc — signature ambiguous, refusing partial update');
-    return false;
-  }
-  // If the signature was not found (sigCount === 0) and the caller expected
-  // a signature replacement (sigInputEmpty === false), refuse to return true
-  // even when the docstring was successfully replaced. Otherwise the doc is
-  // partially updated (new docstring, stale signature) but permanently marked
-  // as in_sync — future scans won't detect the stale signature.
-  if (replaced && sigCount === 0 && sigInputEmpty === false) {
-    console.warn('DocRel: updateInlineDoc — signature missing from source, refusing partial update');
-    return false;
-  }
+    // Compute occurrence counts on the ORIGINAL content before any mutations.
+    // Strip all comments and strings from the content used to count signature
+    // occurrences — prevents the old signature text inside a docstring from
+    // inflating the count and causing the signature replacement to be skipped.
+    // Strip ALL block comments (including JSDoc) first, then per-line
+    // comments and strings, so JSDoc body lines (e.g., '* Processes login()')
+    // do not inflate the occurrence count.
+    const contentNoComments = stripCommentsAndStrings(stripAllBlockComments(content));
+    // Check for empty input separately from countOccurrences returning -1
+    // (which means the search string exceeds MAX_SEARCH_LENGTH).
+    // Previously both cases set sigCount/docCount to -1, conflating "empty input"
+    // with "oversized search string" in the warning messages below.
+    const sigInputEmpty = !input.oldSignature?.trim() || !input.newSignature?.trim();
+    const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
+    const sigCount = sigInputEmpty
+      ? -2 : countOccurrences(contentNoComments, input.oldSignature);
+    // Use content with non-JSDoc comments and strings stripped for docstring
+    // counting. This prevents oldDocstring text appearing inside string literals
+    // or non-JSDoc comments from inflating the count. JSDoc comments (/** */),
+    // line comments (//), and string literals are stripped, so only the actual
+    // docstring in the JSDoc block should produce a match.
+    const contentNoJsdocStrings = stripNonJsdocBlockComments(content);
+    const docCount = docInputEmpty
+      ? -2 : countOccurrences(contentNoJsdocStrings, input.oldDocstring);
 
-  if (!replaced) {
-    console.warn(`DocRel: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
-    return false;
-  }
+    // Distinguish aborted searches (>10,000 char) from genuinely empty inputs.
+    // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH.
+    if (sigCount === -2) {
+      console.warn('DocRel: updateInlineDoc skipped signature — old or new signature is empty');
+    } else if (sigCount === -1) {
+      console.warn(`DocRel: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+    }
+    if (docCount === -2) {
+      console.warn('DocRel: updateInlineDoc skipped docstring — old or new docstring is empty');
+    } else if (docCount === -1) {
+      console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+    }
 
-  // Post-replacement validation: verify the new signature and docstring appear
-  // exactly once in the final content. A count != 1 indicates a mis-replacement.
-  // F20: Use sigInputEmpty/docInputEmpty as guards instead of sigCount/docCount,
-  // so validation runs whenever a replacement was expected regardless of whether
-  // the old count was exactly 1.
-  if (sigInputEmpty === false && countOccurrences(content, input.newSignature) !== 1) {
-    console.warn('DocRel: updateInlineDoc post-validation failed — new signature count != 1');
-    return false;
-  }
-  if (docInputEmpty === false && countOccurrences(content, input.newDocstring) !== 1) {
-    console.warn('DocRel: updateInlineDoc post-validation failed — new docstring count != 1');
-    return false;
+    // Diagnostic: log when non-comment signature count differs significantly
+    // from full-content count. Comment-stripped vs full-content count differences
+    // are expected when signatures appear in JSDoc example blocks — the guards at
+    // lines 105-108 and 140-143 already protect against actual mismatches.
+    if (sigCount >= 0) {
+      const fullCount = countOccurrences(content, input.oldSignature);
+      if (Math.abs(sigCount - fullCount) > 1) {
+        console.debug(`DocRel: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
+      }
+    }
+
+    if (sigCount === 1) {
+      // Guard against replacing the wrong occurrence: if the old signature
+      // appears once in non-comment code but multiple times in the full content
+      // (e.g., once in a comment before the definition), skip the replacement
+      // to avoid corrupting the wrong location.
+      if (countOccurrences(content, input.oldSignature) !== 1) {
+        console.warn(`DocRel: updateInlineDoc skipped signature replacement — old signature count mismatch (non-comment: 1, full: ${countOccurrences(content, input.oldSignature)})`);
+        return false;
+      }
+      // Use function-based replacement to avoid $ special-pattern injection.
+      // String.replace interprets $&, $', $`, $$, and $n as special patterns,
+      // which would silently corrupt replacement text containing these sequences.
+      content = content.replace(input.oldSignature, () => input.newSignature);
+      replaced = true;
+    } else if (sigCount > 1) {
+      console.warn(`DocRel: updateInlineDoc skipped signature — old signature count is ${sigCount} (expected 1)`);
+    }
+    // If count is 0 or >1, skip to avoid replacing wrong text
+
+    if (docCount === 1) {
+      content = content.replace(input.oldDocstring, () => input.newDocstring);
+      replaced = true;
+    } else if (docCount > 1) {
+      console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
+    }
+
+    // If the signature was supposed to be replaced but was skipped due to
+    // ambiguity (sigCount > 1), refuse to return true even when the docstring
+    // replacement succeeded. A stale signature paired with a fresh docstring
+    // would incorrectly mark the doc as in_sync when it's only partially updated.
+    if (replaced && sigCount > 1) {
+      console.warn('DocRel: updateInlineDoc — signature ambiguous, refusing partial update');
+      return false;
+    }
+    // If the signature was not found (sigCount === 0) and the caller expected
+    // a signature replacement (sigInputEmpty === false), refuse to return true
+    // even when the docstring was successfully replaced. Otherwise the doc is
+    // partially updated (new docstring, stale signature) but permanently marked
+    // as in_sync — future scans won't detect the stale signature.
+    if (replaced && sigCount === 0 && sigInputEmpty === false) {
+      console.warn('DocRel: updateInlineDoc — signature missing from source, refusing partial update');
+      return false;
+    }
+
+    if (!replaced) {
+      console.warn(`DocRel: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
+      return false;
+    }
+
+    // Post-replacement validation: verify the new signature and docstring appear
+    // exactly once in the final content. A count != 1 indicates a mis-replacement.
+    // F20: Use sigInputEmpty/docInputEmpty as guards instead of sigCount/docCount,
+    // so validation runs whenever a replacement was expected regardless of whether
+    // the old count was exactly 1.
+    if (sigInputEmpty === false && countOccurrences(content, input.newSignature) !== 1) {
+      console.warn('DocRel: updateInlineDoc post-validation failed — new signature count != 1');
+      return false;
+    }
+    if (docInputEmpty === false && countOccurrences(content, input.newDocstring) !== 1) {
+      console.warn('DocRel: updateInlineDoc post-validation failed — new docstring count != 1');
+      return false;
+    }
   }
 
   // Atomic write: use project-local temp directory with restrictive permissions.
@@ -212,6 +272,252 @@ function countOccurrences(content: string, search: string): number {
   return (content.match(regex) || []).length;
 }
 
+// ---------------------------------------------------------------------------
+// Python docstring extraction
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the colon that ends a Python def/class header, handling:
+ *  - multi-line signatures (bracket counting)
+ *  - inline comments after the colon
+ *  - type annotations after the colon (-> type:)
+ * Returns the index just past the colon or -1.
+ */
+function findPythonHeaderEnd(content: string, start: number): number {
+  let i = start;
+  let parenDepth = 0;
+  while (i < content.length) {
+    const ch = content[i];
+    if (ch === '(' || ch === '[' || ch === '{') {
+      parenDepth++;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      parenDepth--;
+    } else if (ch === '#' && parenDepth <= 0) {
+      // Inline comment — skip rest of line
+      while (i < content.length && content[i] !== '\n') i++;
+      continue;
+    } else if (ch === ':' && parenDepth <= 0) {
+      return i;
+    }
+    i++;
+  }
+  return -1;
+}
+
+function extractPythonDocstring(content: string, symbolName: string): string | null {
+  const escaped = escapeRegex(symbolName);
+  // Match 'def name' or 'class Name' — async def also matched
+  const defRegex = new RegExp(
+    `(?:^|\\n)([ \\t]*)(?:async\\s+)?def\\s+${escaped}\\b|` +
+    `(?:^|\\n)([ \\t]*)class\\s+${escaped}\\b`,
+    'm',
+  );
+  const match = defRegex.exec(content);
+  if (!match) return null;
+
+  const headerEnd = findPythonHeaderEnd(content, match.index + match[0].length);
+  if (headerEnd < 0) return null;
+
+  // Skip past colon, optional return-type annotation, and inline comment
+  let i = headerEnd + 1;
+  // Skip whitespace and type-annotation on the same line (-> bool:)
+  while (i < content.length && content[i] !== '\n' && content[i] !== '#') i++;
+  if (content[i] === '#') {
+    while (i < content.length && content[i] !== '\n') i++;
+  }
+  // Now i points at \n or EOF — skip the newline
+  if (i < content.length && content[i] === '\n') i++;
+
+  // Walk forward through body lines: skip blanks, skip comments,
+  // then the first triple-quoted string is the docstring.
+  while (i < content.length) {
+    const lineStart = i;
+    // Skip leading whitespace
+    while (i < content.length && (content[i] === ' ' || content[i] === '\t')) i++;
+
+    if (i >= content.length) return null;
+
+    const ch = content[i];
+
+    // Blank line
+    if (ch === '\n' || ch === '\r') { i++; continue; }
+
+    // Comment line
+    if (ch === '#') {
+      while (i < content.length && content[i] !== '\n') i++;
+      continue;
+    }
+
+    // Check for triple-quoted string (""" or ''')
+    const triple = content.slice(i, i + 3);
+    if (triple === '"""' || triple === "'''") {
+      const docStart = i;
+      i += 3;
+      const closeIdx = content.indexOf(triple, i);
+      if (closeIdx < 0) return null;
+      // Return the entire triple-quoted string including delimiters
+      return content.slice(docStart, closeIdx + 3);
+    }
+
+    // First non-blank non-comment line is not a triple-quoted string
+    return null;
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Go doc-comment extraction
+// ---------------------------------------------------------------------------
+
+function extractGoDocstring(content: string, symbolName: string): string | null {
+  const escaped = escapeRegex(symbolName);
+  // Match `func (receiver) Name(` or `func Name(` or `type Name `
+  const defRegex = new RegExp(
+    `(?:^|\\n)(?:func\\s+(?:\\([^)]*\\)\\s+)?${escaped}\\s*\\(|type\\s+${escaped}\\s+)`,
+    'm',
+  );
+  const match = defRegex.exec(content);
+  if (!match) return null;
+
+  // Compute line index for the definition — skip the (?:^|\n) prefix so
+  // the index lands on the first character of the func/type line.
+  const defStart = match.index + (match.index === 0 ? 0 : 1);
+  const before = content.slice(0, defStart);
+  const defLineIdx = before.split('\n').length - 1;
+  const lines = content.split('\n');
+
+  // Walk backwards collecting non-doc // lines (// that are NOT ///)
+  const commentLines: string[] = [];
+  for (let j = defLineIdx - 1; j >= 0; j--) {
+    const trimmed = lines[j].trim();
+    if (trimmed.startsWith('//') && !trimmed.startsWith('///')) {
+      commentLines.unshift(lines[j]);
+    } else if (trimmed === '') {
+      // Empty line between blocks — stop
+      if (commentLines.length > 0) break;
+    } else {
+      break;
+    }
+  }
+
+  return commentLines.length > 0 ? commentLines.join('\n') : null;
+}
+
+// ---------------------------------------------------------------------------
+// Rust doc-comment extraction
+// ---------------------------------------------------------------------------
+
+function extractRustDocstring(content: string, symbolName: string): string | null {
+  const escaped = escapeRegex(symbolName);
+  // Match fn/struct/trait/impl definitions — pub / async / unsafe are optional
+  const defRegex = new RegExp(
+    `(?:^|\\n)(?:pub(?:\\s*\\(\\s*crate\\s*\\))?\\s+)?(?:default\\s+)?(?:async\\s+)?(?:unsafe\\s+)?fn\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?struct\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?(?:unsafe\\s+)?trait\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?impl(?:\\s*<[^>]*>)?(?:\\s+\\w+)?\\s+for\\s+${escaped}\\b|` +
+    `(?:^|\\n)impl(?:\\s*<[^>]*>)?\\s+${escaped}\\b`,
+    'm',
+  );
+  const match = defRegex.exec(content);
+  if (!match) return null;
+
+  // Skip the (?:^|\n) prefix so defLineIdx lands on the first char of the
+  // fn/struct/trait/impl line.
+  const defStart = match.index + (match.index === 0 ? 0 : 1);
+  const before = content.slice(0, defStart);
+  const defLineIdx = before.split('\n').length - 1;
+  const lines = content.split('\n');
+  const commentLines: string[] = [];
+  for (let j = defLineIdx - 1; j >= 0; j--) {
+    const trimmed = lines[j].trim();
+    if (trimmed.startsWith('///') || trimmed.startsWith('//!')) {
+      commentLines.unshift(lines[j]);
+    } else if (trimmed === '') {
+      if (commentLines.length > 0) break;
+    } else if (trimmed.startsWith('#[')) {
+      // Attributes like #[derive(...)] / #[cfg(...)] — keep walking up
+      continue;
+    } else {
+      break;
+    }
+  }
+
+  return commentLines.length > 0 ? commentLines.join('\n') : null;
+}
+
+// ---------------------------------------------------------------------------
+// Language-specific docstring replacement helpers (updateInlineDoc)
+// ---------------------------------------------------------------------------
+
+/**
+ * For Python: locate the triple-quoted docstring after the symbol definition
+ * and replace `old` with `new`. Returns modified content or null.
+ */
+function replacePythonDocstring(
+  content: string,
+  symbolName: string,
+  oldDocstring: string,
+  newDocstring: string,
+): string | null {
+  // Extract to find exact bounds of the existing docstring
+  const existing = extractPythonDocstring(content, symbolName);
+  if (!existing) return null;
+
+  // Verify the old docstring matches what's actually in the file
+  if (existing !== oldDocstring) {
+    console.warn(
+      `DocRel: replacePythonDocstring — old docstring mismatch.\n` +
+      `  expected: ${oldDocstring.slice(0, 80)}...\n` +
+      `  found:    ${existing.slice(0, 80)}...`,
+    );
+    return null;
+  }
+
+  // Simple string replacement — the docstring text is unique as a triple-quoted
+  // string immediately after the definition header.
+  const idx = content.indexOf(oldDocstring);
+  if (idx < 0) return null;
+
+  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+}
+
+/**
+ * For Go: locate the // comment block before the symbol and replace it.
+ */
+function replaceGoDocComment(
+  content: string,
+  symbolName: string,
+  oldDocstring: string,
+  newDocstring: string,
+): string | null {
+  const existing = extractGoDocstring(content, symbolName);
+  if (!existing || existing !== oldDocstring) return null;
+
+  const idx = content.indexOf(oldDocstring);
+  if (idx < 0) return null;
+
+  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+}
+
+/**
+ * For Rust: locate the /// comment block before the symbol and replace it.
+ */
+function replaceRustDocComment(
+  content: string,
+  symbolName: string,
+  oldDocstring: string,
+  newDocstring: string,
+): string | null {
+  const existing = extractRustDocstring(content, symbolName);
+  if (!existing || existing !== oldDocstring) return null;
+
+  const idx = content.indexOf(oldDocstring);
+  if (idx < 0) return null;
+
+  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+}
+
 /**
  * Extract the docstring preceding a symbol definition.
  * Uses a state-machine approach to strip comments and strings safely,
@@ -221,6 +527,8 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   if (!projectRoot) return null;
   const resolved = validatePath(file, projectRoot);
   if (!resolved) return null;
+
+  const style = detectDocStyle(file);
 
   // F13: Replace sequential existsSync/statSync/readFileSync calls on
   // `resolved` with a single fd-based approach. Each transition between
@@ -241,6 +549,20 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
       try { fs.closeSync(fd); } catch { /* best effort */ }
     }
   }
+
+  // Dispatch to language-specific extraction
+  switch (style) {
+    case 'python':
+      return extractPythonDocstring(content, symbolName);
+    case 'go':
+      return extractGoDocstring(content, symbolName);
+    case 'rust':
+      return extractRustDocstring(content, symbolName);
+    default:
+      break; // JSDoc path below
+  }
+
+  // --- JSDoc (TypeScript / JavaScript) path ---
   // Strip all multi-line block comments (/* ... */) from the full content
   // before per-line processing. Use a state machine instead of a regex to
   // avoid catastrophic backtracking on files with unclosed block comments.
