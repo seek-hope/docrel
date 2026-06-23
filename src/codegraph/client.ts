@@ -15,6 +15,9 @@ export interface ExploreResult {
     signature?: string;
   }>;
   files: string[];
+  /** F5: True when the output was truncated. Callers should check this
+   *  and warn that some symbols may not have been scanned. */
+  truncated?: boolean;
 }
 
 export interface ImpactResult {
@@ -25,6 +28,7 @@ export interface ImpactResult {
     file: string;
     relation: string;
   }>;
+  truncated?: boolean;
 }
 
 export interface SearchResult {
@@ -34,6 +38,7 @@ export interface SearchResult {
     file: string;
     line: number;
   }>;
+  truncated?: boolean;
 }
 
 export class CodegraphClient {
@@ -286,11 +291,15 @@ export class CodegraphClient {
 
   /** Ensure the client is connected and usable. Throws if not. */
   private async ensureConnected(): Promise<Client> {
+    // F16: Capture the client locally after connect() to avoid a TOCTOU
+    // race where a concurrent isAvailable() call sets this.client = null
+    // between the await resolving and the null check.
     await this.connect();
-    if (!this.client) {
+    const c = this.client;
+    if (!c) {
       throw new Error('Codegraph client is not connected');
     }
-    return this.client;
+    return c;
   }
 
   async explore(query: string, maxFiles = 12): Promise<ExploreResult> {
@@ -353,6 +362,7 @@ export class CodegraphClient {
     const files: string[] = [];
     let currentFile = '';
     let currentLine = 0;
+    let truncated = false;
 
     if (!content) return { symbols: [], files: [] };
 
@@ -361,6 +371,9 @@ export class CodegraphClient {
     if (lines.length > MAX_OUTPUT_LINES) {
       console.warn(`DocRel: explore output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
+      // F5: Signal truncation to callers so they can warn about potential
+      // symbol loss. Continue parsing partial results (better than nothing).
+      truncated = true;
     }
     for (const line of lines) {
       // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
@@ -423,8 +436,16 @@ export class CodegraphClient {
       const linesCount = content.split('\n').length;
       console.warn(`DocRel: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
     }
+    // F18: Warn when only one of symbols/files is empty — partial parse
+    // may indicate a codegraph output format change.
+    if (content && symbols.length === 0 && files.length > 0) {
+      console.warn(`DocRel: explore parsed ${files.length} files but 0 symbols — codegraph output format may have changed.`);
+    }
+    if (content && files.length === 0 && symbols.length > 0) {
+      console.warn(`DocRel: explore parsed ${symbols.length} symbols but 0 files — codegraph output format may have changed.`);
+    }
 
-    return { symbols, files };
+    return { symbols, files, truncated };
   }
 
   private parseImpactOutput(symbol: string, content: string): ImpactResult {
@@ -432,9 +453,11 @@ export class CodegraphClient {
 
     const MAX_OUTPUT_LINES = 100_000;
     let lines = content.split('\n');
+    let truncated = false;
     if (lines.length > MAX_OUTPUT_LINES) {
       console.warn(`DocRel: impact output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
+      truncated = true;
     }
     const affected: ImpactResult['affected'] = [];
 
@@ -449,7 +472,7 @@ export class CodegraphClient {
       }
     }
 
-    return { symbol, affected };
+    return { symbol, affected, truncated };
   }
 
   private parseSearchOutput(content: string): SearchResult {
@@ -457,9 +480,11 @@ export class CodegraphClient {
 
     const MAX_OUTPUT_LINES = 100_000;
     let lines = content.split('\n');
+    let truncated = false;
     if (lines.length > MAX_OUTPUT_LINES) {
       console.warn(`DocRel: search output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
+      truncated = true;
     }
     const items: SearchResult['items'] = [];
 
@@ -470,7 +495,7 @@ export class CodegraphClient {
       }
     }
 
-    return { items };
+    return { items, truncated };
   }
 }
 
