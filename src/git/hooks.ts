@@ -1,7 +1,7 @@
 import { simpleGit } from 'simple-git';
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
-import type { CodegraphClient } from '../codegraph/client.js';
+import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { docrelCheck } from '../tools/check.js';
 import { scanProject } from '../discovery/scanner.js';
@@ -11,7 +11,7 @@ import path from 'node:path';
 export async function preCommitHook(
   projectRoot: string,
   db: Database.Database,
-  codegraph: CodegraphClient,
+  extractor: SymbolExtractor,
   config: DocRelConfig,
 ): Promise<{ allowed: boolean; message: string }> {
   try {
@@ -47,7 +47,7 @@ export async function preCommitHook(
 export async function postCommitHook(
   projectRoot: string,
   db: Database.Database,
-  codegraph: CodegraphClient,
+  extractor: SymbolExtractor,
   config: DocRelConfig,
 ): Promise<void> {
   try {
@@ -82,7 +82,7 @@ export async function postCommitHook(
     const diff = await git.diff([`${log.latest.hash}^`, log.latest.hash]);
 
     // Re-scan affected symbols and mark docs as stale where needed
-    await scanProject(codegraph, db, config);
+    await scanProject(extractor, db, config);
   } catch (err: any) {
     // Log a prominent warning with actionable next steps. If the scan fails
     // (e.g., codegraph not running), the commit succeeds but docs are not

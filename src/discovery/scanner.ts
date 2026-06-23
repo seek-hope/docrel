@@ -1,16 +1,9 @@
 // src/discovery/scanner.ts
 import type Database from 'better-sqlite3';
-import type { CodegraphClient } from '../codegraph/client.js';
+import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
-
-/** File extension → language name mapping (module-level, created once). */
-const LANG_MAP: Record<string, string> = {
-  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-  py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby',
-  cs: 'csharp', cpp: 'cpp', c: 'c', swift: 'swift', kt: 'kotlin',
-};
 
 /** Escape :: in FQN components to prevent symbol ID collisions. */
 function escFqn(s: string): string {
@@ -35,7 +28,7 @@ export interface ScanReport {
 }
 
 export async function scanProject(
-  codegraph: CodegraphClient,
+  extractor: SymbolExtractor,
   db: Database.Database,
   config: DocRelConfig,
 ): Promise<ScanReport> {
@@ -49,19 +42,21 @@ export async function scanProject(
   let updatedSymbols = 0;
   const scannedIds = new Set<string>();
 
+  const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
+
   for (const codeDir of config.code_dirs) {
     try {
-      // Use codegraph_explore to discover all symbols in each code directory
-      const result = await codegraph.explore(`symbols in ${codeDir}/`, 50);
+      // Use the pluggable extractor to discover all symbols in each code directory
+      const symbols = await extractor.extract(codeDir, projectRoot);
 
       const MAX_SYMBOLS_PER_DIR = 10000;
       let dirSymbolCount = 0;
-      for (const sym of result.symbols) {
+      for (const sym of symbols) {
         if (dirSymbolCount++ >= MAX_SYMBOLS_PER_DIR) {
           console.warn(`DocRel: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
           break;
         }
-        const lang = detectLanguage(sym.file);
+        const lang = sym.language;
         // Include line number in the FQN to disambiguate same-named symbols
         // in different scopes within the same file (e.g., method foo in class A
         // and method foo in class B, both in src/index.ts).
@@ -160,18 +155,6 @@ export async function scanProject(
   ).run();
 
   return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols, failedDirs };
-}
-
-function detectLanguage(file: string): string {
-  const parts = file.split('.');
-  // Files without extensions (Makefile, Dockerfile, .gitignore, etc.)
-  // should not use the filename as a language label.
-  if (parts.length <= 1) return 'unknown';
-
-  const ext = parts[parts.length - 1]?.toLowerCase();
-  if (!ext) return 'unknown';
-
-  return LANG_MAP[ext] ?? ext;
 }
 
 function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' | 'unknown' {

@@ -8,6 +8,9 @@ import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import type { DocRelConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
+import { CodegraphExtractor } from './extractors/codegraph.js';
+import { BuiltinExtractor } from './extractors/builtin.js';
+import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
 import { docrelImpact } from './tools/impact.js';
@@ -31,6 +34,7 @@ const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
 
 let config: DocRelConfig;
 let db: ReturnType<typeof getDb>;
+let extractor: SymbolExtractor;
 let codegraph: CodegraphClient;
 
 try {
@@ -38,6 +42,10 @@ try {
   db = getDb(projectRoot);
   runMigrations(db);
   codegraph = new CodegraphClient(config.codegraph?.command);
+  const codegraphExtractor = new CodegraphExtractor(codegraph);
+  const builtinExtractor = new BuiltinExtractor();
+  // Try codegraph; fall back to builtin regex-based extraction
+  extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
   console.error('Failed to initialize DocRel:', err.message);
   process.exit(1);

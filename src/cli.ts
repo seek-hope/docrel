@@ -7,6 +7,9 @@ import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
+import { CodegraphExtractor } from './extractors/codegraph.js';
+import { BuiltinExtractor } from './extractors/builtin.js';
+import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
 import { docrelImpact } from './tools/impact.js';
@@ -40,6 +43,7 @@ const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
 
 let config: ReturnType<typeof loadConfig>;
 let db: ReturnType<typeof getDb>;
+let extractor: SymbolExtractor;
 let codegraph: CodegraphClient;
 
 try {
@@ -47,6 +51,10 @@ try {
   db = getDb(projectRoot);
   runMigrations(db);
   codegraph = new CodegraphClient(config.codegraph?.command);
+  const codegraphExtractor = new CodegraphExtractor(codegraph);
+  const builtinExtractor = new BuiltinExtractor();
+  // Try codegraph; fall back to builtin regex-based extraction
+  extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
   console.error('DocRel initialization failed:', errMsg(err));
   exit(1);
@@ -110,12 +118,12 @@ strategies:
 
       // 5. Scan codebase (unless --no-scan)
       if (opts.scan) {
-        const available = await codegraph.isAvailable();
+        const available = await extractor.isAvailable();
         if (available) {
-          const report = await scanProject(codegraph, db, config);
+          const report = await scanProject(extractor, db, config);
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
         } else {
-          steps.push('Skipped scan: codegraph not available (run \'docrel scan\' later)');
+          steps.push('Skipped scan: no extractor available (run \'docrel scan\' later)');
         }
       } else {
         steps.push('Skipped scan (run \'docrel scan\' later or omit --no-scan)');
@@ -276,16 +284,16 @@ program
 
 program
   .command('scan')
-  .description('Scan the codebase via codegraph and discover all symbols')
+  .description('Scan the codebase and discover all symbols')
   .action(async () => {
     try {
-      const available = await codegraph.isAvailable();
+      const available = await extractor.isAvailable();
       if (!available) {
-        console.error('Codegraph is not available. Start codegraph first, or set codegraph.command in .docrel/config.yaml');
+        console.error('No symbol extractor is available. Install codegraph or check code_dirs in .docrel/config.yaml');
         exit(1);
       }
       console.log('Scanning codebase...');
-      const report = await scanProject(codegraph, db, config);
+      const report = await scanProject(extractor, db, config);
       console.log(JSON.stringify(report, null, 2));
     } catch (err: any) {
       console.error('Scan failed:', errMsg(err));
