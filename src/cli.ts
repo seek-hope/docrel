@@ -433,13 +433,18 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'markdown')
   .option('--json', 'Shortcut for --format json')
   .action(async (opts) => {
-    const { docrelReview, formatReview } = await import('./tools/review.js');
-    const report = docrelReview(db, projectRoot);
-    const fmt = opts.json ? 'json' : opts.format;
-    if (fmt === 'json') {
-      console.log(JSON.stringify(report, null, 2));
-    } else {
-      console.log(formatReview(report));
+    try {
+      const { docrelReview, formatReview } = await import('./tools/review.js');
+      const report = docrelReview(db, projectRoot);
+      const fmt = opts.json ? 'json' : opts.format;
+      if (fmt === 'json') {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(formatReview(report));
+      }
+    } catch (err: any) {
+      console.error('Review failed:', errMsg(err));
+      exit(1);
     }
   });
 

@@ -4,6 +4,7 @@ import type { SymbolRow } from '../db/symbols.js';
 import type { ParsedDocSection } from './doc-parser.js';
 import { createMapping } from '../db/mappings.js';
 import { docSectionId } from '../utils/hash.js';
+import { escapeRegex } from '../utils/fs.js';
 
 export interface AutoLinkResult {
   totalMatched: number;
@@ -72,9 +73,21 @@ function scorePair(
   const heading = section.anchor || '';
   const content = section.content || '';
 
-  // 1. Exact name match in heading (confidence 1.0)
-  if (heading.length > 0 && containsIgnoreCase(symNameClean, heading)) {
-    return { confidence: 1.0, matched: 1.0 >= minConfidence };
+  // 1. Exact word match in heading (confidence 1.0).
+  // Use word-boundary regex to prevent substring matches like symbol 'get'
+  // matching heading 'Getting Started' or 'a' matching any heading.
+  // Left side uses (?:^|\b) so symbols starting with non-word chars (e.g.
+  // $special_fn) still match at the start of the heading.
+  if (heading.length > 0) {
+    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
+    if (wordBoundaryRe.test(heading)) {
+      return { confidence: 1.0, matched: 1.0 >= minConfidence };
+    }
+    // 1b. Substring match in heading (confidence 0.7) — weaker signal,
+    // catches partial-name matches like 'getUser' in 'getUserProfile'.
+    if (containsIgnoreCase(symNameClean, heading) && symNameClean.length >= 3) {
+      return { confidence: 0.7, matched: 0.7 >= minConfidence };
+    }
   }
 
   // 2. Backtick match (confidence 0.9) — CodeRef with refType 'backtick'
