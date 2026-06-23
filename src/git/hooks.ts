@@ -1,5 +1,5 @@
 import { simpleGit } from 'simple-git';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
@@ -155,7 +155,7 @@ export function installHooks(projectRoot: string, force = false): void {
   let docrelBin: string;
   if (!argv1 || argv1 === 'undefined') {
     try {
-      docrelBin = execSync('command -v docrel', { encoding: 'utf-8' }).trim();
+      docrelBin = execFileSync('which', ['docrel'], { encoding: 'utf-8' }).trim();
       if (!docrelBin) throw new Error('docrel not found on PATH');
       // Validate the resolved binary path against allowed prefixes and resolve
       // symlinks to prevent PATH hijacking via malicious symlinks.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { execSync, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from './db/connection.js';
@@ -306,7 +306,7 @@ program
       // Validate npm registry before executing install
       let registry: string;
       try {
-        registry = execSync('npm config get registry', { encoding: 'utf-8' }).trim();
+        registry = execFileSync('npm', ['config', 'get', 'registry'], { encoding: 'utf-8' }).trim();
       } catch {
         registry = 'https://registry.npmjs.org/';
       }
