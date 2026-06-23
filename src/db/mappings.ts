@@ -33,10 +33,12 @@ function getMapping(db: Database.Database, symbolId: string, docId: string, relT
 }
 
 export function getMappingsForSymbol(db: Database.Database, symbolId: string): MappingRow[] {
+  if (!symbolId) return [];
   return db.prepare('SELECT * FROM mappings WHERE symbol_id = ?').all(symbolId) as MappingRow[];
 }
 
 export function getMappingsForDoc(db: Database.Database, docId: string): MappingRow[] {
+  if (!docId) return [];
   return db.prepare('SELECT * FROM mappings WHERE doc_id = ?').all(docId) as MappingRow[];
 }
 
@@ -45,6 +47,7 @@ export function listAllMappings(db: Database.Database): MappingRow[] {
 }
 
 export function deleteMapping(db: Database.Database, symbolId: string, docId: string, relType: string): boolean {
+  if (!symbolId || !docId) return false;
   const info = db.prepare(
     'DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?'
   ).run(symbolId, docId, relType);
@@ -58,23 +61,18 @@ export function exportMappingsJson(db: Database.Database): Array<{
   doc_anchor: string;
   rel_type: string;
 }> {
-  try {
-    const rows = db.prepare(`
-      SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type
-      FROM mappings m
-      JOIN symbols s ON s.id = m.symbol_id
-      JOIN doc_sections d ON d.id = m.doc_id
-      ORDER BY s.name, d.file
-    `).all() as Array<{
-      symbol_name: string;
-      doc_file: string;
-      doc_anchor: string;
-      rel_type: string;
-    }>;
+  const rows = db.prepare(`
+    SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type
+    FROM mappings m
+    JOIN symbols s ON s.id = m.symbol_id
+    JOIN doc_sections d ON d.id = m.doc_id
+    ORDER BY s.name, d.file
+  `).all() as Array<{
+    symbol_name: string;
+    doc_file: string;
+    doc_anchor: string;
+    rel_type: string;
+  }>;
 
-    return rows;
-  } catch (err: any) {
-    console.error('exportMappingsJson failed:', err.message);
-    return [];
-  }
+  return rows;
 }
