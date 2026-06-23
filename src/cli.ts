@@ -13,7 +13,7 @@ import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
 import { docrelImpact } from './tools/impact.js';
-import { syncSymbol } from './sync/engine.js';
+import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelLink, docrelConfirm } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { installHooks } from './git/hooks.js';
@@ -240,12 +240,18 @@ program
 
 program
   .command('sync')
-  .description('Sync documentation for a symbol')
+  .description('Sync documentation for a symbol, or all stale docs with --all-stale')
   .option('--symbol <id>', 'Symbol ID to sync')
+  .option('--all-stale', 'Sync all stale documentation sections')
   .action(async (opts) => {
     try {
+      if (opts.allStale) {
+        const result = await syncAllStale(db, codegraph, config, projectRoot);
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
       if (!opts.symbol) {
-        console.error('Error: --symbol <id> is required');
+        console.error('Error: --symbol <id> is required (or use --all-stale)');
         exit(1);
       }
       const result = await syncSymbol(db, config, opts.symbol, projectRoot);

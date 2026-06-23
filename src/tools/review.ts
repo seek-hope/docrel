@@ -225,7 +225,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
         unlinkedCount: unlinkedSymbols.length,
         orphanedCount: orphanedSections.length,
         impliedCount: impliedReferences.length,
-        lowConfidenceCount: unreviewedMappings.length,
+        unreviewedCount: unreviewedMappings.length,
       },
     };
   } catch (err: any) {
@@ -243,7 +243,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
         unlinkedCount: 0,
         orphanedCount: 0,
         impliedCount: 0,
-        lowConfidenceCount: 0,
+        unreviewedCount: 0,
       },
     };
   }

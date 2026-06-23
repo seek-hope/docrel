@@ -16,7 +16,7 @@ import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
 import { docrelImpact } from './tools/impact.js';
-import { syncSymbol } from './sync/engine.js';
+import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { scanProject } from './discovery/scanner.js';
@@ -181,6 +181,22 @@ server.tool(
   async ({ symbol_id }) => {
     try {
       const result = await syncSymbol(db, config, symbol_id, projectRoot);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_sync_all ────────────────────────────────────────────
+server.tool(
+  'docrel_sync_all',
+  'Synchronize all stale documentation sections in batch',
+  async () => {
+    try {
+      const result = await syncAllStale(db, codegraph, config, projectRoot);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };

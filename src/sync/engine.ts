@@ -3,7 +3,9 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
 import type { DocRelConfig } from '../utils/config.js';
-import { getMappingsForSymbol } from '../db/mappings.js';
+import { getMappingsForSymbol, getMappingsForDoc } from '../db/mappings.js';
+import type { DocSectionRow } from '../db/docs.js';
+import type { CodegraphClient } from '../codegraph/client.js';
 import { getSymbol } from '../db/symbols.js';
 import { getDocSection, markDocStale, markDocSynced, markDocSyncedWithHash } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
@@ -283,6 +285,33 @@ export async function syncSymbol(
   }
 
   return result;
+}
+
+export async function syncAllStale(
+  db: Database.Database,
+  codegraph: CodegraphClient,
+  config: DocRelConfig,
+  projectRoot: string,
+): Promise<{ synced: SyncResult[]; totalStale: number }> {
+  const staleDocs = db.prepare("SELECT * FROM doc_sections WHERE status = 'stale'").all() as DocSectionRow[];
+  if (staleDocs.length === 0) {
+    return { synced: [], totalStale: 0 };
+  }
+
+  const uniqueSymbolIds = new Set<string>();
+  for (const doc of staleDocs) {
+    const mappings = getMappingsForDoc(db, doc.id);
+    for (const m of mappings) {
+      uniqueSymbolIds.add(m.symbol_id);
+    }
+  }
+
+  const synced: SyncResult[] = [];
+  for (const symbolId of uniqueSymbolIds) {
+    synced.push(await syncSymbol(db, config, symbolId, projectRoot));
+  }
+
+  return { synced, totalStale: staleDocs.length };
 }
 
 const MAX_LINES = 100_000;
