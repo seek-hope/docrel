@@ -80,14 +80,14 @@ describe('extractDocstring', () => {
   });
 
   it('returns null for non-existent file', () => {
-    expect(extractDocstring('/nonexistent/file.ts', 'foo')).toBeNull();
+    expect(extractDocstring('/nonexistent/file.ts', 'foo', tmpDir)).toBeNull();
   });
 
   it('extracts a JSDoc comment before a function', () => {
     const file = path.join(tmpDir, 'fn.ts');
     fs.writeFileSync(file, '/**\n * Does something.\n * @param x - input\n */\nfunction foo(x: number): void {}', 'utf-8');
 
-    const doc = extractDocstring(file, 'foo');
+    const doc = extractDocstring(file, 'foo', tmpDir);
     expect(doc).toBe('/**\n * Does something.\n * @param x - input\n */');
   });
 
@@ -95,14 +95,14 @@ describe('extractDocstring', () => {
     const file = path.join(tmpDir, 'fn.ts');
     fs.writeFileSync(file, 'function bar() {}', 'utf-8');
 
-    expect(extractDocstring(file, 'foo')).toBeNull();
+    expect(extractDocstring(file, 'foo', tmpDir)).toBeNull();
   });
 
   it('extracts a single-line comment before a const', () => {
     const file = path.join(tmpDir, 'const.ts');
     fs.writeFileSync(file, '// A constant\nconst foo = 42;', 'utf-8');
 
-    const doc = extractDocstring(file, 'foo');
+    const doc = extractDocstring(file, 'foo', tmpDir);
     expect(doc).toBe('// A constant');
   });
 });

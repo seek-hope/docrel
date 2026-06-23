@@ -54,19 +54,25 @@ export function docrelLink(
     // Check for SQLite constraint errors (SQLITE_CONSTRAINT = 19, includes FK, PK, UNIQUE, CHECK)
     const isConstraint = err.code?.startsWith('SQLITE_CONSTRAINT') || err.errno === 19;
     if (isConstraint) {
-      const symExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(params.symbol_id);
-      const docExists = db.prepare('SELECT 1 FROM doc_sections WHERE id = ?').get(params.doc_id);
-      let message = `Cannot ${params.action} mapping: `;
-      if (!symExists && !docExists) {
-        message += 'both symbol and document section do not exist.';
-      } else if (!symExists) {
-        message += `symbol "${params.symbol_id}" does not exist.`;
-      } else if (!docExists) {
-        message += `document section "${params.doc_id}" does not exist.`;
-      } else {
-        message += 'constraint violation.';
+      try {
+        const symExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(params.symbol_id);
+        const docExists = db.prepare('SELECT 1 FROM doc_sections WHERE id = ?').get(params.doc_id);
+        let message = `Cannot ${params.action} mapping: `;
+        if (!symExists && !docExists) {
+          message += 'both symbol and document section do not exist.';
+        } else if (!symExists) {
+          message += `symbol "${params.symbol_id}" does not exist.`;
+        } else if (!docExists) {
+          message += `document section "${params.doc_id}" does not exist.`;
+        } else {
+          message += 'constraint violation.';
+        }
+        return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message };
+      } catch {
+        // Diagnostic queries failed (e.g., DB locked) — fall back to original error
+        console.error(`DocRel link error (${params.action}):`, err.message);
+        return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Constraint violation: symbol or document may not exist.' };
       }
-      return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message };
     }
     // Don't leak internal DB details to external callers
     console.error(`DocRel link error (${params.action}):`, err.message);

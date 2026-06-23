@@ -1,4 +1,5 @@
 import { simpleGit } from 'simple-git';
+import { execSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
@@ -133,28 +134,32 @@ export function installHooks(projectRoot: string, force = false): void {
     throw new Error(`Failed to create hooks directory ${hooksDir}: ${err.message}`);
   }
 
-  // Resolve docrel binary path — use process.execPath as fallback when
-  // process.argv[1] is undefined (e.g., bundled binary, MCP server, node -e).
+  // Resolve docrel binary path. When process.argv[1] is undefined (e.g., MCP
+  // server mode, bundled binary, node -e), search PATH for 'docrel' instead of
+  // falling back to process.execPath (Node.js runtime) which would not run docrel.
   const argv1 = process.argv[1];
   let docrelBin: string;
   if (!argv1 || argv1 === 'undefined') {
-    docrelBin = process.execPath;
+    try {
+      docrelBin = execSync('command -v docrel', { encoding: 'utf-8' }).trim();
+      if (!docrelBin) throw new Error('docrel not found on PATH');
+    } catch {
+      throw new Error('Cannot locate docrel binary. Install docrel globally or use --no-hooks.');
+    }
   } else {
     docrelBin = path.resolve(argv1);
-  }
-  // Validate that the resolved binary exists and is executable
-  if (!fs.existsSync(docrelBin)) {
-    throw new Error(`DocRel binary not found at resolved path: ${docrelBin}. Install docrel globally or use --no-hooks.`);
   }
 
   const preCommitPath = path.join(hooksDir, 'pre-commit');
   const postCommitPath = path.join(hooksDir, 'post-commit');
   const prePushPath = path.join(hooksDir, 'pre-push');
 
-  // Quote binary path to handle spaces and special characters safely
+  // Use single quotes for the binary path — filesystem paths cannot contain
+  // single-quote characters on standard Linux filesystems, so this prevents
+  // command injection via paths containing double-quote characters.
   const preCommitScript = `#!/bin/sh
 # DocRel pre-commit hook
-"${docrelBin}" check --strict
+'${docrelBin}' check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Documentation is stale. Run 'docrel sync' or use --no-verify to skip."
@@ -164,12 +169,12 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r "${docrelBin}" impact --
+git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r '${docrelBin}' impact --
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRel pre-push hook
-"${docrelBin}" check --strict
+'${docrelBin}' check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Cannot push with stale documentation."

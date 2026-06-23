@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDb } from './db/connection.js';
@@ -298,8 +298,21 @@ program
   .description('Update DocRel to the latest version via npm')
   .action(() => {
     try {
+      // Validate npm registry before executing install
+      let registry: string;
+      try {
+        registry = execSync('npm config get registry', { encoding: 'utf-8' }).trim();
+      } catch {
+        registry = 'https://registry.npmjs.org/';
+      }
+      if (!registry.startsWith('https://registry.npmjs.org/') && !registry.startsWith('https://registry.yarnpkg.com/')) {
+        console.error(`Security warning: npm registry is set to ${registry}. Expected https://registry.npmjs.org/. Aborting update.`);
+        process.exit(1);
+      }
+
       console.log('Updating DocRel...');
-      const output = execSync('npm install -g docrel@latest', { encoding: 'utf-8', timeout: 60_000 });
+      console.warn('Note: global install (-g) may require elevated privileges.');
+      const output = execFileSync('npm', ['install', '-g', 'docrel@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
       console.log(output || 'DocRel updated to the latest version.');
     } catch (err: any) {
       console.error(`Update failed: ${err.stderr ?? err.message}`);

@@ -2,7 +2,7 @@
 # scripts/install-hooks.sh
 set -e
 
-PROJECT_ROOT="${1:-$(pwd)}"
+PROJECT_ROOT="$(realpath "${1:-$(pwd)}")"
 
 # Validate that PROJECT_ROOT is a real git repository before writing hooks
 if [ ! -d "$PROJECT_ROOT/.git" ]; then
