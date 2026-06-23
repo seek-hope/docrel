@@ -36,7 +36,9 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
     `).run(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync');
   }
 
-  return getDocSection(db, input.id)!;
+  const row = getDocSection(db, input.id);
+  if (!row) throw new Error(`DocSection ${input.id} was not found after upsert`);
+  return row;
 }
 
 export function getDocSection(db: Database.Database, id: string): DocSectionRow | undefined {

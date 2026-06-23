@@ -55,7 +55,9 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
     );
   }
 
-  return getSymbol(db, input.id)!;
+  const row = getSymbol(db, input.id);
+  if (!row) throw new Error(`Symbol ${input.id} was not found after upsert`);
+  return row;
 }
 
 export function getSymbol(db: Database.Database, id: string): SymbolRow | undefined {

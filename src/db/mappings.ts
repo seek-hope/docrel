@@ -21,7 +21,9 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
     VALUES (?, ?, ?, ?)
   `).run(input.symbol_id, input.doc_id, input.rel_type, input.confidence ?? 1.0);
 
-  return getMapping(db, input.symbol_id, input.doc_id, input.rel_type)!;
+  const row = getMapping(db, input.symbol_id, input.doc_id, input.rel_type);
+  if (!row) throw new Error(`Mapping was not found after insert for ${input.symbol_id} -> ${input.doc_id}`);
+  return row;
 }
 
 function getMapping(db: Database.Database, symbolId: string, docId: string, relType: string): MappingRow | undefined {
