@@ -45,17 +45,26 @@ export class CodegraphClient {
       args: ['mcp'],
     });
 
-    this.client = new Client(
+    const client = new Client(
       { name: 'docrel-codegraph-client', version: '0.1.0' },
       { capabilities: {} },
     );
 
-    await this.client.connect(transport);
+    try {
+      await client.connect(transport);
+      this.client = client;
+    } catch (err) {
+      try { await client.close(); } catch {}
+      throw err;
+    }
   }
 
-  async isAvailable(): Promise<boolean> {
+  async isAvailable(timeoutMs = 5000): Promise<boolean> {
     try {
-      await this.connect();
+      await Promise.race([
+        this.connect(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+      ]);
       return true;
     } catch {
       return false;
