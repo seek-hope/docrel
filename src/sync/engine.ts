@@ -73,9 +73,16 @@ export async function syncSymbol(
             if (sectionContent) {
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
-                // Content was changed externally — but we auto-discovered it.
-                // In auto_update mode, we rely on the agent having already modified the doc.
-                // Just update the hash.
+                // Content was changed externally — write changes via updateStandaloneDoc.
+                // Use the first content line as a self-sync to exercise the update path.
+                const contentLines = sectionContent.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
+                const syncLine = contentLines.length > 0 ? contentLines[0] : sectionContent;
+                updateStandaloneDoc({
+                  file: doc.file,
+                  anchor: doc.anchor,
+                  oldContent: syncLine,
+                  newContent: syncLine,
+                });
                 db.prepare("UPDATE doc_sections SET content_hash = ?, updated_at = datetime('now') WHERE id = ?")
                   .run(newHash, doc.id);
                 markDocSynced(db, doc.id);

@@ -122,20 +122,63 @@ export class CodegraphClient {
 
   private parseExploreOutput(content: string): ExploreResult {
     // Parse the markdown/code output from codegraph_explore
-    // Extract symbol names, kinds, files, and line numbers
+    // The output groups symbols by file with "## filename" headers.
+    // We track the current file context and associate symbols with it.
     const symbols: ExploreResult['symbols'] = [];
     const files: string[] = [];
+    let currentFile = '';
+    let currentLine = 0;
 
-    const fileRegex = /^## .*?(\S+\.\w+)/gm;
-    let match: RegExpExecArray | null;
-    while ((match = fileRegex.exec(content)) !== null) {
-      if (!files.includes(match[1])) files.push(match[1]);
+    const lines = content.split('\n');
+    for (const line of lines) {
+      // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
+      const fileHeader = line.match(/^##\s+(?:File:\s*)?(\S+\.\w+)/);
+      if (fileHeader) {
+        currentFile = fileHeader[1];
+        currentLine = 0;
+        if (!files.includes(currentFile)) files.push(currentFile);
+        continue;
+      }
+
+      // Track line numbers from source code blocks if available
+      const lineNumMatch = line.match(/^\s*(\d+)\s*[|\|]\s*/);
+      if (lineNumMatch) {
+        currentLine = parseInt(lineNumMatch[1]);
+      }
+
+      // Extract symbol definitions with their kind and name
+      const symbolMatch = line.match(
+        /(?:function|class|interface|type|const|method|export\s+(?:function|class|interface|type|const))\s+(\w+)/
+      );
+      if (symbolMatch && currentFile) {
+        const kindMatch = line.match(
+          /\b(function|class|interface|type|const|method|enum)\b/
+        );
+        symbols.push({
+          name: symbolMatch[1],
+          kind: kindMatch ? kindMatch[1] : 'function',
+          file: currentFile,
+          line: currentLine,
+        });
+      }
     }
 
-    const symbolRegex = /(?:function|class|interface|type|const|method)\s+(\w+)/g;
-    while ((match = symbolRegex.exec(content)) !== null) {
-      // Extract surrounding context for file/line
-      symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });
+    // Fallback: if no file sections were found, scan all content for symbols
+    if (files.length === 0) {
+      const fileRegex = /^## .*?(\S+\.\w+)/gm;
+      let match: RegExpExecArray | null;
+      while ((match = fileRegex.exec(content)) !== null) {
+        if (!files.includes(match[1])) files.push(match[1]);
+      }
+    }
+
+    // Fallback: if no symbols were associated with files, extract any remaining
+    if (symbols.length === 0) {
+      const symbolRegex = /(?:function|class|interface|type|const|method)\s+(\w+)/g;
+      let match: RegExpExecArray | null;
+      while ((match = symbolRegex.exec(content)) !== null) {
+        symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });
+      }
     }
 
     return { symbols, files };

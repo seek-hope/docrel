@@ -32,18 +32,22 @@ export async function docrelImpact(
   const affectedDocs: ImpactReport['affectedDocs'] = [];
   const seenDocIds = new Set<string>();
 
+  const seenSymbolIds = new Set<string>();
+
   for (const file of changedFiles) {
     // Find symbols in changed files
     try {
+      // Query DB once per file (outside the inner loop)
+      const allSymbols = db.prepare(
+        'SELECT id, name, kind, location FROM symbols WHERE location LIKE ?',
+      ).all(`${file}%`) as Array<{ id: string; name: string; kind: string; location: string }>;
+
       const result = await codegraph.explore(`symbols in ${file}`, 20);
 
       for (const sym of result.symbols) {
-        // Look up each symbol in our database
-        const allSymbols = db.prepare(
-          'SELECT id, name, kind, location FROM symbols WHERE location LIKE ?',
-        ).all(`${file}%`) as Array<{ id: string; name: string; kind: string; location: string }>;
-
         for (const dbSym of allSymbols) {
+          if (seenSymbolIds.has(dbSym.id)) continue;
+          seenSymbolIds.add(dbSym.id);
           affectedSymbols.push(dbSym);
 
           // Find linked docs through mappings

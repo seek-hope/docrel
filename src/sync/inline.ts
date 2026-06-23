@@ -16,7 +16,15 @@ export function updateInlineDoc(input: InlineSyncInput): boolean {
   let content = fs.readFileSync(input.file, 'utf-8');
 
   // Find the symbol definition and its associated docstring/comment
-  // Replace the old signature/docstring with new
+  // Replace the old signature/docstring with new.
+  //
+  // NOTE: String.replace() replaces the first occurrence anywhere in the file.
+  // This is a known limitation: if the old text appears earlier in the file
+  // than the intended symbol (e.g. in an import, a type declaration, or
+  // another symbol's docstring), that earlier occurrence will be replaced
+  // instead. Callers should pass the most specific context string available
+  // (e.g. include surrounding lines) to minimise false matches.
+  // A full AST-based approach is planned for v2.
   if (input.oldSignature && input.newSignature) {
     content = content.replace(input.oldSignature, input.newSignature);
   }
