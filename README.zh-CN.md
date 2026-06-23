@@ -37,14 +37,8 @@ npm install -g docrel
 ```bash
 cd your-project
 
-# 初始化（创建 .docrel/config.yaml）
-docrel status
-
-# 安装 git hooks（提交/推送时强制文档同步）
-docrel install-hooks
-
-# 扫描代码库发现符号
-docrel scan
+# 一键初始化（配置 + 数据库 + git hooks + 扫描）
+docrel init
 
 # 查看文档健康度
 docrel status
@@ -54,14 +48,17 @@ docrel status
 
 | 命令 | 描述 |
 |------|------|
+| `docrel init` | 一键初始化：配置、数据库、git hooks、代码扫描 |
 | `docrel status` | 健康仪表盘 — 符号数、关联率、文档同步率 |
 | `docrel check` | 列出过期文档。`--strict` 时退出码为 1（CI 友好） |
 | `docrel impact <文件...>` | 展示哪些文档受代码变更影响 |
 | `docrel sync --symbol <id>` | CASCADE 更新某个符号关联的文档 |
 | `docrel link create --symbol <id> --doc <id>` | 手动创建映射 |
 | `docrel diff <符号id>` | 查看符号的变更历史 |
+| `docrel scan` | 通过 codegraph 扫描代码库发现所有符号 |
 | `docrel export-mappings` | 导出 `.docrel/mappings.json` 供 CodeGraph 集成 |
 | `docrel install-hooks` | 安装 pre-commit / post-commit / pre-push hooks |
+| `docrel update` | 通过 npm 更新 DocRel 到最新版本 |
 
 ### MCP Server 用法
 

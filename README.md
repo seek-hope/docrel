@@ -48,14 +48,8 @@ npm install -g docrel
 ```bash
 cd your-project
 
-# Initialize (creates .docrel/config.yaml)
-docrel status
-
-# Install git hooks (enforce doc sync on commit/push)
-docrel install-hooks
-
-# Scan codebase and discover symbols
-docrel scan
+# One-step initialization (config + DB + git hooks + scan)
+docrel init
 
 # Check documentation health
 docrel status
@@ -65,14 +59,17 @@ docrel status
 
 | Command | Description |
 |---------|-------------|
+| `docrel init` | One-step setup: config, database, git hooks, codebase scan |
 | `docrel status` | Health dashboard — symbol count, doc sync %, stale docs |
 | `docrel check` | List stale documentation. `--strict` exits code 1 for CI |
 | `docrel impact <files...>` | Show which docs are affected by changed files |
 | `docrel sync --symbol <id>` | CASCADE-update docs linked to a symbol |
 | `docrel link create --symbol <id> --doc <id>` | Create a manual mapping |
 | `docrel diff <symbol_id>` | View change history for a symbol |
+| `docrel scan` | Scan codebase via codegraph and discover all symbols |
 | `docrel export-mappings` | Export `.docrel/mappings.json` for CodeGraph integration |
 | `docrel install-hooks` | Install pre-commit, post-commit, pre-push hooks |
+| `docrel update` | Update DocRel to the latest version via npm |
 
 ### MCP Server (AI Agent Integration)
 
