@@ -1,5 +1,5 @@
 import { simpleGit } from 'simple-git';
-import { execSync } from 'node:child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
@@ -153,8 +153,16 @@ export function installHooks(projectRoot: string, force = false): void {
     try {
       docrelBin = execSync('command -v docrel', { encoding: 'utf-8' }).trim();
       if (!docrelBin) throw new Error('docrel not found on PATH');
-    } catch {
-      throw new Error('Cannot locate docrel binary. Install docrel globally or use --no-hooks.');
+      // Validate the resolved binary path against allowed prefixes and resolve
+      // symlinks to prevent PATH hijacking via malicious symlinks.
+      const realBin = fs.realpathSync(docrelBin);
+      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
+      if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+        throw new Error(`docrel resolved to unexpected path: ${docrelBin}`);
+      }
+      docrelBin = realBin;
+    } catch (err: any) {
+      throw new Error(`Cannot locate docrel binary: ${err.message}. Install docrel globally or use --no-hooks.`);
     }
   } else {
     docrelBin = path.resolve(argv1);
@@ -163,6 +171,15 @@ export function installHooks(projectRoot: string, force = false): void {
   const preCommitPath = path.join(hooksDir, 'pre-commit');
   const postCommitPath = path.join(hooksDir, 'post-commit');
   const prePushPath = path.join(hooksDir, 'pre-push');
+
+  // Validate that the resolved binary is actually a working docrel installation.
+  // A bundled or corrupted binary may not support the expected CLI interface,
+  // causing confusing shell errors at git operation time instead of here.
+  try {
+    execFileSync(docrelBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
+  } catch (err: any) {
+    throw new Error(`Resolved docrel binary at ${docrelBin} does not appear to work: ${err.message}`);
+  }
 
   // Properly escape the binary path for single-quoted shell context using the
   // standard shell quoting trick: replace every ' with '\''.
