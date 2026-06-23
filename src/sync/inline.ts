@@ -115,6 +115,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
   }
 
+  // If the signature was supposed to be replaced but was skipped due to
+  // ambiguity (sigCount > 1), refuse to return true even when the docstring
+  // replacement succeeded. A stale signature paired with a fresh docstring
+  // would incorrectly mark the doc as in_sync when it's only partially updated.
+  if (replaced && sigCount > 1) {
+    console.warn('DocRel: updateInlineDoc — signature ambiguous, refusing partial update');
+    return false;
+  }
+
   if (!replaced) {
     console.warn(`DocRel: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
     return false;
