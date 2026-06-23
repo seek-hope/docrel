@@ -349,7 +349,7 @@ function stripNonJsdocBlockComments(content: string): string {
  * body lines (e.g., '* Processes login(username: string): User') containing
  * the old signature text from inflating the count.
  */
-function stripAllBlockComments(content: string): string {
+export function stripAllBlockComments(content: string): string {
   const out: string[] = [];
   let i = 0;
   while (i < content.length) {
@@ -514,9 +514,9 @@ export function generateUpdatedDocstring(
     lines.push(` * @param ${param.name} — ${param.type}`);
   }
   if (newSignature.includes('):') || kind === 'function') {
-    const returnMatch = newSignature.match(/\):\s*(\S+)/);
-    if (returnMatch) {
-      lines.push(` * @returns {${returnMatch[1]}}`);
+    const returnType = extractReturnType(newSignature);
+    if (returnType) {
+      lines.push(` * @returns {${returnType}}`);
     }
   }
   lines.push(' */');
@@ -547,6 +547,51 @@ function extractParams(signature: string): Array<{ name: string; type: string }>
     const parts = p.trim().split(':');
     return { name: parts[0]?.trim() ?? 'arg', type: parts[1]?.trim() ?? 'any' };
   }).filter((p) => p.name.length > 0);
+}
+
+/** Extract the return type annotation from a TypeScript function signature.
+ *  Uses bracket-counting to correctly capture complex return types like
+ *  `Promise<User>`, `{ bar: string }`, or `string | null` instead of
+ *  truncating at the first whitespace-boundary. */
+function extractReturnType(signature: string): string | null {
+  // Find the closing parenthesis of the parameter list, then look for ':' after it
+  const parenStart = signature.indexOf('(');
+  if (parenStart < 0) return null;
+
+  let depth = 0;
+  let parenEnd = -1;
+  for (let i = parenStart; i < signature.length; i++) {
+    if (signature[i] === '(') depth++;
+    else if (signature[i] === ')') {
+      depth--;
+      if (depth === 0) { parenEnd = i; break; }
+    }
+  }
+  if (parenEnd < 0) return null;
+
+  // Scan past '):' to find the start of the return type
+  let i = parenEnd + 1;
+  while (i < signature.length && signature[i] !== ':') i++;
+  if (i >= signature.length) return null;
+  i++; // skip ':'
+  while (i < signature.length && (signature[i] === ' ' || signature[i] === '\t')) i++;
+  if (i >= signature.length) return null;
+
+  // Collect the return type with bracket counting to handle generics, unions,
+  // and object types. Stop at comma, semicolon, or when all brackets close.
+  let result = '';
+  let bracketDepth = 0;
+  for (; i < signature.length; i++) {
+    const ch = signature[i];
+    if (ch === '<' || ch === '(' || ch === '{' || ch === '[') bracketDepth++;
+    else if (ch === '>' || ch === ')' || ch === '}' || ch === ']') bracketDepth--;
+    if (bracketDepth < 0) break;
+    // At depth 0, stop at delimiters that signal the end of the return type
+    if (bracketDepth === 0 && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) break;
+    result += ch;
+  }
+  const trimmed = result.trim();
+  return trimmed || null;
 }
 
 /** Split comma-separated params, respecting nested angle brackets, parentheses,

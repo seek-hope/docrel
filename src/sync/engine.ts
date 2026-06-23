@@ -8,7 +8,7 @@ import { getSymbol } from '../db/symbols.js';
 import { getDocSection, markDocStale, markDocSynced, markDocSyncedWithHash } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
-import { stripCommentsAndStrings } from './inline.js';
+import { stripCommentsAndStrings, stripAllBlockComments } from './inline.js';
 import { findSectionContent } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
 
@@ -18,6 +18,7 @@ export interface SyncResult {
   docsStaled: string[];
   docsChecked: string[];
   errors: string[];
+  warnings: string[];
 }
 
 /** Parse a "file:line" location into { file, line }. Returns null if invalid. */
@@ -41,7 +42,7 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
 ): Promise<SyncResult> {
-  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [] };
+  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [], warnings: [] };
 
   try {
     assertDbOpen(db);
@@ -63,8 +64,11 @@ export async function syncSymbol(
       const strategy = config.strategies[doc.doc_type];
       if (!strategy) {
         console.warn(`DocRel: No strategy configured for doc_type '${doc.doc_type}' — marking doc ${doc.id} as stale`);
-        markDocStale(db, doc.id);
-        result.docsStaled.push(doc.file);
+        if (markDocStale(db, doc.id)) {
+          result.docsStaled.push(doc.file);
+        } else {
+          result.errors.push(`Failed to mark doc ${doc.id} as stale — doc may have been deleted concurrently`);
+        }
         continue;
       }
 
@@ -81,7 +85,7 @@ export async function syncSymbol(
           // Normalize both paths to avoid false mismatches from differing formats
           // (e.g., src/foo.ts vs ./src/foo.ts or inconsistent slash direction).
           if (path.normalize(loc.file) !== path.normalize(doc.file)) {
-            result.errors.push(`Inline doc for ${symbol.name}: registered file ${relPath(doc.file, projectRoot)} differs from symbol location ${relPath(loc.file, projectRoot)} — updating doc_sections.file to match`);
+            result.warnings.push(`Inline doc for ${symbol.name}: repaired file mismatch — updated doc_sections.file from ${relPath(doc.file, projectRoot)} to ${relPath(loc.file, projectRoot)}`);
             db.prepare("UPDATE doc_sections SET file = ?, updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
@@ -117,14 +121,20 @@ export async function syncSymbol(
             }, projectRoot);
 
             if (updated) {
-              markDocSynced(db, doc.id);
-              result.docsUpdated.push(loc.file);
+              if (markDocSynced(db, doc.id)) {
+                result.docsUpdated.push(loc.file);
+              } else {
+                result.errors.push(`Failed to mark inline doc ${doc.id} as synced — doc may have been deleted concurrently`);
+              }
             } else {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}`);
             }
           } else {
-            markDocStale(db, doc.id);
-            result.docsStaled.push(doc.file);
+            if (markDocStale(db, doc.id)) {
+              result.docsStaled.push(doc.file);
+            } else {
+              result.errors.push(`Failed to mark inline doc ${doc.id} as stale — doc may have been deleted concurrently`);
+            }
           }
           break;
         }
@@ -149,17 +159,26 @@ export async function syncSymbol(
               } else if (doc.status === 'stale') {
                 // Content already reflects the code change — transition back
                 // to in_sync so the doc does not remain permanently stale.
-                markDocSynced(db, doc.id);
-                result.docsChecked.push(doc.file);
+                if (markDocSynced(db, doc.id)) {
+                  result.docsChecked.push(doc.file);
+                } else {
+                  result.errors.push(`Failed to mark standalone doc ${doc.id} as synced — doc may have been deleted concurrently`);
+                }
               }
             } else {
               result.errors.push(`Cannot find section '${doc.anchor}' in ${relPath(doc.file, projectRoot)} — doc may have been restructured`);
-              markDocStale(db, doc.id);
-              result.docsStaled.push(doc.file);
+              if (markDocStale(db, doc.id)) {
+                result.docsStaled.push(doc.file);
+              } else {
+                result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
+              }
             }
           } else if (strategy === 'mark_stale') {
-            markDocStale(db, doc.id);
-            result.docsStaled.push(doc.file);
+            if (markDocStale(db, doc.id)) {
+              result.docsStaled.push(doc.file);
+            } else {
+              result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
+            }
           } else if (strategy === 'prompt') {
             result.errors.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy not yet implemented. Docs will not be auto-synced.`);
           }
@@ -172,27 +191,39 @@ export async function syncSymbol(
             if (generator) {
               const genResult = updateGeneratedDoc({ file: doc.file, generator, projectRoot });
               if (genResult.success) {
-                markDocSynced(db, doc.id);
-                result.docsUpdated.push(doc.file);
+                if (markDocSynced(db, doc.id)) {
+                  result.docsUpdated.push(doc.file);
+                } else {
+                  result.errors.push(`Failed to mark generated doc ${doc.id} as synced — doc may have been deleted concurrently`);
+                }
               } else {
                 result.errors.push(`Failed to regenerate ${relPath(doc.file, projectRoot)}: ${genResult.output}`);
               }
             } else {
               result.errors.push(`No generator found for ${relPath(doc.file, projectRoot)}. Marking as stale.`);
-              markDocStale(db, doc.id);
-              result.docsStaled.push(doc.file);
+              if (markDocStale(db, doc.id)) {
+                result.docsStaled.push(doc.file);
+              } else {
+                result.errors.push(`Failed to mark generated doc ${doc.id} as stale — doc may have been deleted concurrently`);
+              }
             }
           } else {
-            markDocStale(db, doc.id);
-            result.docsStaled.push(doc.file);
+            if (markDocStale(db, doc.id)) {
+              result.docsStaled.push(doc.file);
+            } else {
+              result.errors.push(`Failed to mark generated doc ${doc.id} as stale — doc may have been deleted concurrently`);
+            }
           }
           break;
         }
 
         case 'architecture': {
           if (strategy !== 'ignore') {
-            markDocStale(db, doc.id);
-            result.docsStaled.push(doc.file);
+            if (markDocStale(db, doc.id)) {
+              result.docsStaled.push(doc.file);
+            } else {
+              result.errors.push(`Failed to mark architecture doc ${doc.id} as stale — doc may have been deleted concurrently`);
+            }
           }
           break;
         }
@@ -263,8 +294,16 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   }
   const lines = content.split('\n');
 
+  // Pre-process the full file content with stripAllBlockComments to prevent
+  // false positives from function/method definitions inside multi-line /* */
+  // block comments. Without this, before the per-line loop, commented-out
+  // old implementations could match the regex and be returned as the
+  // signature, causing updateInlineDoc to receive a wrong oldSignature.
+  const processedContent = stripAllBlockComments(content);
+  const processedLines = processedContent.split('\n');
+
   // Limit line count to prevent hangs on degenerate input
-  if (lines.length > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
+  if (processedLines.length > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
 
   const escaped = escapeRegex(symbolName);
   // Match only symbol definitions, not references or usage sites.
@@ -280,8 +319,8 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // Use bracket-counting to handle nested parentheses in parameters
   const methodRegex = new RegExp(`(?:async\\s+)?${escaped}\\s*\\(`);
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (let i = 0; i < processedLines.length; i++) {
+    const line = processedLines[i];
     const trimmed = line.trim();
     // Strip comments and strings before matching keywords to prevent
     // false positives from symbol names appearing inside string literals
@@ -299,9 +338,9 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
           // build a multi-line signature (e.g., async function login(\n  user: string\n): Promise<User>) .
           let multiLineSig = trimmed;
           let lineIdx = i;
-          while (closeParen < 0 && lineIdx + 1 < lines.length) {
+          while (closeParen < 0 && lineIdx + 1 < processedLines.length) {
             lineIdx++;
-            multiLineSig += '\n' + lines[lineIdx];
+            multiLineSig += '\n' + processedLines[lineIdx];
             closeParen = findMatchingClose(multiLineSig, parenIdx);
           }
           if (closeParen >= 0) {
@@ -331,9 +370,9 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
         // Build multi-line signature if closing paren is not on this line
         let multiLineSig = trimmed;
         let lineIdx = i;
-        while (closing < 0 && lineIdx + 1 < lines.length) {
+        while (closing < 0 && lineIdx + 1 < processedLines.length) {
           lineIdx++;
-          multiLineSig += '\n' + lines[lineIdx];
+          multiLineSig += '\n' + processedLines[lineIdx];
           closing = findMatchingClose(multiLineSig, parenStart);
         }
         if (closing >= 0 && closing < multiLineSig.length - 1) {
