@@ -127,7 +127,16 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   }
   const scripts = pkg.scripts ?? {};
 
-  if (file.endsWith('.yaml') || file.endsWith('.yml') || file.includes('openapi')) {
+  // Only treat YAML files as OpenAPI specs when there are additional signals:
+  // the filename or path includes 'openapi', 'swagger', or the file is inside
+  // a known API docs directory. This prevents files like config.yaml or ci.yaml
+  // from incorrectly triggering OpenAPI generator detection.
+  const isOpenApiFile = (file.endsWith('.yaml') || file.endsWith('.yml')) && (
+    file.toLowerCase().includes('openapi') ||
+    file.toLowerCase().includes('swagger') ||
+    /\/api[-\/]?(docs|spec|schema)/i.test(file)
+  );
+  if (isOpenApiFile || file.includes('openapi')) {
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
