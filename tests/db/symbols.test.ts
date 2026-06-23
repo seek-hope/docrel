@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
-import crypto from 'node:crypto';
 import { getDb, closeDb } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol, getSymbol, listSymbols, deleteSymbol, markSignatureChanged } from '../../src/db/symbols.js';

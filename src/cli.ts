@@ -118,8 +118,23 @@ program
   });
 
 import { exportMappingsJson } from './db/mappings.js';
+import { scanProject } from './discovery/scanner.js';
 import fs from 'node:fs';
 import path from 'node:path';
+
+program
+  .command('scan')
+  .description('Scan the codebase via codegraph and discover all symbols')
+  .action(async () => {
+    const available = await codegraph.isAvailable();
+    if (!available) {
+      console.error('Codegraph is not available. Start codegraph first, or set codegraph.command in .docrel/config.yaml');
+      process.exit(1);
+    }
+    console.log('Scanning codebase...');
+    const report = await scanProject(codegraph, db, config);
+    console.log(JSON.stringify(report, null, 2));
+  });
 
 program
   .command('export-mappings')

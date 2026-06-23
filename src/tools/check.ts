@@ -37,8 +37,8 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
   if (staleDocs.length === 0) {
     summary = 'All documentation is in sync.';
   } else {
-    const files = [...new Set(staleDocs.map((d) => d.file))].join(', ');
-    summary = `${staleDocs.length} doc section(s) are stale across ${staleDocs.length > 0 ? [...new Set(staleDocs.map(d => d.file))].length : 0} file(s): ${files}`;
+    const uniqueFiles = [...new Set(staleDocs.map((d) => d.file))];
+    summary = `${staleDocs.length} doc section(s) are stale across ${uniqueFiles.length} file(s): ${uniqueFiles.join(', ')}`;
   }
 
   return { passed, staleDocs, summary };
