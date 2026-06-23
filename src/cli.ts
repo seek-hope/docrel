@@ -458,7 +458,7 @@ program
   .description('Audit code-doc mappings: unlinked symbols, orphaned sections, implied refs')
   .option('--format <format>', 'Output format: json, markdown, or detailed', 'markdown')
   .option('--json', 'Shortcut for --format json')
-  .option('--side-by-side', 'Show code↔doc blocks for unreviewed mappings')
+  .option('-S, --side-by-side', 'Show code↔doc blocks for unreviewed mappings')
   .action(async (opts) => {
     try {
       const { docrelReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
