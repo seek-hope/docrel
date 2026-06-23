@@ -53,8 +53,8 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   // the prefix check also validates the full command.
   const fullCmd = cmd.trim();
   const ALLOWED_PREFIXES: RegExp[] = [
-    /^typedoc\b/,
-    /^openapi-generator\b/,
+    /^typedoc(?:\s|$)/,
+    /^openapi-generator(?:\s|$)/,
   ];
   if (!ALLOWED_PREFIXES.some((prefix) => prefix.test(fullCmd))) {
     return null;
@@ -78,15 +78,16 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       maxBuffer: 10 * 1024 * 1024, // 10 MB output limit
     });
     if (result.error) {
-      // Log a truncated version to console for diagnostics, and return a
-      // truncated version to MCP clients. The full output is written to a
-      // debug log file under .docrel/ if needed for deeper diagnostics.
+      // Log the full/truncated output to stderr for diagnostics, but return
+      // only a minimal message to MCP clients. Generator output may contain
+      // absolute filesystem paths, internal configuration, or other sensitive
+      // data that should not be exposed in structured API responses.
       const fullOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
       const truncated = fullOutput ? fullOutput.slice(-500) : '';
       if (fullOutput) console.error('DocRel: generator error output (truncated):', truncated);
       return {
         success: false,
-        output: truncated ? `Generator failed: ${result.error.message}\n...${truncated}` : `Generator failed: ${result.error.message}`,
+        output: `Generator failed: ${result.error.message}`,
       };
     }
     if (result.status !== 0) {
@@ -146,7 +147,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     file.toLowerCase().includes('swagger') ||
     /\/api[-\/]?(docs|spec|schema)/i.test(file)
   );
-  if (isOpenApiFile || file.includes('openapi')) {
+  if (isOpenApiFile) {
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
