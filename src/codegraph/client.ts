@@ -99,13 +99,19 @@ export class CodegraphClient {
         this.livenessInProgress = false;
       }
     }
-    if (this.connectPromise) return this.connectPromise;
-
-    this.connectPromise = this.doConnect();
+    // Use nullish-coalescing assignment to avoid the check-then-set race
+    // between two concurrent callers. In single-threaded JS, the expression
+    // evaluates atomically because doConnect() returns a Promise synchronously
+    // before any await yields. Track which caller created the promise so the
+    // finally block only nulls out its own promise.
+    const promise = this.connectPromise ?? this.doConnect();
+    this.connectPromise = promise;
     try {
-      await this.connectPromise;
+      await promise;
     } finally {
-      this.connectPromise = null;
+      if (this.connectPromise === promise) {
+        this.connectPromise = null;
+      }
     }
   }
 
@@ -140,9 +146,14 @@ export class CodegraphClient {
       // Resolve symlinks before prefix check to prevent symlink bypass
       const fs = await import('node:fs');
       cmd = fs.realpathSync(cmd);
-      // Validate resolved path is in expected locations
-      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
-      if (!allowedPrefixes.some((p) => cmd.startsWith(p))) {
+      // Validate resolved path is in expected installation locations.
+      // Use specific known paths rather than broad directory prefixes like
+      // /usr/ which would match both /usr/bin and /usr/local/bin, allowing
+      // a malicious binary placed in an earlier PATH entry to pass the check.
+      const allowedPrefixes = ['/usr/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+      // Also accept common user-level node_modules bin paths
+      if (!allowedPrefixes.some((p) => cmd.startsWith(p)) &&
+          !/\/(\.local\/share|\.npm|\.nvm)\//.test(cmd)) {
         throw new Error(`codegraph resolved to unexpected path: ${cmd}`);
       }
     } catch (err: any) {
@@ -350,7 +361,7 @@ export class CodegraphClient {
     // have changed its output format or returned an error message. Log a
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
-      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed`);
+      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed. Sample: ${content.slice(0, 200)}`);
     }
 
     return { symbols, files };
