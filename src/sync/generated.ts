@@ -30,7 +30,7 @@ const ALLOWED_BINARIES = new Set([
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   // Reject commands with shell metacharacters
-  if (/[;&|`$()]/.test(cmd)) return null;
+  if (/[;&|`$()\n<>!]/.test(cmd)) return null;
   if (cmd.length > MAX_COMMAND_LENGTH) return null;
   const parts = cmd.trim().split(/\s+/);
   if (parts.length === 0) return null;
@@ -98,17 +98,24 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   const pkgPath = path.join(projectRoot, 'package.json');
   if (!fs.existsSync(pkgPath)) return null;
 
-  // Read file first, then check size (avoid TOCTOU between stat and read)
+  // Use fd-based size check before reading to prevent OOM
+  // from malicious or accidentally large package.json files.
   let raw: string;
+  let fd: number | undefined;
   try {
-    raw = fs.readFileSync(pkgPath, 'utf-8');
+    fd = fs.openSync(pkgPath, 'r');
+    const stat = fs.fstatSync(fd);
+    if (stat.size > 1_048_576) {
+      console.error('Warning: package.json exceeds 1MB, skipping generator detection');
+      return null;
+    }
+    raw = fs.readFileSync(fd, 'utf-8');
   } catch {
     return null;
-  }
-
-  if (raw.length > 1_048_576) {
-    console.error('Warning: package.json exceeds 1MB, skipping generator detection');
-    return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
 
   let pkg: any;
@@ -123,16 +130,20 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   if (file.endsWith('.yaml') || file.endsWith('.yml') || file.includes('openapi')) {
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;
+    if (scripts['generate:api'] && scripts['generate:openapi']) {
+      console.warn(`DocRel: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
+    }
     // Validate it's a safe command (no shell metacharacters)
-    if (/[;&|`$()]/.test(cmd)) return null;
+    if (/[;&|`$()\n<>!]/.test(cmd)) return null;
     if (cmd.length > MAX_COMMAND_LENGTH) return null;
     return cmd;
   }
 
-  if (file.includes('typedoc') || (file.endsWith('.md') && scripts['docs:generate'])) {
+  if (file.includes('typedoc') || (file.endsWith('.md') && scripts['docs:generate'] &&
+      (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
     const cmd = scripts['docs:generate'];
     if (typeof cmd !== 'string') return null;
-    if (/[;&|`$()]/.test(cmd)) return null;
+    if (/[;&|`$()\n<>!]/.test(cmd)) return null;
     if (cmd.length > MAX_COMMAND_LENGTH) return null;
     return cmd;
   }

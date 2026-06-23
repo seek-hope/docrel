@@ -1,7 +1,6 @@
 // src/sync/inline.ts
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import crypto from 'node:crypto';
 
 export interface InlineSyncInput {
@@ -42,11 +41,12 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   let replaced = false;
 
   // Compute occurrence counts on the ORIGINAL content before any mutations.
-  // If the signature replacement modifies content in a way that happens to
-  // introduce the old docstring text, counting after mutation would inflate
-  // the docstring count and incorrectly skip the replacement.
+  // Strip comments and strings from the content used to count signature
+  // occurrences — prevents the old signature text inside a docstring from
+  // inflating the count and causing the signature replacement to be skipped.
+  const contentNoComments = stripCommentsAndStrings(content);
   const sigCount = (input.oldSignature?.trim() && input.newSignature?.trim())
-    ? countOccurrences(content, input.oldSignature) : -1;
+    ? countOccurrences(contentNoComments, input.oldSignature) : -1;
   const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
     ? countOccurrences(content, input.oldDocstring) : -1;
 
@@ -63,8 +63,21 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   if (!replaced) return false;
 
-  // Atomic write: use os.tmpdir() with random name (not deterministic path)
-  const tmpPath = path.join(os.tmpdir(), `docrel-${crypto.randomUUID()}.tmp`);
+  // Post-replacement validation: verify the new signature and docstring appear
+  // exactly once in the final content. A count != 1 indicates a mis-replacement.
+  if (sigCount === 1 && countOccurrences(content, input.newSignature) !== 1) {
+    return false;
+  }
+  if (docCount === 1 && countOccurrences(content, input.newDocstring) !== 1) {
+    return false;
+  }
+
+  // Atomic write: use project-local temp directory with restrictive permissions.
+  // Prefer local over os.tmpdir() to stay within the project's permission boundary
+  // and avoid cross-filesystem EXDEV errors from rename().
+  const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return false; }
+  const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
   try {
     // Use exclusive creation flag to fail if file already exists
     fs.writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx' });
@@ -79,7 +92,9 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
 function countOccurrences(content: string, search: string): number {
   if (search.length === 0) return 0;
-  return (content.match(escapeRegexGlobal(search, MAX_SEARCH_LENGTH)) || []).length;
+  const regex = escapeRegexGlobal(search, MAX_SEARCH_LENGTH);
+  if (!regex) return -1; // search string too long — signal aborted search
+  return (content.match(regex) || []).length;
 }
 
 /**
@@ -87,8 +102,9 @@ function countOccurrences(content: string, search: string): number {
  * Uses a state-machine approach to strip comments and strings safely,
  * avoiding catastrophic backtracking from monolithic regex.
  */
-export function extractDocstring(file: string, symbolName: string, projectRoot?: string): string | null {
-  const resolved = projectRoot ? validatePath(file, projectRoot) : file;
+export function extractDocstring(file: string, symbolName: string, projectRoot: string): string | null {
+  if (!projectRoot) throw new Error('extractDocstring: projectRoot is required');
+  const resolved = validatePath(file, projectRoot);
   if (!resolved || !fs.existsSync(resolved)) return null;
 
   let stat: fs.Stats;

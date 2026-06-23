@@ -1,7 +1,6 @@
 // src/sync/standalone.ts
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import crypto from 'node:crypto';
 
 export interface StandaloneSyncInput {
@@ -66,11 +65,13 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   if (!sectionContent) return false;
   if (!sectionContent.includes(input.oldContent)) return false;
 
-  const updatedSection = sectionContent.replace(input.oldContent, input.newContent);
+  const updatedSection = sectionContent.replaceAll(input.oldContent, input.newContent);
   content = content.replace(sectionContent, updatedSection);
 
-  // Atomic write: use os.tmpdir() with random name (not deterministic path)
-  const tmpPath = path.join(os.tmpdir(), `docrel-${crypto.randomUUID()}.tmp`);
+  // Atomic write: use project-local temp directory with restrictive permissions
+  const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return false; }
+  const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
   try {
     fs.writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx' });
     fs.renameSync(tmpPath, resolved);
@@ -87,23 +88,24 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
  * Uses line-by-line parsing to correctly handle # characters inside code blocks.
  * @param file Relative or absolute file path (resolved against projectRoot if relative)
  */
-export function findSectionContent(file: string, anchor: string, projectRoot?: string): string | null {
+export function findSectionContent(file: string, anchor: string, projectRoot: string): string | null {
   if (!anchor) return null;
+  if (!projectRoot) throw new Error('findSectionContent: projectRoot is required');
 
-  const resolved = projectRoot ? path.resolve(projectRoot, file) : file;
+  const resolved = path.resolve(projectRoot, file);
 
   // Containment check: ensure resolved path is within project root
-  if (projectRoot) {
-    const root = path.resolve(projectRoot);
-    if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
-    try {
-      const real = fs.realpathSync(resolved);
-      if (!real.startsWith(root + path.sep) && real !== root) return null;
-    } catch (err: any) {
-      // Only swallow ENOENT / ENOTDIR (file may not exist yet).
-      // Surface real errors like EACCES, EIO, ENAMETOOLONG.
-      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err;
-    }
+  const root = path.resolve(projectRoot);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+  try {
+    const real = fs.realpathSync(resolved);
+    if (!real.startsWith(root + path.sep) && real !== root) return null;
+  } catch (err: any) {
+    // Catch ALL errors from realpathSync to prevent information disclosure.
+    // The error message contains absolute filesystem paths, and these errors
+    // propagate through engine.ts into SyncResult.errors, which may be
+    // serialized as JSON to CLI or MCP clients.
+    return null;
   }
 
   if (!fs.existsSync(resolved)) return null;

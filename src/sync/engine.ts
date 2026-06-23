@@ -79,11 +79,6 @@ export async function syncSymbol(
               continue;
             }
             const newSig = symbol.raw_signature;
-            // Guard against empty signatures — skip replacement to avoid garbled docs
-            if (!newSig) {
-              result.errors.push(`Skipped inline sync for ${symbol.name}: empty signature`);
-              continue;
-            }
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
             // Extract current signature from the source to use as oldSignature
@@ -132,6 +127,10 @@ export async function syncSymbol(
                   result.docsUpdated.push(doc.file);
                 }
               }
+            } else {
+              result.errors.push(`Cannot find section '${doc.anchor}' in ${doc.file} — doc may have been restructured`);
+              markDocStale(db, doc.id);
+              result.docsStaled.push(doc.file);
             }
           } else if (strategy === 'mark_stale') {
             markDocStale(db, doc.id);
@@ -172,9 +171,12 @@ export async function syncSymbol(
           }
           break;
         }
+
+        default:
+          result.errors.push(`Unknown doc_type '${doc.doc_type}' for doc ${doc.id} — cannot sync`);
       }
     } catch (err: any) {
-      result.errors.push(`Error syncing ${doc.file}: ${err.message}`);
+      result.errors.push(`Error syncing doc ${mapping.doc_id}: ${err.message}`);
     }
   }
   } catch (err: any) {
@@ -219,18 +221,45 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // Match only symbol definitions, not references or usage sites.
   // Covers: function/class/const/let/var/interface/type AND class method definitions
   // like 'async login(...) {' or 'login(data) {' which lack a keyword prefix.
-  const symRegex = new RegExp(
+  const keywordRegex = new RegExp(
     `(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${escaped}\\b` +
     `|(?:export\\s+(?:default\\s+)?)?(?:const|let|var)\\s+${escaped}\\b\\s*=` +
     `|\\binterface\\s+${escaped}\\b` +
-    `|\\btype\\s+${escaped}\\b\\s*=` +
-    `|(?:async\\s+)?${escaped}\\s*\\([^)]*\\)\\s*[{:]`,
+    `|\\btype\\s+${escaped}\\b\\s*=`,
   );
+  // Match method-like definitions: name( ... ) { or name( ... ) :
+  // Use bracket-counting to handle nested parentheses in parameters
+  const methodRegex = new RegExp(`(?:async\\s+)?${escaped}\\s*\\(`);
 
   for (const line of lines) {
-    if (symRegex.test(line.trim())) {
-      return line.trim();
+    const trimmed = line.trim();
+    if (keywordRegex.test(trimmed)) {
+      return trimmed;
+    }
+    const mStart = methodRegex.exec(trimmed);
+    if (mStart) {
+      const parenStart = mStart.index + mStart[0].length - 1; // position of '('
+      const closing = findMatchingClose(trimmed, parenStart);
+      if (closing >= 0 && closing < trimmed.length - 1) {
+        const after = trimmed.slice(closing + 1).trimStart();
+        if (after.startsWith('{') || after.startsWith(':')) {
+          return trimmed;
+        }
+      }
     }
   }
   return null;
+}
+
+/** Find the index of the closing ) matching the open-paren at `openIdx`. */
+function findMatchingClose(str: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < str.length; i++) {
+    if (str[i] === '(') depth++;
+    else if (str[i] === ')') {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
