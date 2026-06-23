@@ -79,7 +79,7 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   // descriptions or code examples within the same heading section).
   // Use function-based replacement to avoid $ special-pattern injection.
   const updatedSection = sectionContent.replace(input.oldContent, () => input.newContent);
-  content = content.replace(sectionContent, updatedSection);
+  content = content.replace(sectionContent, () => updatedSection);
 
   // Atomic write: use project-local temp directory with restrictive permissions
   const tmpDir = path.join(projectRoot, '.docrel', 'tmp');

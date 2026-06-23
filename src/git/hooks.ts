@@ -118,7 +118,10 @@ export async function prePushHook(
 }
 
 export function installHooks(projectRoot: string, force = false): void {
-  // Resolve the real git directory (handles worktrees where .git is a file)
+  // Resolve the real git directory (handles worktrees where .git is a file).
+  // In a worktree, .git is a file containing 'gitdir: <path>' pointing to
+  // the main repo's .git/worktrees/<name>. We need the MAIN .git directory
+  // for hooks (shared across worktrees), not the worktree-specific one.
   const gitPath = path.join(projectRoot, '.git');
   let gitDir = gitPath;
 
@@ -129,17 +132,32 @@ export function installHooks(projectRoot: string, force = false): void {
       const content = fs.readFileSync(gitPath, 'utf-8');
       const match = content.match(/gitdir:\s*(.+)/);
       if (match?.[1]) {
-        gitDir = path.resolve(projectRoot, match[1].trim());
-        // Validate containment: prevent path traversal if the .git file
-        // references an absolute path outside the project root (e.g., /etc).
-        // Follows the same pattern as src/db/connection.ts lines 33-36.
+        const rawGitdir = match[1].trim();
+        const resolvedGitdir = path.resolve(projectRoot, rawGitdir);
         const root = path.resolve(projectRoot);
-        if (!gitDir.startsWith(root + path.sep) && gitDir !== root) {
-          gitDir = gitPath; // fall back to .git path
+        // Worktree gitdir resolves outside the worktree root (e.g. to
+        // /main-repo/.git/worktrees/feature). Derive the main .git directory
+        // by stripping the .git/worktrees/<name> suffix, matching the
+        // pattern used in src/db/connection.ts lines 52-58.
+        if (!resolvedGitdir.startsWith(root + path.sep) && resolvedGitdir !== root) {
+          const worktreesIdx = resolvedGitdir.lastIndexOf(`${path.sep}.git${path.sep}worktrees${path.sep}`);
+          if (worktreesIdx > 0) {
+            gitDir = resolvedGitdir.slice(0, worktreesIdx) + path.sep + '.git';
+          }
+        } else {
+          gitDir = resolvedGitdir;
         }
       }
     } catch { /* fall through to using .git path */ }
   }
+
+  // Safety: if gitDir is still a file (not a directory), mkdirSync below
+  // would throw ENOTDIR. Fall back to .docrel/hooks/ in the project root.
+  try {
+    if (fs.existsSync(gitDir) && !fs.statSync(gitDir).isDirectory()) {
+      gitDir = path.join(projectRoot, '.docrel');
+    }
+  } catch { gitDir = path.join(projectRoot, '.docrel'); }
 
   const hooksDir = path.join(gitDir, 'hooks');
   try {
@@ -169,7 +187,22 @@ export function installHooks(projectRoot: string, force = false): void {
       throw new Error(`Cannot locate docrel binary: ${err.message}. Install docrel globally or use --no-hooks.`);
     }
   } else {
-    docrelBin = path.resolve(argv1);
+    // When argv1 is defined (CLI mode), apply the same validation pipeline
+    // used in the PATH-search path above: resolve symlinks, check against
+    // allowed prefixes. An attacker who can influence argv[1] (e.g., via a
+    // crafted shebang, symlink, or PATH manipulation) could otherwise install
+    // hooks that execute an arbitrary binary from an unexpected location.
+    const resolvedArgv = path.resolve(argv1);
+    try {
+      const realBin = fs.realpathSync(resolvedArgv);
+      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
+      if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+        throw new Error(`docrel resolved to unexpected path: ${resolvedArgv}`);
+      }
+      docrelBin = realBin;
+    } catch (err: any) {
+      throw new Error(`Cannot locate docrel binary: ${err.message}. Install docrel globally or use --no-hooks.`);
+    }
   }
 
   const preCommitPath = path.join(hooksDir, 'pre-commit');

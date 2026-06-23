@@ -59,16 +59,26 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   // comments and strings, so JSDoc body lines (e.g., '* Processes login()')
   // do not inflate the occurrence count.
   const contentNoComments = stripCommentsAndStrings(stripAllBlockComments(content));
-  const sigCount = (input.oldSignature?.trim() && input.newSignature?.trim())
-    ? countOccurrences(contentNoComments, input.oldSignature) : -1;
-  const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
-    ? countOccurrences(content, input.oldDocstring) : -1;
+  // Check for empty input separately from countOccurrences returning -1
+  // (which means the search string exceeds MAX_SEARCH_LENGTH).
+  // Previously both cases set sigCount/docCount to -1, conflating "empty input"
+  // with "oversized search string" in the warning messages below.
+  const sigInputEmpty = !input.oldSignature?.trim() || !input.newSignature?.trim();
+  const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
+  const sigCount = sigInputEmpty
+    ? -2 : countOccurrences(contentNoComments, input.oldSignature);
+  const docCount = docInputEmpty
+    ? -2 : countOccurrences(content, input.oldDocstring);
 
-  // Distinguish aborted searches (>10,000 char) from genuine non-matches.
-  // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH,
-  // which means the old signature/docstring is likely from a corrupted record.
-  if (sigCount === -1) {
+  // Distinguish aborted searches (>10,000 char) from genuinely empty inputs.
+  // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH.
+  if (sigCount === -2) {
+    console.warn('DocRel: updateInlineDoc skipped signature — old or new signature is empty');
+  } else if (sigCount === -1) {
     console.warn(`DocRel: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+  }
+  if (docCount === -2) {
+    console.warn('DocRel: updateInlineDoc skipped docstring — old or new docstring is empty');
   } else if (docCount === -1) {
     console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
   }
