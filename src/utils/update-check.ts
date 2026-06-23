@@ -46,7 +46,7 @@ function writeCache(entry: CacheEntry): void {
     // Overwrite (w) — cache must be updatable after first write.
     // The original 'wx' (exclusive creation) flag would fail EEXIST on every
     // subsequent call, leaving the cache permanently stale.
-    fs.writeFileSync(cachePath(), JSON.stringify(entry), { encoding: 'utf-8', flag: 'w' });
+    fs.writeFileSync(cachePath(), JSON.stringify(entry), { encoding: 'utf-8', flag: 'w', mode: 0o600 });
   } catch {
     // best-effort
   }

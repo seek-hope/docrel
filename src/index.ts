@@ -199,12 +199,17 @@ server.tool(
 );
 
 // ── Start ──────────────────────────────────────────────────────
+// Track the highest severity exit code across concurrent shutdown calls.
+// If SIGINT (code 0) fires first and then uncaughtException (code 1) fires
+// during the 500ms grace period, the crash code must NOT be downgraded to 0.
 let shuttingDown = false;
+let exitCode = 0;
 
 async function shutdown(code: number = 0): Promise<void> {
-  // Set the flag FIRST to prevent re-entrancy from uncaughtException firing
-  // concurrently with unhandledRejection (which Node can deliver synchronously
-  // during exception handling).
+  // Escalate to the highest-severity exit code seen across concurrent calls.
+  // A crash (code 1) arriving after a clean shutdown signal (code 0) must
+  // win, so process supervisors (Docker, systemd, k8s) see the failure.
+  if (code > exitCode) exitCode = code;
   if (shuttingDown) return;
   shuttingDown = true;
 
@@ -215,9 +220,9 @@ async function shutdown(code: number = 0): Promise<void> {
   // immediately terminating — gives async cleanup a chance to finish.
   // Exit code reflects the reason for shutdown: 0 for clean termination
   // (SIGINT/SIGTERM), 1 for crashes (uncaughtException/unhandledRejection).
-  process.exitCode = code;
+  process.exitCode = exitCode;
   // Force-exit after a short grace period in case something is still pending
-  setTimeout(() => { process.exit(code); }, 500).unref();
+  setTimeout(() => { process.exit(exitCode); }, 500).unref();
 }
 
 process.on('SIGINT', () => shutdown(0));

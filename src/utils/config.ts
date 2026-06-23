@@ -51,7 +51,7 @@ const DEFAULT_CONFIG: Omit<DocRelConfig, 'project'> = {
 
 export function loadConfig(projectRoot: string): DocRelConfig {
   const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
-  const project = path.basename(projectRoot);
+  const project = path.basename(projectRoot) || 'unknown-project';
 
   if (!fs.existsSync(configPath)) {
     return { project, ...DEFAULT_CONFIG };
@@ -71,10 +71,13 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     }
     userConfig = result.data as Partial<DocRelConfig>;
   } catch (err: any) {
-    // Sanitize the error message: only log the relative config path,
-    // not the absolute project root, to prevent information disclosure.
-    // Also avoid echoing raw err.message which may contain filesystem paths.
-    console.error(`Warning: Failed to load ${configRelPath}: YAML parse error. Using defaults.`);
+    // Log the relative config path plus sanitized error details. YAML parse
+    // errors from the 'yaml' library typically mention line/column numbers,
+    // not filesystem paths, so including err.message is safe and dramatically
+    // improves debuggability. Strip any absolute path references as a precaution.
+    const sanitizedMsg = (err instanceof Error ? err.message : String(err))
+      .replace(projectRoot, '<projectRoot>');
+    console.error(`Warning: Failed to load ${configRelPath}: ${sanitizedMsg}. Using defaults.`);
     return { project, ...DEFAULT_CONFIG };
   }
 
