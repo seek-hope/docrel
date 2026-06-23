@@ -19,6 +19,10 @@ import { docrelDiff } from './tools/diff.js';
 import { installHooks } from './git/hooks.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
+import { scanDocs } from './discovery/doc-scanner.js';
+import { upsertDocSection } from './db/docs.js';
+import { createMapping } from './db/mappings.js';
+import { docSectionId, contentHash } from './utils/hash.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCREL_VERSION } from './version.js';
 
@@ -78,8 +82,8 @@ program
       const docrelDir = path.join(projectRoot, '.docrel');
       let steps: string[] = [];
 
-      // 1. Create .docrel/ directory
-      fs.mkdirSync(docrelDir, { recursive: true });
+      // 1. Create .docrel/ directory with restrictive permissions (0o700)
+      fs.mkdirSync(docrelDir, { recursive: true, mode: 0o700 });
       steps.push('Created .docrel/ directory');
 
       // 2. Write default config if missing (or --force)
@@ -147,6 +151,10 @@ program
     try {
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const status = docrelStatus(db);
+      if (status.error) {
+        console.error('Status query failed:', status.error);
+        exit(1);
+      }
       if (opts.format === 'markdown') {
         console.log(`## DocRel Status
 - Symbols: ${status.totalSymbols}
@@ -173,9 +181,22 @@ program
       let filtered = report.staleDocs;
       if (opts.file) {
         filtered = report.staleDocs.filter((d) => d.file === opts.file);
+        // Recompute passed based on filtered results — do not use the
+        // unfiltered report.passed which may be false due to stale docs
+        // in other files.
+        const filteredPassed = !opts.strict || filtered.length === 0;
+        // Recompute summary to match the filtered staleDocs array so the
+        // output is not misleading (e.g., "5 stale across 3 files" when
+        // the user filtered to a single file with 1 stale doc).
+        const filteredFiles = [...new Set(filtered.map((d: { file: string }) => d.file))];
+        const filteredSummary = filtered.length === 0
+          ? 'All documentation in sync.'
+          : `${filtered.length} doc section(s) stale across ${filteredFiles.length} file(s): ${filteredFiles.join(', ')}`;
+        console.log(JSON.stringify({ ...report, passed: filteredPassed, summary: filteredSummary, staleDocs: filtered }, null, 2));
+      } else {
+        const passed = report.passed;
+        console.log(JSON.stringify({ ...report, passed, staleDocs: filtered }, null, 2));
       }
-      const passed = report.passed && (!opts.strict || filtered.length === 0);
-      console.log(JSON.stringify({ ...report, passed, staleDocs: filtered }, null, 2));
       if (opts.strict && filtered.length > 0) {
         exit(1);
       }
@@ -258,11 +279,11 @@ program
   .action((symbolId) => {
     try {
       const diff = docrelDiff(db, symbolId);
-      if (!diff) {
-        console.error('Symbol not found');
+      if (!diff.found) {
+        console.error(diff.message || 'Symbol not found');
         exit(1);
       }
-      console.log(JSON.stringify(diff, null, 2));
+      console.log(JSON.stringify(diff.report, null, 2));
     } catch (err: any) {
       console.error('Diff failed:', errMsg(err));
       exit(1);
@@ -284,8 +305,9 @@ program
 
 program
   .command('scan')
-  .description('Scan the codebase and discover all symbols')
-  .action(async () => {
+  .description('Scan the codebase and discover all symbols and documentation sections')
+  .option('--no-docs', 'Skip scanning documentation files')
+  .action(async (opts) => {
     try {
       const available = await extractor.isAvailable();
       if (!available) {
@@ -294,7 +316,66 @@ program
       }
       console.log('Scanning codebase...');
       const report = await scanProject(extractor, db, config);
-      console.log(JSON.stringify(report, null, 2));
+      console.log(JSON.stringify({ symbols: report }, null, 2));
+
+      if (opts.docs !== false) {
+        console.log('Scanning documentation...');
+        const { sections, report: docReport } = await scanDocs(config.doc_dirs, projectRoot);
+        let newDocs = 0;
+        let newMappings = 0;
+
+        for (const section of sections) {
+          const id = docSectionId(section.file, section.anchor);
+          if (!id) continue;
+
+          const hash = contentHash(section.content);
+          const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+
+          upsertDocSection(db, {
+            id,
+            file: section.file,
+            anchor: section.anchor,
+            content_hash: hash,
+            doc_type: 'standalone',
+          });
+
+          if (!existing) newDocs++;
+
+          // Try to link code refs to known symbols
+          for (const ref of section.codeRefs) {
+            // Match by symbol name. The ref.symbolName may contain parens
+            // (e.g. "login()") or be a method reference (e.g. "AuthService.login").
+            const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
+            const matched = db.prepare(
+              'SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1'
+            ).get(cleanName, ref.symbolName) as { id: string } | undefined;
+
+            if (matched) {
+              try {
+                createMapping(db, {
+                  symbol_id: matched.id,
+                  doc_id: id,
+                  rel_type: 'describes',
+                  confidence: ref.confidence,
+                });
+                newMappings++;
+              } catch {
+                // Mapping may already exist (UNIQUE constraint); skip
+              }
+            }
+          }
+        }
+
+        console.log(JSON.stringify({
+          docs: {
+            totalFiles: docReport.totalFiles,
+            totalSections: docReport.totalSections,
+            newDocSections: newDocs,
+            newMappings,
+            failedFiles: docReport.failedFiles,
+          }
+        }, null, 2));
+      }
     } catch (err: any) {
       console.error('Scan failed:', errMsg(err));
       exit(1);
@@ -337,10 +418,35 @@ program
   .description('Update DocRel to the latest version via npm')
   .action(() => {
     try {
+      // Resolve npm binary path with TOCTOU-safe validation matching the
+      // pattern used in client.ts doConnect() and hooks.ts installHooks().
+      let npmBin: string;
+      try {
+        const whichOutput = execFileSync('which', ['npm'], { encoding: 'utf-8' }).trim();
+        if (!whichOutput) throw new Error('npm not found on PATH');
+        const realBin = fs.realpathSync(whichOutput);
+        const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
+        if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+          console.error(`Security warning: npm binary resolved to unexpected path: ${realBin}`);
+          exit(1);
+        }
+        // Verify the binary actually works before executing
+        try {
+          execFileSync(realBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
+        } catch {
+          console.error(`Resolved npm binary at ${realBin} does not appear to work.`);
+          exit(1);
+        }
+        npmBin = realBin;
+      } catch (err: any) {
+        console.error(`Cannot locate npm binary: ${err.message || err}`);
+        exit(1);
+      }
+
       // Validate npm registry before executing install
       let registry: string;
       try {
-        registry = execFileSync('npm', ['config', 'get', 'registry'], { encoding: 'utf-8' }).trim();
+        registry = execFileSync(npmBin, ['config', 'get', 'registry'], { encoding: 'utf-8' }).trim();
       } catch {
         registry = 'https://registry.npmjs.org/';
       }
@@ -351,7 +457,7 @@ program
 
       console.log('Updating DocRel...');
       console.warn('Note: global install (-g) may require elevated privileges.');
-      const output = execFileSync('npm', ['install', '-g', 'docrel@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
+      const output = execFileSync(npmBin, ['install', '-g', 'docrel@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
       console.log(output || 'DocRel updated to the latest version.');
     } catch (err: any) {
       // npm stderr may contain absolute filesystem paths (global install
