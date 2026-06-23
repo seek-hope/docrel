@@ -109,7 +109,15 @@ export function markSignatureChanged(
   oldSig: string,
   newSig: string,
 ): void {
-  db.prepare("UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?").run(newSig, id);
+  const info = db.prepare(
+    "UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(newSig, id);
+
+  // Only insert changelog if the symbol actually exists — avoids orphans
+  if (info.changes === 0) {
+    console.warn(`DocRel: markSignatureChanged called for non-existent symbol: ${id}`);
+    return;
+  }
 
   db.prepare(`
     INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig)

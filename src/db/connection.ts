@@ -21,8 +21,11 @@ export function getDb(projectRoot: string): Database.Database {
         dbDir = gitDir;
       } else {
         // .git is a file (worktree or submodule) — resolve the real git directory
+        // Open fd first to prevent TOCTOU between stat and read
+        let fd: number | undefined;
         try {
-          const content = fs.readFileSync(gitDir, 'utf-8');
+          fd = fs.openSync(gitDir, 'r');
+          const content = fs.readFileSync(fd, 'utf-8');
           const match = content.match(/gitdir:\s*(.+)/);
           if (match?.[1]) {
             dbDir = path.resolve(resolved, match[1].trim());
@@ -36,6 +39,10 @@ export function getDb(projectRoot: string): Database.Database {
           }
         } catch {
           dbDir = path.join(resolved, '.docrel');
+        } finally {
+          if (fd !== undefined) {
+            try { fs.closeSync(fd); } catch { /* best effort */ }
+          }
         }
       }
     }
@@ -54,11 +61,11 @@ export function getDb(projectRoot: string): Database.Database {
     db.pragma('foreign_keys = ON');
 
     // Restrictive permissions on the database and companion files
-    fs.chmodSync(dbPath, 0o600);
+    try { fs.chmodSync(dbPath, 0o600); } catch { /* not critical */ }
     const walPath = dbPath + '-wal';
     const shmPath = dbPath + '-shm';
-    if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600);
-    if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600);
+    try { if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600); } catch { /* WAL may not exist yet */ }
+    try { if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600); } catch { /* SHM may not exist yet */ }
   } catch (err: any) {
     throw new Error(`Failed to initialize DocRel database at ${dbPath}: ${err.message}`);
   }

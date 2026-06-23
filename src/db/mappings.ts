@@ -44,8 +44,11 @@ export function listAllMappings(db: Database.Database): MappingRow[] {
   return db.prepare('SELECT * FROM mappings ORDER BY symbol_id').all() as MappingRow[];
 }
 
-export function deleteMapping(db: Database.Database, symbolId: string, docId: string, relType: string): void {
-  db.prepare('DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?').run(symbolId, docId, relType);
+export function deleteMapping(db: Database.Database, symbolId: string, docId: string, relType: string): boolean {
+  const info = db.prepare(
+    'DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?'
+  ).run(symbolId, docId, relType);
+  return info.changes > 0;
 }
 
 /** Export mappings in CodeGraph-compatible format for .docrel/mappings.json */
@@ -55,18 +58,23 @@ export function exportMappingsJson(db: Database.Database): Array<{
   doc_anchor: string;
   rel_type: string;
 }> {
-  const rows = db.prepare(`
-    SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type
-    FROM mappings m
-    JOIN symbols s ON s.id = m.symbol_id
-    JOIN doc_sections d ON d.id = m.doc_id
-    ORDER BY s.name, d.file
-  `).all() as Array<{
-    symbol_name: string;
-    doc_file: string;
-    doc_anchor: string;
-    rel_type: string;
-  }>;
+  try {
+    const rows = db.prepare(`
+      SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type
+      FROM mappings m
+      JOIN symbols s ON s.id = m.symbol_id
+      JOIN doc_sections d ON d.id = m.doc_id
+      ORDER BY s.name, d.file
+    `).all() as Array<{
+      symbol_name: string;
+      doc_file: string;
+      doc_anchor: string;
+      rel_type: string;
+    }>;
 
-  return rows;
+    return rows;
+  } catch (err: any) {
+    console.error('exportMappingsJson failed:', err.message);
+    return [];
+  }
 }

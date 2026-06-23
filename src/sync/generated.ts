@@ -11,11 +11,19 @@ export interface GeneratedSyncInput {
 
 const MAX_COMMAND_LENGTH = 1024;
 const MAX_ARGS = 50;
-// Allowlisting safe known tools avoids allowing arbitrary binaries to run
+// Only allow documentation generators — NOT general-purpose interpreters.
+// Retaining interpreters (bash, sh, node, tsx, npx, python, python3, make, cargo)
+// would enable arbitrary code execution from package.json scripts, which is a
+// supply-chain risk for CI pipelines when strategies.generated: auto_update is active.
 const ALLOWED_BINARIES = new Set([
-  'tsx', 'node', 'typedoc', 'openapi-generator', 'npx', 'npm',
-  'yarn', 'pnpm', 'bash', 'sh', 'python', 'python3', 'make', 'cargo',
+  'typedoc', 'openapi-generator',
 ]);
+
+/** Allowed command prefixes for validation — full command must start with one of these. */
+const ALLOWED_PREFIXES = [
+  /^typedoc\b/,
+  /^openapi-generator\b/,
+];
 
 /**
  * Split a generator command string into [binary, ...args].
@@ -39,6 +47,13 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
     return null;
   }
 
+  // Validate the full command starts with an allowed prefix to prevent
+  // option injection attacks through package.json scripts
+  const fullCmd = cmd.trim();
+  if (!ALLOWED_PREFIXES.some((prefix) => prefix.test(fullCmd))) {
+    return null;
+  }
+
   return { binary, args: parts.slice(1) };
 }
 
@@ -49,7 +64,8 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
   }
 
   try {
-    const result = spawnSync(split.binary, split.args, {
+    // Use -- separator to prevent option injection through package.json scripts
+    const result = spawnSync(split.binary, ['--', ...split.args], {
       cwd: input.projectRoot,
       encoding: 'utf-8',
       timeout: 60_000,

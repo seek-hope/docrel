@@ -7,18 +7,20 @@ export function runMigrations(db: Database.Database): void {
 
   if (currentVersion >= SCHEMA_VERSION) return;
 
-  // Add raw_signature column for existing V1 databases (outside transaction)
-  if (currentVersion >= 1) {
-    try {
-      db.exec('ALTER TABLE symbols ADD COLUMN raw_signature TEXT NOT NULL DEFAULT \'\'');
-    } catch {
-      // Column already exists or table doesn't exist yet
-    }
-  }
-
-  // Wrap in a transaction so migration is atomic — partial failure
-  // won't leave the database in a half-migrated state.
+  // Wrap all schema changes in a single transaction so migration is atomic.
+  // The ALTER TABLE from V1 is included inside the transaction to prevent
+  // the database from being left in a partially-migrated state if the
+  // transaction fails.
   db.transaction(() => {
+    // Add raw_signature column for existing V1 databases
+    if (currentVersion >= 1) {
+      try {
+        db.exec('ALTER TABLE symbols ADD COLUMN raw_signature TEXT NOT NULL DEFAULT \'\'');
+      } catch {
+        // Column already exists or table doesn't exist yet
+      }
+    }
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS symbols (
         id            TEXT PRIMARY KEY,
