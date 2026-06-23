@@ -17,6 +17,17 @@ export interface SyncResult {
   errors: string[];
 }
 
+/** Parse a "file:line" location into { file, line }. Returns null if invalid. */
+function parseLocation(location: string): { file: string; line: number } | null {
+  if (!location) return null;
+  const lastColon = location.lastIndexOf(':');
+  if (lastColon < 0) return null;
+  const file = location.slice(0, lastColon);
+  const line = parseInt(location.slice(lastColon + 1), 10);
+  if (!file || isNaN(line)) return null;
+  return { file, line };
+}
+
 export async function syncSymbol(
   db: Database.Database,
   codegraph: CodegraphClient,
@@ -46,13 +57,18 @@ export async function syncSymbol(
     try {
       switch (doc.doc_type) {
         case 'inline': {
+          const loc = parseLocation(symbol.location);
+          if (!loc) {
+            result.errors.push(`Cannot sync inline docs for ${symbol.name}: invalid or missing source file location`);
+            continue;
+          }
           if (strategy === 'auto_update') {
-            const oldDocstring = extractDocstring(symbol.location.split(':')[0], symbol.name) ?? '';
+            const oldDocstring = extractDocstring(loc.file, symbol.name) ?? '';
             const newSig = symbol.signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
             updateInlineDoc({
-              file: symbol.location.split(':')[0],
+              file: loc.file,
               symbolName: symbol.name,
               oldSignature: '',
               newSignature: '',
