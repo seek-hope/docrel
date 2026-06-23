@@ -26,8 +26,8 @@ export interface DiffReport {
 }
 
 export function docrelDiff(db: Database.Database, symbolId: string): DiffReport | null {
-  assertDbOpen(db);
   try {
+    assertDbOpen(db);
     const symbol = getSymbol(db, symbolId);
     if (!symbol) return null;
 

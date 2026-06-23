@@ -39,10 +39,10 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
 ): Promise<SyncResult> {
-  assertDbOpen(db);
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], errors: [] };
 
   try {
+    assertDbOpen(db);
     const symbol = getSymbol(db, symbolId);
     if (!symbol) {
       result.errors.push(`Symbol not found: ${symbolId}`);

@@ -120,16 +120,21 @@ program
   .description('Show health dashboard')
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action((opts) => {
-    notifyIfOutdated(); // fire-and-forget update check
-    const status = docrelStatus(db);
-    if (opts.format === 'markdown') {
-      console.log(`## DocRel Status
+    try {
+      notifyIfOutdated(); // fire-and-forget update check
+      const status = docrelStatus(db);
+      if (opts.format === 'markdown') {
+        console.log(`## DocRel Status
 - Symbols: ${status.totalSymbols}
 - Linked: ${status.linkedSymbols} (${status.linkedPercentage}%)
 - Docs in sync: ${status.syncedDocs}/${status.totalDocs} (${status.syncPercentage}%)
 - Pending changes: ${status.pendingChanges}`);
-    } else {
-      console.log(JSON.stringify(status, null, 2));
+      } else {
+        console.log(JSON.stringify(status, null, 2));
+      }
+    } catch (err: any) {
+      console.error('Status failed:', err.message);
+      process.exit(1);
     }
   });
 
@@ -244,8 +249,13 @@ program
   .command('install-hooks')
   .description('Install DocRel git hooks in .git/hooks/')
   .action(() => {
-    installHooks(projectRoot);
-    console.log('DocRel hooks installed successfully.');
+    try {
+      installHooks(projectRoot);
+      console.log('DocRel hooks installed successfully.');
+    } catch (err: any) {
+      console.error('Failed to install hooks:', err.message);
+      process.exit(1);
+    }
   });
 
 program

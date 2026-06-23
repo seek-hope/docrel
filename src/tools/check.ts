@@ -16,8 +16,8 @@ export interface CheckReport {
 }
 
 export function docrelCheck(db: Database.Database, strict = false): CheckReport {
-  assertDbOpen(db);
   try {
+    assertDbOpen(db);
     const staleRows = db.prepare(`
       SELECT d.id, d.file, d.anchor, d.doc_type, d.status, m.symbol_id
       FROM doc_sections d

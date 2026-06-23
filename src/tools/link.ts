@@ -23,7 +23,6 @@ export function docrelLink(
     rel_type: string;
   },
 ): LinkResult {
-  assertDbOpen(db);
   // Validate rel_type early so the user gets a clear error
   if (!VALID_REL_TYPES.has(params.rel_type)) {
     return {
@@ -38,6 +37,7 @@ export function docrelLink(
   const rel = params.rel_type as MappingRow['rel_type'];
 
   try {
+    assertDbOpen(db);
     if (params.action === 'create') {
       createMapping(db, {
         symbol_id: params.symbol_id,

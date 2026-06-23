@@ -15,8 +15,8 @@ export interface StatusReport {
 }
 
 export function docrelStatus(db: Database.Database): StatusReport {
-  assertDbOpen(db);
   try {
+    assertDbOpen(db);
     return db.transaction(() => {
       const totalSymbols = (db.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }).c;
       const linkedSymbols = (db.prepare(

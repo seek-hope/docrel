@@ -34,7 +34,16 @@ export function docrelImpact(
   db: Database.Database,
   changedFiles: string[],
 ): ImpactReport {
-  assertDbOpen(db);
+  try {
+    assertDbOpen(db);
+  } catch (err: any) {
+    return {
+      changedFiles,
+      affectedSymbols: [],
+      affectedDocs: [],
+      errors: [{ file: '', message: `Database error: ${err.message}` }],
+    };
+  }
   const affectedSymbols: ImpactReport['affectedSymbols'] = [];
   const affectedDocs: ImpactReport['affectedDocs'] = [];
   const errors: ImpactReport['errors'] = [];
