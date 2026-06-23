@@ -101,17 +101,28 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   // recursively read arbitrary filesystem paths.
   const root = path.resolve(projectRoot);
   if (!absDir.startsWith(root + path.sep) && absDir !== root) return result;
+  // Resolve symlinks and re-verify containment to prevent symlink bypass
+  let realDir: string;
+  try {
+    realDir = fs.realpathSync(absDir);
+  } catch {
+    return result;
+  }
+  if (!realDir.startsWith(root + path.sep) && realDir !== root) return result;
   let stat: fs.Stats;
   try {
-    stat = fs.statSync(absDir);
-  } catch {
+    stat = fs.statSync(realDir);
+  } catch (err: any) {
+    if (err?.code === 'ENOENT') {
+      console.warn(`DocRel: code directory not found: ${absDir}`);
+    }
     return result;
   }
   if (!stat.isDirectory()) {
     return result;
   }
 
-  const stack: string[] = [absDir];
+  const stack: string[] = [realDir];
   while (stack.length > 0 && result.length < maxFiles) {
     const current = stack.pop()!;
     let entries: fs.Dirent[];
@@ -144,9 +155,18 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
 
 /** Extract symbols from a single file using regex patterns. */
 function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol[] {
+  // Defend against symlinks inside legitimate code directories
+  let realPath: string;
+  try {
+    realPath = fs.realpathSync(filePath);
+    const root = path.resolve(projectRoot);
+    if (!realPath.startsWith(root + path.sep) && realPath !== root) return [];
+  } catch {
+    return [];
+  }
   let content: string;
   try {
-    content = fs.readFileSync(filePath, 'utf-8');
+    content = fs.readFileSync(realPath, 'utf-8');
   } catch {
     return [];
   }

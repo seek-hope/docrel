@@ -34,6 +34,19 @@ export async function scanDocs(
       failedFiles.push(docDir);
       continue;
     }
+    // Resolve symlinks and re-verify containment to prevent symlink bypass
+    // (e.g. docs -> /etc would pass the lexical check above)
+    let realDir: string;
+    try {
+      realDir = fs.realpathSync(absDir);
+    } catch {
+      failedFiles.push(docDir);
+      continue;
+    }
+    if (!realDir.startsWith(root + path.sep) && realDir !== root) {
+      failedFiles.push(docDir);
+      continue;
+    }
 
     // It might be a single file (e.g. README.md)
     let stat: fs.Stats;

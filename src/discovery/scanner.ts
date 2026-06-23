@@ -4,6 +4,7 @@ import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
+import { assertDbOpen } from '../db/connection.js';
 
 /** Escape :: in FQN components to prevent symbol ID collisions. */
 function escFqn(s: string): string {
@@ -32,6 +33,7 @@ export async function scanProject(
   db: Database.Database,
   config: DocRelConfig,
 ): Promise<ScanReport> {
+  assertDbOpen(db);
   const failedDirs: string[] = [];
   if (config.code_dirs.length === 0) {
     console.warn('Warning: No code directories configured. Set code_dirs in .docrel/config.yaml');
