@@ -65,7 +65,17 @@ export function getDb(projectRoot: string): Database.Database {
         dbDir = path.join(resolved, '.docrel');
       }
     }
-  } catch {
+  } catch (err: any) {
+    // F4: Distinguish EACCES/EPERM from ENOENT. If .git exists but is
+    // inaccessible, log a prominent warning and fall back to .docrel instead
+    // of silently creating a second, empty database in .docrel/ while the
+    // real data sits orphaned in .git/docrel.db.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'EACCES' || code === 'EPERM') {
+      if (fs.existsSync(gitDir)) {
+        console.warn(`DocRel: .git directory exists but is inaccessible (${code}) — falling back to .docrel/. Check directory permissions.`);
+      }
+    }
     // openSync or fstat failed (e.g. EACCES, or directory open not supported)
     // — fall back to .docrel
     dbDir = path.join(resolved, '.docrel');
