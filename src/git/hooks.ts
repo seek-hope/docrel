@@ -65,7 +65,11 @@ export async function postCommitHook(
       hasParent = true;
     } catch (err: any) {
       // Only ignore 'unknown revision or path' — surface real errors
-      if (err?.message && !/unknown revision|ambiguous argument/i.test(err.message)) {
+      if (!err?.message) {
+        console.error('DocRel post-commit: unexpected error checking parent commit:', err);
+        return;
+      }
+      if (!/unknown revision|ambiguous argument/i.test(err.message)) {
         console.error(`DocRel post-commit: cannot check parent commit: ${err.message}`);
         return;
       }

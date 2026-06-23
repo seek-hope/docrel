@@ -91,10 +91,18 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
   try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return false; }
   const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
+  // Capture original file mode before rename replaces the inode
+  let originalMode: number | undefined;
+  try { originalMode = fs.statSync(resolved).mode; } catch { /* proceed without mode */ }
   try {
     // Use exclusive creation flag to fail if file already exists
     fs.writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx' });
     fs.renameSync(tmpPath, resolved);
+    // Restore original permissions — rename replaces the inode, so the temp
+    // file's default permissions (typically 0600) replace the original's.
+    if (originalMode !== undefined) {
+      try { fs.chmodSync(resolved, originalMode); } catch { /* best effort */ }
+    }
   } catch {
     try { fs.unlinkSync(tmpPath); } catch {}
     return false;

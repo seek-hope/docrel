@@ -86,7 +86,7 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
     // Reject pre-release versions (beta, alpha, rc) so stable users are not
     // prompted to install unstable releases. Strip any build metadata (+) but
     // keep the numeric version for comparison.
-    const stablePart = latest.split('+')[0] ?? latest;
+    const stablePart = latest.split('+')[0];
     if (stablePart.includes('-')) return null;
 
     writeCache({ lastCheck: Date.now(), latestVersion: latest });
@@ -108,8 +108,8 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
  */
 export function isNewer(current: string, latest: string): boolean {
   // Strip pre-release suffixes for numeric comparison
-  const cleanCurrent = current.split('-')[0] ?? current;
-  const cleanLatest = latest.split('-')[0] ?? latest;
+  const cleanCurrent = current.split('-')[0];
+  const cleanLatest = latest.split('-')[0];
 
   const curParts = cleanCurrent.split('.').map(Number);
   const latParts = cleanLatest.split('.').map(Number);

@@ -156,11 +156,13 @@ export class CodegraphClient {
     );
 
     try {
-      // Attach the catch handler BEFORE the Promise.race so that if
-      // client.connect rejects before setTimeout fires, the rejection
-      // is already caught and does not become an unhandled rejection.
-      const connectPromise = client.connect(transport);
-      connectPromise.catch(() => {}); // prevent unhandled rejection
+      // Store the connect error so we can surface it if the connection
+      // fails (not just times out). The pre-attached catch prevents
+      // unhandled rejection when Promise.race resolves to the timeout.
+      let connectErr: Error | null = null;
+      const connectPromise = client.connect(transport).catch((e) => {
+        connectErr = e as Error;
+      });
       await Promise.race([
         connectPromise,
         new Promise<never>((_, reject) =>
@@ -169,6 +171,8 @@ export class CodegraphClient {
           }, CONNECT_TIMEOUT_MS)
         ),
       ]);
+      // If connect failed (not a timeout), surface the actual error
+      if (connectErr) throw connectErr;
       // If a newer generation started while we were connecting, discard
       if (gen !== this.connectGeneration) {
         try { await client.close(); } catch {}
