@@ -16,9 +16,13 @@ export interface MappingInput {
 }
 
 export function createMapping(db: Database.Database, input: MappingInput): MappingRow {
+  // Use UPSERT to preserve created_at on updates. INSERT OR REPLACE would
+  // delete and re-insert the row, resetting created_at to datetime('now').
   db.prepare(`
-    INSERT OR REPLACE INTO mappings (symbol_id, doc_id, rel_type, confidence)
+    INSERT INTO mappings (symbol_id, doc_id, rel_type, confidence)
     VALUES (?, ?, ?, ?)
+    ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET
+      confidence = excluded.confidence
   `).run(input.symbol_id, input.doc_id, input.rel_type, input.confidence ?? 1.0);
 
   const row = getMapping(db, input.symbol_id, input.doc_id, input.rel_type);

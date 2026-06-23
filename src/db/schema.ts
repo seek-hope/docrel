@@ -16,8 +16,10 @@ export function runMigrations(db: Database.Database): void {
     if (currentVersion >= 1) {
       try {
         db.exec('ALTER TABLE symbols ADD COLUMN raw_signature TEXT NOT NULL DEFAULT \'\'');
-      } catch {
-        // Column already exists or table doesn't exist yet
+      } catch (err: any) {
+        // Only swallow "column already exists" — surface real errors
+        // (locked database, corrupted schema, disk I/O error).
+        if (!/duplicate column|already exists/i.test(err?.message ?? '')) throw err;
       }
     }
 

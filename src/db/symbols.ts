@@ -108,10 +108,16 @@ export function markSignatureChanged(
   id: string,
   oldSig: string,
   newSig: string,
+  newRawSig?: string,
 ): boolean {
+  // Update both the signature hash and the human-readable raw_signature
+  // to keep them synchronized. Without updating raw_signature, callers
+  // would get mismatched hash/raw pairs after this call.
   const info = db.prepare(
-    "UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(newSig, id);
+    newRawSig !== undefined
+      ? "UPDATE symbols SET signature = ?, raw_signature = ?, updated_at = datetime('now') WHERE id = ?"
+      : "UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(...(newRawSig !== undefined ? [newSig, newRawSig, id] : [newSig, id]));
 
   // Only insert changelog if the symbol actually exists — avoids orphans
   if (info.changes === 0) {
