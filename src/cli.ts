@@ -127,13 +127,19 @@ program
   .option('--strict', 'Exit with code 1 if any docs are stale', false)
   .option('--file <file>', 'Check only a specific file')
   .action((opts) => {
-    const report = docrelCheck(db, opts.strict);
-    let filtered = report.staleDocs;
-    if (opts.file) {
-      filtered = report.staleDocs.filter((d) => d.file === opts.file);
-    }
-    console.log(JSON.stringify({ ...report, staleDocs: filtered }, null, 2));
-    if (opts.strict && filtered.length > 0) {
+    try {
+      const report = docrelCheck(db, opts.strict);
+      let filtered = report.staleDocs;
+      if (opts.file) {
+        filtered = report.staleDocs.filter((d) => d.file === opts.file);
+      }
+      const passed = !opts.strict || filtered.length === 0;
+      console.log(JSON.stringify({ ...report, passed, staleDocs: filtered }, null, 2));
+      if (opts.strict && filtered.length > 0) {
+        process.exit(1);
+      }
+    } catch (err: any) {
+      console.error('Check failed:', err.message);
       process.exit(1);
     }
   });
@@ -143,8 +149,13 @@ program
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')
   .action((paths: string[]) => {
-    const impact = docrelImpact(db, paths);
-    console.log(JSON.stringify(impact, null, 2));
+    try {
+      const impact = docrelImpact(db, paths);
+      console.log(JSON.stringify(impact, null, 2));
+    } catch (err: any) {
+      console.error('Impact analysis failed:', err.message);
+      process.exit(1);
+    }
   });
 
 program
@@ -173,25 +184,30 @@ program
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
   .action((action, opts) => {
-    if (!opts.symbol) {
-      console.error('Error: --symbol <id> is required');
+    try {
+      if (!opts.symbol) {
+        console.error('Error: --symbol <id> is required');
+        process.exit(1);
+      }
+      if (!opts.doc) {
+        console.error('Error: --doc <id> is required');
+        process.exit(1);
+      }
+      if (action !== 'create' && action !== 'delete') {
+        console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
+        process.exit(1);
+      }
+      const result = docrelLink(db, {
+        action: action as 'create' | 'delete',
+        symbol_id: opts.symbol,
+        doc_id: opts.doc,
+        rel_type: opts.type,
+      });
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err: any) {
+      console.error('Link failed:', err.message);
       process.exit(1);
     }
-    if (!opts.doc) {
-      console.error('Error: --doc <id> is required');
-      process.exit(1);
-    }
-    if (action !== 'create' && action !== 'delete') {
-      console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
-      process.exit(1);
-    }
-    const result = docrelLink(db, {
-      action: action as 'create' | 'delete',
-      symbol_id: opts.symbol,
-      doc_id: opts.doc,
-      rel_type: opts.type,
-    });
-    console.log(JSON.stringify(result, null, 2));
   });
 
 program
@@ -199,12 +215,17 @@ program
   .description('Show change history for a symbol')
   .argument('<symbol_id>', 'Symbol ID')
   .action((symbolId) => {
-    const diff = docrelDiff(db, symbolId);
-    if (!diff) {
-      console.error('Symbol not found');
+    try {
+      const diff = docrelDiff(db, symbolId);
+      if (!diff) {
+        console.error('Symbol not found');
+        process.exit(1);
+      }
+      console.log(JSON.stringify(diff, null, 2));
+    } catch (err: any) {
+      console.error('Diff failed:', err.message);
       process.exit(1);
     }
-    console.log(JSON.stringify(diff, null, 2));
   });
 
 program
@@ -224,14 +245,19 @@ program
   .command('scan')
   .description('Scan the codebase via codegraph and discover all symbols')
   .action(async () => {
-    const available = await codegraph.isAvailable();
-    if (!available) {
-      console.error('Codegraph is not available. Start codegraph first, or set codegraph.command in .docrel/config.yaml');
+    try {
+      const available = await codegraph.isAvailable();
+      if (!available) {
+        console.error('Codegraph is not available. Start codegraph first, or set codegraph.command in .docrel/config.yaml');
+        process.exit(1);
+      }
+      console.log('Scanning codebase...');
+      const report = await scanProject(codegraph, db, config);
+      console.log(JSON.stringify(report, null, 2));
+    } catch (err: any) {
+      console.error('Scan failed:', err.message);
       process.exit(1);
     }
-    console.log('Scanning codebase...');
-    const report = await scanProject(codegraph, db, config);
-    console.log(JSON.stringify(report, null, 2));
   });
 
 program

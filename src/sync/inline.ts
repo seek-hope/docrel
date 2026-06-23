@@ -14,7 +14,7 @@ export interface InlineSyncInput {
 }
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
-const MAX_SEARCH_LENGTH = 100_000;
+const MAX_SEARCH_LENGTH = 10_000; // Practical limit to prevent ReDoS from crafted regex input
 
 /** Resolve and validate that filePath is within projectRoot. Returns resolved path or null. */
 function validatePath(filePath: string, projectRoot: string): string | null {
@@ -159,12 +159,14 @@ export function extractDocstring(file: string, symbolName: string, projectRoot?:
  */
 function escapedSymRegex(symbolName: string): RegExp {
   const n = escapeRegexChar(symbolName);
-  // Match many definition styles in one alternation
+  // Match only definition patterns. The overly broad `\\b${n}\\s*\\(` alternation
+  // was removed because it matches call sites like `login(username)` or
+  // `return login(data);` which would extract the wrong docstring.
   return new RegExp(
-    `(?:export\\s+)?(?:async\\s+)?function\\s+${n}\\b` +
-    `|(?:export\\s+)?class\\s+${n}\\b` +
+    `(?:export\\s+)?(?:async\\s+)??(?:function|class)\\s+${n}\\b` +
     `|(?:export\\s+)?(?:const|let|var)\\s+${n}\\b` +
-    `|\\b${n}\\s*\\(`,
+    `|\\binterface\\s+${n}\\b` +
+    `|\\btype\\s+${n}\\b`,
   );
 }
 
@@ -178,13 +180,15 @@ function escapeRegexChar(str: string): string {
  * monolithic regex patterns on crafted input.
  */
 function stripCommentsAndStrings(line: string): string {
+  // Safety: operates per-line only — each while loop is bounded by line.length.
+  // Multi-line strings are not supported; input is always split by '\n' first.
   const out: string[] = [];
   let i = 0;
   while (i < line.length) {
     const c = line[i];
     const next = line[i + 1];
 
-    // Double-quoted string
+    // Double-quoted string (bounded by line length)
     if (c === '"') {
       i++;
       while (i < line.length) {
