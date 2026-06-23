@@ -132,3 +132,62 @@ export function docrelImpact(
 
   return { changedFiles, affectedSymbols, affectedDocs, errors };
 }
+
+/**
+ * Format an ImpactReport as human-readable markdown.
+ */
+export function formatImpactMarkdown(report: ImpactReport): string {
+  const lines: string[] = [];
+
+  lines.push('## DocRel Impact Analysis');
+  lines.push('');
+
+  // Changed files
+  lines.push(`### Changed Files (${report.changedFiles.length})`);
+  lines.push('');
+  if (report.changedFiles.length > 0) {
+    for (const f of report.changedFiles) {
+      lines.push(`- \`${f}\``);
+    }
+  } else {
+    lines.push('_(none)_');
+  }
+  lines.push('');
+
+  // Affected symbols
+  lines.push(`### Affected Symbols (${report.affectedSymbols.length})`);
+  lines.push('');
+  if (report.affectedSymbols.length > 0) {
+    for (const s of report.affectedSymbols) {
+      lines.push(`- \`${s.name}\` (${s.kind}) — ${s.location}`);
+    }
+  } else {
+    lines.push('_(none)_');
+  }
+  lines.push('');
+
+  // Affected docs
+  lines.push(`### Affected Documentation (${report.affectedDocs.length})`);
+  lines.push('');
+  if (report.affectedDocs.length > 0) {
+    for (const d of report.affectedDocs) {
+      const anchorLabel = d.anchor ? `#${d.anchor}` : '';
+      lines.push(`- \`${d.file}${anchorLabel}\` — **${d.status}** (${d.relationship})`);
+    }
+  } else {
+    lines.push('_(none)_');
+  }
+  lines.push('');
+
+  // Errors
+  if (report.errors.length > 0) {
+    lines.push(`### Errors (${report.errors.length})`);
+    lines.push('');
+    for (const e of report.errors) {
+      lines.push(`- \`${e.file}\`: ${e.message}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}

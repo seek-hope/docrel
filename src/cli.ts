@@ -11,11 +11,11 @@ import { CodegraphExtractor } from './extractors/codegraph.js';
 import { BuiltinExtractor } from './extractors/builtin.js';
 import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelStatus } from './tools/status.js';
-import { docrelCheck } from './tools/check.js';
-import { docrelImpact } from './tools/impact.js';
+import { docrelCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
+import { docrelImpact, formatImpactMarkdown } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelLink, docrelConfirm } from './tools/link.js';
-import { docrelDiff } from './tools/diff.js';
+import { docrelDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson, listAllMappings } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
@@ -30,6 +30,7 @@ import { DOCREL_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
+import { stringify as stringifyYaml } from 'yaml';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
@@ -187,33 +188,43 @@ program
   .description('Check for stale documentation')
   .option('--strict', 'Exit with code 1 if any docs are stale', false)
   .option('--file <file>', 'Check only a specific file')
+  .option('--format <format>', 'Output format: json, markdown, or ci', 'json')
   .action((opts) => {
     try {
       const report = docrelCheck(db, opts.strict);
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count.
-      if (report.error) {
+      if (report.error && opts.format === 'json') {
         console.error('DocRel check failed:', report.error);
         exit(1);
       }
       let filtered = report.staleDocs;
+      let filteredPassed = report.passed;
+      let filteredSummary = report.summary;
       if (opts.file) {
         filtered = report.staleDocs.filter((d) => d.file === opts.file);
         // Recompute passed based on filtered results — do not use the
         // unfiltered report.passed which may be false due to stale docs
         // in other files.
-        const filteredPassed = !opts.strict || filtered.length === 0;
+        filteredPassed = !opts.strict || filtered.length === 0;
         // Recompute summary to match the filtered staleDocs array so the
         // output is not misleading (e.g., "5 stale across 3 files" when
         // the user filtered to a single file with 1 stale doc).
         const filteredFiles = [...new Set(filtered.map((d: { file: string }) => d.file))];
-        const filteredSummary = filtered.length === 0
+        filteredSummary = filtered.length === 0
           ? 'All documentation in sync.'
           : `${filtered.length} doc section(s) stale across ${filteredFiles.length} file(s): ${filteredFiles.join(', ')}`;
-        console.log(JSON.stringify({ ...report, passed: filteredPassed, summary: filteredSummary, staleDocs: filtered }, null, 2));
+      }
+      const outputReport = opts.file
+        ? { ...report, passed: filteredPassed, summary: filteredSummary, staleDocs: filtered }
+        : { ...report, passed: filteredPassed, staleDocs: filtered };
+
+      if (opts.format === 'markdown') {
+        console.log(formatCheckMarkdown(outputReport));
+      } else if (opts.format === 'ci') {
+        console.log(formatCheckCI(outputReport));
       } else {
-        const passed = report.passed;
-        console.log(JSON.stringify({ ...report, passed, staleDocs: filtered }, null, 2));
+        console.log(JSON.stringify(outputReport, null, 2));
       }
       if (opts.strict && filtered.length > 0) {
         exit(1);
@@ -228,10 +239,15 @@ program
   .command('impact')
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')
-  .action((paths: string[]) => {
+  .option('--format <format>', 'Output format: json or markdown', 'json')
+  .action((paths: string[], opts) => {
     try {
       const impact = docrelImpact(db, paths);
-      console.log(JSON.stringify(impact, null, 2));
+      if (opts.format === 'markdown') {
+        console.log(formatImpactMarkdown(impact));
+      } else {
+        console.log(JSON.stringify(impact, null, 2));
+      }
     } catch (err: any) {
       console.error('Impact analysis failed:', errMsg(err));
       exit(1);
@@ -312,14 +328,19 @@ program
   .command('diff')
   .description('Show change history for a symbol')
   .argument('<symbol_id>', 'Symbol ID')
-  .action((symbolId) => {
+  .option('--format <format>', 'Output format: json or markdown', 'json')
+  .action((symbolId, opts) => {
     try {
       const diff = docrelDiff(db, symbolId);
       if (!diff.found) {
         console.error(diff.message || 'Symbol not found');
         exit(1);
       }
-      console.log(JSON.stringify(diff.report, null, 2));
+      if (opts.format === 'markdown' && diff.report) {
+        console.log(formatDiffMarkdown(diff.report));
+      } else {
+        console.log(JSON.stringify(diff.report, null, 2));
+      }
     } catch (err: any) {
       console.error('Diff failed:', errMsg(err));
       exit(1);
@@ -642,6 +663,89 @@ program
         console.error('Update failed: npm install returned an error. Run with DOCREL_DEBUG=1 for details.');
       }
       console.error('Try: npm install -g docrel@latest');
+      exit(1);
+    }
+  });
+
+const configCommand = program
+  .command('config')
+  .description('Show resolved configuration');
+
+configCommand
+  .command('show')
+  .description('Show resolved config (defaults merged with user overrides) in YAML format')
+  .action(() => {
+    try {
+      const resolved = loadConfig(projectRoot);
+      console.log(stringifyYaml(resolved));
+    } catch (err: any) {
+      console.error('Config failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+// Default action for `docrel config` (no subcommand) → show config
+configCommand.action(() => {
+  try {
+    const resolved = loadConfig(projectRoot);
+    console.log(stringifyYaml(resolved));
+  } catch (err: any) {
+    console.error('Config failed:', errMsg(err));
+    exit(1);
+  }
+});
+
+program
+  .command('reset')
+  .description('Delete the DocRel database and re-run migrations (destructive)')
+  .option('--force', 'Skip confirmation prompt')
+  .action(async (opts) => {
+    try {
+      if (!opts.force) {
+        console.error('WARNING: This will delete the DocRel database (.git/docrel.db or .docrel/docrel.db).');
+        console.error('All symbol mappings, changelog history, and scan metadata will be lost.');
+        console.error('This is irreversible.');
+        console.error('');
+
+        const readline = await import('node:readline');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+        const answer = await new Promise<string>((resolve) => {
+          rl.question('Type "yes" to confirm: ', (a) => { rl.close(); resolve(a); });
+        });
+        if (answer.trim() !== 'yes') {
+          console.error('Reset cancelled.');
+          exit(0);
+        }
+      }
+
+      // Determine the database path (check .git/ then .docrel/)
+      const gitDbPath = path.join(projectRoot, '.git', 'docrel.db');
+      const docrelDbPath = path.join(projectRoot, '.docrel', 'docrel.db');
+      let dbPath = '';
+      if (fs.existsSync(gitDbPath)) {
+        dbPath = gitDbPath;
+      } else if (fs.existsSync(docrelDbPath)) {
+        dbPath = docrelDbPath;
+      }
+
+      // Close existing database connections
+      closeAllDbs();
+
+      // Delete the database and companion files
+      if (dbPath) {
+        try { fs.unlinkSync(dbPath); } catch {}
+        try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+        try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+        console.error(`Deleted database: ${dbPath.replace(projectRoot, '<projectRoot>')}`);
+      }
+
+      // Re-initialize: open a fresh database and run migrations
+      db = getDb(projectRoot);
+      runMigrations(db);
+
+      console.error('DocRel database has been reset and re-initialized.');
+    } catch (err: any) {
+      console.error('Reset failed:', errMsg(err));
       exit(1);
     }
   });

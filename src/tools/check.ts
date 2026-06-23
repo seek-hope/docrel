@@ -66,3 +66,78 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
     };
   }
 }
+
+/**
+ * Format a CheckReport as human-readable markdown.
+ */
+export function formatCheckMarkdown(report: CheckReport): string {
+  const lines: string[] = [];
+
+  lines.push('## DocRel Check');
+  lines.push('');
+
+  if (report.error) {
+    lines.push(`**Error:** ${report.error}`);
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  if (report.staleDocs.length === 0) {
+    lines.push('All documentation is in sync.');
+    lines.push('');
+    return lines.join('\n');
+  }
+
+  const uniqueFiles = [...new Set(report.staleDocs.map((d) => d.file))];
+  lines.push(`${report.staleDocs.length} doc section(s) stale across ${uniqueFiles.length} file(s):`);
+  lines.push('');
+
+  for (const doc of report.staleDocs) {
+    const anchorLabel = doc.anchor ? `#${doc.anchor}` : '';
+    lines.push(`### ${doc.file}${anchorLabel}`);
+    lines.push('');
+    lines.push(`- **Status:** ${doc.status}`);
+    lines.push(`- **Type:** ${doc.doc_type}`);
+    if (doc.linkedSymbols.length > 0) {
+      lines.push(`- **Linked symbols:** ${doc.linkedSymbols.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Format a CheckReport as GitHub Actions workflow command annotations.
+ * Outputs ::warning for each stale doc section and ::error if the
+ * overall check fails (passed === false).
+ */
+export function formatCheckCI(report: CheckReport): string {
+  const lines: string[] = [];
+
+  for (const doc of report.staleDocs) {
+    const escapedFile = doc.file.replace(/,/g, '%2C').replace(/\r?\n/g, '%0A');
+    const escapedMessage = (doc.anchor
+      ? `Section '${doc.anchor}' has stale documentation`
+      : 'Documentation is stale'
+    ).replace(/,/g, '%2C').replace(/\r?\n/g, '%0A');
+
+    const lineParam = doc.linkedSymbols.length > 0
+      // Use the first linked symbol to approximate a line reference
+      // (the actual line is not tracked per-doc in check; we emit without line)
+      ? ''
+      : '';
+
+    if (lineParam) {
+      lines.push(`::warning file=${escapedFile}${lineParam}::${escapedMessage}`);
+    } else {
+      lines.push(`::warning file=${escapedFile}::${escapedMessage}`);
+    }
+  }
+
+  if (!report.passed) {
+    lines.push(`::error file=.::Documentation is out of sync with code`);
+  }
+
+  return lines.join('\n') + '\n';
+}

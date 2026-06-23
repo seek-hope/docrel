@@ -63,3 +63,52 @@ export function docrelDiff(db: Database.Database, symbolId: string): DiffResult 
     return { found: false, reason: 'db_error', message: 'Database query error — check server logs for details' };
   }
 }
+
+/**
+ * Format a DiffReport as human-readable markdown.
+ */
+export function formatDiffMarkdown(report: DiffReport): string {
+  const lines: string[] = [];
+
+  lines.push('## DocRel Diff');
+  lines.push('');
+
+  // Symbol header
+  lines.push(`### Symbol: \`${report.symbol.name}\``);
+  lines.push('');
+  lines.push(`- **ID:** ${report.symbol.id}`);
+  lines.push(`- **Signature:** \`${report.symbol.currentSignature}\``);
+  lines.push('');
+
+  // Change log
+  if (report.changeLog.length > 0) {
+    lines.push(`### Change Log (${report.changeLog.length} entries)`);
+    lines.push('');
+    lines.push('| Timestamp | Type | Old Signature | New Signature | Status |');
+    lines.push('| --- | --- | --- | --- | --- |');
+    for (const entry of report.changeLog) {
+      const oldSig = (entry.old_sig || '_').slice(0, 60);
+      const newSig = (entry.new_sig || '_').slice(0, 60);
+      lines.push(`| ${entry.timestamp} | ${entry.change_type} | ${oldSig} | ${newSig} | ${entry.sync_status} |`);
+    }
+    lines.push('');
+  } else {
+    lines.push('_(no change log entries)_');
+    lines.push('');
+  }
+
+  // Affected docs
+  lines.push(`### Affected Documentation (${report.affectedDocs.length})`);
+  lines.push('');
+  if (report.affectedDocs.length > 0) {
+    for (const d of report.affectedDocs) {
+      const anchorLabel = d.anchor ? `#${d.anchor}` : '';
+      lines.push(`- \`${d.file}${anchorLabel}\` — **${d.status}**`);
+    }
+  } else {
+    lines.push('_(none)_');
+  }
+  lines.push('');
+
+  return lines.join('\n');
+}
