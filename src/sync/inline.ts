@@ -20,7 +20,10 @@ import { validatePath, escapeRegex, escapeRegexGlobal } from '../utils/fs.js';
 
 export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): boolean {
   const resolved = validatePath(input.file, projectRoot);
-  if (!resolved) return false;
+  if (!resolved) {
+    console.warn('DocRel: updateInlineDoc failed — invalid file path or path traversal detected:', input.file);
+    return false;
+  }
 
   // Use file descriptor for TOCTOU-safe read — open once, operate on same inode
   let fd: number | undefined;
@@ -28,9 +31,17 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   try {
     fd = fs.openSync(resolved, 'r');
     const stat = fs.fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return false;
+    if (!stat.isFile()) {
+      console.warn('DocRel: updateInlineDoc failed — not a regular file:', resolved);
+      return false;
+    }
+    if (stat.size > MAX_FILE_SIZE) {
+      console.warn('DocRel: updateInlineDoc failed — file exceeds size limit:', resolved, stat.size);
+      return false;
+    }
     content = fs.readFileSync(fd, 'utf-8');
-  } catch {
+  } catch (err: any) {
+    console.warn('DocRel: updateInlineDoc failed — could not read file:', resolved, err?.message ?? err);
     return false;
   } finally {
     if (fd !== undefined) {
@@ -59,6 +70,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // (e.g., once in a comment before the definition), skip the replacement
     // to avoid corrupting the wrong location.
     if (countOccurrences(content, input.oldSignature) !== 1) {
+      console.warn(`DocRel: updateInlineDoc skipped signature replacement — old signature count mismatch (non-comment: 1, full: ${countOccurrences(content, input.oldSignature)})`);
       return false;
     }
     // Use function-based replacement to avoid $ special-pattern injection.
@@ -66,22 +78,31 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // which would silently corrupt replacement text containing these sequences.
     content = content.replace(input.oldSignature, () => input.newSignature);
     replaced = true;
+  } else if (sigCount > 1) {
+    console.warn(`DocRel: updateInlineDoc skipped signature — old signature count is ${sigCount} (expected 1)`);
   }
   // If count is 0 or >1, skip to avoid replacing wrong text
 
   if (docCount === 1) {
     content = content.replace(input.oldDocstring, () => input.newDocstring);
     replaced = true;
+  } else if (docCount > 1) {
+    console.warn(`DocRel: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
   }
 
-  if (!replaced) return false;
+  if (!replaced) {
+    console.warn(`DocRel: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
+    return false;
+  }
 
   // Post-replacement validation: verify the new signature and docstring appear
   // exactly once in the final content. A count != 1 indicates a mis-replacement.
   if (sigCount === 1 && countOccurrences(content, input.newSignature) !== 1) {
+    console.warn('DocRel: updateInlineDoc post-validation failed — new signature count != 1');
     return false;
   }
   if (docCount === 1 && countOccurrences(content, input.newDocstring) !== 1) {
+    console.warn('DocRel: updateInlineDoc post-validation failed — new docstring count != 1');
     return false;
   }
 
@@ -89,7 +110,10 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   // Prefer local over os.tmpdir() to stay within the project's permission boundary
   // and avoid cross-filesystem EXDEV errors from rename().
   const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
-  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return false; }
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch {
+    console.warn('DocRel: updateInlineDoc failed — could not create temp directory:', tmpDir);
+    return false;
+  }
   const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
   // Capture original file mode before rename replaces the inode
   let originalMode: number | undefined;
@@ -103,8 +127,9 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     if (originalMode !== undefined) {
       try { fs.chmodSync(resolved, originalMode); } catch { /* best effort */ }
     }
-  } catch {
+  } catch (err: any) {
     try { fs.unlinkSync(tmpPath); } catch {}
+    console.warn('DocRel: updateInlineDoc atomic write failed:', err?.message ?? err);
     return false;
   }
 

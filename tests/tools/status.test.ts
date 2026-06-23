@@ -30,7 +30,7 @@ describe('docrelStatus', () => {
     const status = docrelStatus(db);
     expect(status.totalSymbols).toBe(0);
     expect(status.linkedPercentage).toBe(0);
-    expect(status.syncPercentage).toBe(100);
+    expect(status.syncPercentage).toBe(0);
   });
 
   it('reports correct counts with data', () => {

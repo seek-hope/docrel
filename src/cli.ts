@@ -180,7 +180,7 @@ program
         console.error('Error: --symbol <id> is required');
         process.exit(1);
       }
-      const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
+      const result = await syncSymbol(db, config, opts.symbol, projectRoot);
       console.log(JSON.stringify(result, null, 2));
     } catch (err: any) {
       console.error('Sync failed:', err.message);

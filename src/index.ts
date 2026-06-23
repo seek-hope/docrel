@@ -141,7 +141,7 @@ server.tool(
   },
   async ({ symbol_id }) => {
     try {
-      const result = await syncSymbol(db, codegraph, config, symbol_id, projectRoot);
+      const result = await syncSymbol(db, config, symbol_id, projectRoot);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };

@@ -2,7 +2,6 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
-import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getSymbol } from '../db/symbols.js';
@@ -36,7 +35,6 @@ function parseLocation(location: string): { file: string; line: number } | null 
 
 export async function syncSymbol(
   db: Database.Database,
-  codegraph: CodegraphClient,
   config: DocRelConfig,
   symbolId: string,
   projectRoot: string,
@@ -76,6 +74,11 @@ export async function syncSymbol(
             result.errors.push(`Cannot sync inline docs for ${symbol.name}: invalid or missing source file location`);
             continue;
           }
+          // If the symbol's source file differs from the doc's registered file,
+          // warn and use the symbol's actual location (which is what gets modified).
+          if (loc.file !== doc.file) {
+            result.errors.push(`Inline doc for ${symbol.name}: registered file ${doc.file} differs from symbol location ${loc.file} — updating symbol location`);
+          }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
             // Use raw_signature (human-readable) for JSDoc generation, not the hash.
@@ -103,11 +106,11 @@ export async function syncSymbol(
 
             if (updated) {
               markDocSynced(db, doc.id);
-              result.docsUpdated.push(doc.file);
+              result.docsUpdated.push(loc.file);
             } else if (!oldSig) {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}: ${extractResult.reason ?? 'could not extract current signature'}`);
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${loc.file}: ${extractResult.reason ?? 'could not extract current signature'}`);
             } else {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}`);
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${loc.file}`);
             }
           } else {
             markDocStale(db, doc.id);

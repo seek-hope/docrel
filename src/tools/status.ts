@@ -49,7 +49,7 @@ export function docrelStatus(db: Database.Database): StatusReport {
         syncedDocs,
         staleDocs,
         totalDocs,
-        syncPercentage: totalDocs > 0 ? Math.round((syncedDocs / totalDocs) * 100) : 100,
+        syncPercentage: totalDocs > 0 ? Math.round((syncedDocs / totalDocs) * 100) : 0,
         pendingChanges,
         lastScan,
       };

@@ -156,7 +156,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     return cmd;
   }
 
-  if (file.includes('typedoc') || (file.endsWith('.md') && scripts['docs:generate'] &&
+  if ((file.endsWith('.md') && file.includes('typedoc')) || (file.endsWith('.md') && scripts['docs:generate'] &&
       (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
     const cmd = scripts['docs:generate'];
     if (typeof cmd !== 'string') return null;
