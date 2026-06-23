@@ -12,6 +12,7 @@ export interface CheckReport {
     linkedSymbols: string[];
   }>;
   summary: string;
+  error?: string;
 }
 
 export function docrelCheck(db: Database.Database, strict = false): CheckReport {
@@ -54,6 +55,15 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
     return { passed, staleDocs, summary };
   } catch (err: any) {
     console.error('docrelCheck failed:', err.message);
-    return { passed: false, staleDocs: [], summary: `Database error: check server logs for details.` };
+    // Preserve strict-mode intent: in non-strict mode, passing is always true
+    // even on error. In strict mode, errors block the check (fail-closed).
+    // Add a distinct error field so callers can distinguish "everything fine"
+    // from "could not check".
+    return {
+      passed: strict ? false : true,
+      staleDocs: [],
+      summary: `Database error: check server logs for details.`,
+      error: err.message,
+    };
   }
 }
