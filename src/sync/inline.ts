@@ -302,10 +302,17 @@ function stripAllBlockComments(content: string): string {
     }
     if (ch === '`') {
       out.push(ch); i++;
+      let nestDepth = 0;
       while (i < content.length) {
         out.push(content[i]);
         if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
-        if (content[i] === '`') { i++; break; }
+        if (content[i] === '$' && content[i + 1] === '{') {
+          nestDepth++; i++; continue;
+        }
+        if (content[i] === '}' && nestDepth > 0) {
+          nestDepth--; i++; continue;
+        }
+        if (content[i] === '`' && nestDepth === 0) { i++; break; }
         i++;
       }
       continue;

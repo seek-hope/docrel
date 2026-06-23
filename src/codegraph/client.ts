@@ -59,11 +59,15 @@ export class CodegraphClient {
       }
       this.livenessInProgress = true;
       try {
+        // Capture the current client in a local variable so that a concurrent
+        // doConnect() installing a new client does not cause us to operate on
+        // the wrong client or destroy a freshly installed one.
+        const currentClient = this.client;
         // Liveness check: verify the underlying process is still alive
         try {
           const controller = new AbortController();
           const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
-          const result = await this.client.callTool(
+          const result = await currentClient.callTool(
             { name: 'codegraph_status', arguments: {} },
             undefined,
             { signal: controller.signal },
@@ -76,7 +80,7 @@ export class CodegraphClient {
           try {
             const controller2 = new AbortController();
             const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
-            const result2 = await this.client.callTool(
+            const result2 = await currentClient.callTool(
               { name: 'codegraph_status', arguments: {} },
               undefined,
               { signal: controller2.signal },
@@ -84,9 +88,12 @@ export class CodegraphClient {
             clearTimeout(timeout2);
             if (!result2.isError) return;
           } catch {}
-          // Client died — close and reconnect below
-          try { await this.client.close(); } catch {}
-          this.client = null;
+          // Client died — only close and null the field if it still references
+          // the same client we tested (a concurrent doConnect may have replaced it).
+          try { await currentClient.close(); } catch {}
+          if (this.client === currentClient) {
+            this.client = null;
+          }
         }
       } finally {
         this.livenessInProgress = false;

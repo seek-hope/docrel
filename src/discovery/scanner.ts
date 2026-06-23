@@ -12,6 +12,11 @@ const LANG_MAP: Record<string, string> = {
   cs: 'csharp', cpp: 'cpp', c: 'c', swift: 'swift', kt: 'kotlin',
 };
 
+/** Escape :: in FQN components to prevent symbol ID collisions. */
+function escFqn(s: string): string {
+  return s.replace(/::/g, '%3A%3A');
+}
+
 /** Codegraph symbol kind → canonical DocRel kind mapping (module-level). */
 const KIND_MAP: Record<string, ReturnType<typeof mapKind>> = {
   function: 'function', method: 'function', func: 'function',
@@ -52,7 +57,10 @@ export async function scanProject(
         // Include line number in the FQN to disambiguate same-named symbols
         // in different scopes within the same file (e.g., method foo in class A
         // and method foo in class B, both in src/index.ts).
-        const fqn = `${sym.file}::${sym.line}::${sym.name}`;
+        // Escape the :: separator in file and name components to prevent
+        // symbol ID collisions when a file path or symbol name contains ::
+        // (e.g., C++ namespace-qualified names or Rust turbofish expressions).
+        const fqn = `${escFqn(sym.file)}::${sym.line}::${escFqn(sym.name)}`;
         const id = symbolId(lang, fqn, sym.kind);
         const sig = contentHash(sym.signature ?? '');
         const rawSig = sym.signature ?? '';
