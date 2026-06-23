@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { assertDbOpen } from '../db/connection.js';
 
 export interface CheckReport {
   passed: boolean;
@@ -14,6 +15,7 @@ export interface CheckReport {
 }
 
 export function docrelCheck(db: Database.Database, strict = false): CheckReport {
+  assertDbOpen(db);
   try {
     const staleRows = db.prepare(`
       SELECT d.id, d.file, d.anchor, d.doc_type, d.status, m.symbol_id

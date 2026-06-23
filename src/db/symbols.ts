@@ -34,39 +34,31 @@ export interface SymbolInput {
 
 export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolRow {
   if (!input.id) throw new Error('Symbol id cannot be empty');
-  const existing = db.prepare('SELECT id FROM symbols WHERE id = ?').get(input.id);
-
-  if (existing) {
-    db.prepare(`
-      UPDATE symbols
-      SET name = ?, kind = ?, project = ?, location = ?, signature = ?,
-          raw_signature = ?, metadata = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      input.name,
-      input.kind,
-      input.project ?? '',
-      input.location ?? '',
-      input.signature ?? '',
-      input.raw_signature ?? '',
-      safeStringify(input.metadata ?? {}),
-      input.id,
-    );
-  } else {
-    db.prepare(`
-      INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      input.id,
-      input.name,
-      input.kind,
-      input.project ?? '',
-      input.location ?? '',
-      input.signature ?? '',
-      input.raw_signature ?? '',
-      safeStringify(input.metadata ?? {}),
-    );
-  }
+  // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) to avoid the
+  // check-then-act race condition. In WAL mode with concurrent processes,
+  // another connection could INSERT the same row between a SELECT and INSERT.
+  db.prepare(`
+    INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET
+      name = excluded.name,
+      kind = excluded.kind,
+      project = excluded.project,
+      location = excluded.location,
+      signature = excluded.signature,
+      raw_signature = excluded.raw_signature,
+      metadata = excluded.metadata,
+      updated_at = datetime('now')
+  `).run(
+    input.id,
+    input.name,
+    input.kind,
+    input.project ?? '',
+    input.location ?? '',
+    input.signature ?? '',
+    input.raw_signature ?? '',
+    safeStringify(input.metadata ?? {}),
+  );
 
   const row = getSymbol(db, input.id);
   if (!row) throw new Error(`Symbol ${input.id} was not found after upsert`);

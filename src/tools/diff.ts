@@ -1,5 +1,6 @@
 // src/tools/diff.ts
 import type Database from 'better-sqlite3';
+import { assertDbOpen } from '../db/connection.js';
 import { getSymbol } from '../db/symbols.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
@@ -25,6 +26,7 @@ export interface DiffReport {
 }
 
 export function docrelDiff(db: Database.Database, symbolId: string): DiffReport | null {
+  assertDbOpen(db);
   try {
     const symbol = getSymbol(db, symbolId);
     if (!symbol) return null;

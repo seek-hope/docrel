@@ -21,6 +21,12 @@ export interface DocSectionInput {
 }
 
 export function upsertDocSection(db: Database.Database, input: DocSectionInput): DocSectionRow {
+  // Validate required fields before database operations to produce clear
+  // error messages rather than cryptic SQLite constraint violations.
+  if (!input.id) throw new Error('doc_section id cannot be empty');
+  if (!input.file) throw new Error('doc_section file cannot be empty');
+  if (!input.doc_type) throw new Error('doc_section doc_type cannot be empty');
+
   const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(input.id);
 
   if (existing) {

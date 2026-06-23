@@ -1,5 +1,6 @@
 // src/tools/impact.ts
 import type Database from 'better-sqlite3';
+import { assertDbOpen } from '../db/connection.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
 
@@ -33,6 +34,7 @@ export function docrelImpact(
   db: Database.Database,
   changedFiles: string[],
 ): ImpactReport {
+  assertDbOpen(db);
   const affectedSymbols: ImpactReport['affectedSymbols'] = [];
   const affectedDocs: ImpactReport['affectedDocs'] = [];
   const errors: ImpactReport['errors'] = [];

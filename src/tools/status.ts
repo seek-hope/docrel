@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { assertDbOpen } from '../db/connection.js';
 
 export interface StatusReport {
   totalSymbols: number;
@@ -13,6 +14,7 @@ export interface StatusReport {
 }
 
 export function docrelStatus(db: Database.Database): StatusReport {
+  assertDbOpen(db);
   try {
     return db.transaction(() => {
       const totalSymbols = (db.prepare('SELECT COUNT(*) as c FROM symbols').get() as { c: number }).c;

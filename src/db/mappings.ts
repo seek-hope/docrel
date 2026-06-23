@@ -16,6 +16,12 @@ export interface MappingInput {
 }
 
 export function createMapping(db: Database.Database, input: MappingInput): MappingRow {
+  const confidence = input.confidence ?? 1.0;
+  // Validate confidence range before the INSERT to produce a clear error
+  // message rather than a cryptic SQLite CHECK constraint violation.
+  if (confidence < 0 || confidence > 1) {
+    throw new Error(`confidence must be between 0.0 and 1.0, got ${confidence}`);
+  }
   // Use UPSERT to preserve created_at on updates. INSERT OR REPLACE would
   // delete and re-insert the row, resetting created_at to datetime('now').
   db.prepare(`
@@ -23,7 +29,7 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
     VALUES (?, ?, ?, ?)
     ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET
       confidence = excluded.confidence
-  `).run(input.symbol_id, input.doc_id, input.rel_type, input.confidence ?? 1.0);
+  `).run(input.symbol_id, input.doc_id, input.rel_type, confidence);
 
   const row = getMapping(db, input.symbol_id, input.doc_id, input.rel_type);
   if (!row) throw new Error(`Mapping was not found after insert for ${input.symbol_id} -> ${input.doc_id}`);

@@ -1,6 +1,7 @@
 // src/sync/engine.ts
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
+import { assertDbOpen } from '../db/connection.js';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
@@ -40,6 +41,7 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
 ): Promise<SyncResult> {
+  assertDbOpen(db);
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], errors: [] };
 
   try {

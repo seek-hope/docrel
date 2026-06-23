@@ -1,5 +1,6 @@
 // src/tools/link.ts
 import type Database from 'better-sqlite3';
+import { assertDbOpen } from '../db/connection.js';
 import { createMapping, deleteMapping } from '../db/mappings.js';
 import type { MappingRow } from '../db/mappings.js';
 
@@ -22,6 +23,7 @@ export function docrelLink(
     rel_type: string;
   },
 ): LinkResult {
+  assertDbOpen(db);
   // Validate rel_type early so the user gets a clear error
   if (!VALID_REL_TYPES.has(params.rel_type)) {
     return {
