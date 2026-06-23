@@ -73,10 +73,12 @@ program
   .description('Sync documentation for a symbol')
   .option('--symbol <id>', 'Symbol ID to sync')
   .action(async (opts) => {
-    if (opts.symbol) {
-      const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
-      console.log(JSON.stringify(result, null, 2));
+    if (!opts.symbol) {
+      console.error('Error: --symbol <id> is required');
+      process.exit(1);
     }
+    const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
+    console.log(JSON.stringify(result, null, 2));
   });
 
 program
@@ -87,6 +89,18 @@ program
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
   .action((action, opts) => {
+    if (!opts.symbol) {
+      console.error('Error: --symbol <id> is required');
+      process.exit(1);
+    }
+    if (!opts.doc) {
+      console.error('Error: --doc <id> is required');
+      process.exit(1);
+    }
+    if (action !== 'create' && action !== 'delete') {
+      console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
+      process.exit(1);
+    }
     const result = docrelLink(db, {
       action: action as 'create' | 'delete',
       symbol_id: opts.symbol,
@@ -140,12 +154,17 @@ program
   .command('export-mappings')
   .description('Export mappings to .docrel/mappings.json (for CodeGraph integration)')
   .action(() => {
-    const mappings = exportMappingsJson(db);
-    const docrelDir = path.join(projectRoot, '.docrel');
-    fs.mkdirSync(docrelDir, { recursive: true });
-    const outPath = path.join(docrelDir, 'mappings.json');
-    fs.writeFileSync(outPath, JSON.stringify(mappings, null, 2), 'utf-8');
-    console.log(`Exported ${mappings.length} mappings to ${outPath}`);
+    try {
+      const mappings = exportMappingsJson(db);
+      const docrelDir = path.join(projectRoot, '.docrel');
+      fs.mkdirSync(docrelDir, { recursive: true });
+      const outPath = path.join(docrelDir, 'mappings.json');
+      fs.writeFileSync(outPath, JSON.stringify(mappings, null, 2), 'utf-8');
+      console.log(`Exported ${mappings.length} mappings to ${outPath}`);
+    } catch (err: any) {
+      console.error(`Failed to export mappings: ${err.message}`);
+      process.exit(1);
+    }
   });
 
 program.parse();
