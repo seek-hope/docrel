@@ -121,7 +121,7 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action((opts) => {
     try {
-      notifyIfOutdated(); // fire-and-forget update check
+      notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const status = docrelStatus(db);
       if (opts.format === 'markdown') {
         console.log(`## DocRel Status
@@ -330,7 +330,14 @@ program
       const output = execFileSync('npm', ['install', '-g', 'docrel@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
       console.log(output || 'DocRel updated to the latest version.');
     } catch (err: any) {
-      console.error(`Update failed: ${err.stderr ?? err.message}`);
+      // npm stderr may contain absolute filesystem paths (global install
+      // prefixes, npm config paths, etc.). Log the full output only when
+      // DOCREL_DEBUG is enabled; otherwise show a generic message.
+      if (process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true') {
+        console.error(`Update failed: ${err.stderr ?? err.message}`);
+      } else {
+        console.error('Update failed: npm install returned an error. Run with DOCREL_DEBUG=1 for details.');
+      }
       console.error('Try: npm install -g docrel@latest');
       process.exit(1);
     }
