@@ -8,9 +8,9 @@ import { escapeRegex } from '../utils/fs.js';
 
 export interface AutoLinkResult {
   totalMatched: number;
-  highConfidence: number;   // confidence >= 0.8
-  mediumConfidence: number; // 0.5–0.8
-  lowConfidence: number;    // < 0.5 (needs review)
+  highConfidence: number;
+  mediumConfidence: number;
+  lowConfidence: number;
 }
 
 // ── Normalization helpers ────────────────────────────────────────────────────
@@ -238,7 +238,7 @@ export function autoLink(
           symbol_id: symbol.id,
           doc_id: docId,
           rel_type: 'describes',
-          confidence: score.confidence,
+          review_status: 'auto',
         });
         existingKeys.add(mappingKey);
 

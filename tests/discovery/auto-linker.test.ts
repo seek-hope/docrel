@@ -59,7 +59,7 @@ describe('autoLink', () => {
     const mappings = listAllMappings(db);
     expect(mappings).toHaveLength(1);
     expect(mappings[0].symbol_id).toBe(sym.id);
-    expect(mappings[0].confidence).toBe(1.0);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   it('matches symbol name in heading with extra text (confidence 1.0)', () => {
@@ -91,7 +91,7 @@ describe('autoLink', () => {
     expect(result.highConfidence).toBe(1);
 
     const mappings = listAllMappings(db);
-    expect(mappings[0].confidence).toBe(0.9);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   it('matches backtick with method-style name', () => {
@@ -117,7 +117,7 @@ describe('autoLink', () => {
     expect(result.mediumConfidence).toBe(1); // 0.7 is medium (0.5–0.8)
 
     const mappings = listAllMappings(db);
-    expect(mappings[0].confidence).toBe(0.7);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   // ── Rule 4: Fuzzy heading match (confidence 0.6) ──────────────────────────
@@ -131,7 +131,7 @@ describe('autoLink', () => {
     expect(result.mediumConfidence).toBe(1);
 
     const mappings = listAllMappings(db);
-    expect(mappings[0].confidence).toBe(0.6);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   it('matches fuzzy heading — Config vs configure (confidence 0.6)', () => {
@@ -161,7 +161,7 @@ describe('autoLink', () => {
     expect(result.mediumConfidence).toBe(1);
 
     const mappings = listAllMappings(db);
-    expect(mappings[0].confidence).toBe(0.5);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   it('matches file-name convention without extensions (confidence 0.5)', () => {
@@ -223,15 +223,15 @@ describe('autoLink', () => {
 
     // Now that makeDocSection upserts the section, the FK constraint will pass
     db.prepare(
-      'INSERT INTO mappings (symbol_id, doc_id, rel_type, confidence) VALUES (?, ?, ?, ?)'
-    ).run(sym.id, docId, 'describes', 0.5);
+      'INSERT INTO mappings (symbol_id, doc_id, rel_type, review_status) VALUES (?, ?, ?, ?)'
+    ).run(sym.id, docId, 'describes', 'auto');
 
     const result = autoLink(db, [sym], [section]);
     expect(result.totalMatched).toBe(0); // skipped because already exists
 
     const mappings = listAllMappings(db);
     expect(mappings).toHaveLength(1);
-    expect(mappings[0].confidence).toBe(0.5); // original confidence preserved
+    expect(mappings[0].review_status).toBe('auto'); // original auto status preserved
   });
 
   // ── Priority: strongest match wins ────────────────────────────────────────
@@ -250,7 +250,7 @@ describe('autoLink', () => {
     const mappings = listAllMappings(db);
     expect(mappings).toHaveLength(1);
     // The highest confidence should be recorded (heading match = 1.0)
-    expect(mappings[0].confidence).toBe(1.0);
+    expect(mappings[0].review_status).toBe('auto');
   });
 
   // ── Multiple symbols and sections ─────────────────────────────────────────

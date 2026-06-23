@@ -262,27 +262,18 @@ program
   .argument('<action>', 'create, update, or delete')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
-  .option('--type <type>', 'Relationship type', 'describes')
-  .option('--confidence <n>', 'Confidence 0.0-1.0 (required for update, optional for create)')
-  .action((action, opts) => {
+  .option('--type <type>', 'Relationship type', 'describes')  .action((action, opts) => {
     try {
       if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
       if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
       if (!['create', 'update', 'delete'].includes(action)) {
         console.error(`Error: action must be 'create', 'update', or 'delete', got '${action}'`);
         exit(1);
-      }
-      const confidence = opts.confidence !== undefined ? parseFloat(opts.confidence) : undefined;
-      if (confidence !== undefined && (isNaN(confidence) || confidence < 0 || confidence > 1)) {
-        console.error('Error: --confidence must be between 0.0 and 1.0');
-        exit(1);
-      }
-      const result = docrelLink(db, {
-        action: action as 'create' | 'update' | 'delete',
+      }const result = docrelLink(db, {
+        action: action as 'create' | 'delete',
         symbol_id: opts.symbol,
         doc_id: opts.doc,
         rel_type: opts.type,
-        confidence,
       });
       console.log(JSON.stringify(result, null, 2));
       if (result.action === 'error') exit(1);
@@ -417,7 +408,6 @@ program
                   symbol_id: matched.id,
                   doc_id: id,
                   rel_type: 'describes',
-                  confidence: ref.confidence,
                 });
                 newMappings++;
               } catch {

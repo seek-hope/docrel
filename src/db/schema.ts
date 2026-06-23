@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number;
@@ -41,7 +41,7 @@ export function runMigrations(db: Database.Database): void {
         symbol_id  TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
         doc_id     TEXT NOT NULL REFERENCES doc_sections(id) ON DELETE CASCADE,
         rel_type   TEXT NOT NULL CHECK(rel_type IN ('describes','references','generates','contracts')),
-        confidence REAL NOT NULL DEFAULT 1.0 CHECK(confidence >= 0.0 AND confidence <= 1.0),
+        review_status TEXT NOT NULL DEFAULT 'auto' CHECK(review_status IN ('auto','confirmed','rejected')),
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (symbol_id, doc_id, rel_type)
       );

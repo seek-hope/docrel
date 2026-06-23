@@ -195,15 +195,15 @@ server.tool(
   'docrel_link',
   'Manage a mapping between a code symbol and a documentation section (create, update confidence, or delete)',
   {
-    action: z.enum(['create', 'update', 'delete']),
+    action: z.enum(['create', 'delete']),
     symbol_id: z.string(),
     doc_id: z.string(),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']),
     confidence: z.number().min(0).max(1).optional().describe('Confidence 0.0-1.0. Required for update, optional for create (defaults to 1.0).'),
   },
-  async ({ action, symbol_id, doc_id, rel_type, confidence }) => {
+  async ({ action, symbol_id, doc_id, rel_type }) => {
     try {
-      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type, confidence });
+      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -299,7 +299,7 @@ server.tool(
             const matched = db.prepare('SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1').get(cleanName, ref.symbolName) as { id: string } | undefined;
             if (matched) {
               try {
-                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', confidence: ref.confidence });
+                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', review_status: 'auto' });
                 newMappings++;
               } catch { /* skip duplicates */ }
             }

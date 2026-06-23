@@ -8,7 +8,7 @@ export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
   orphanedSections: OrphanedSection[];
   impliedReferences: ImpliedReference[];
-  lowConfidenceMappings: LowConfidenceMapping[];
+  unreviewedMappings: LowConfidenceMapping[];
   skippedFiles: string[];
   summary: ReviewSummary;
 }
@@ -206,7 +206,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
     const unlinkedSymbols = findUnlinked(db);
     const orphanedSections = findOrphaned(db);
     const { references: impliedReferences, skippedFiles } = findImplied(db, projectRoot);
-    const lowConfidenceMappings = findLowConfidence(db, maxConfidence = 0.8);
+    const unreviewedMappings = findUnreviewed(db);
 
     const totalSymbols = (db.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number }).c;
     const linkedSymbols = (db.prepare(
@@ -217,7 +217,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
       unlinkedSymbols,
       orphanedSections,
       impliedReferences,
-      lowConfidenceMappings,
+      unreviewedMappings,
       skippedFiles,
       summary: {
         totalSymbols,
@@ -225,7 +225,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
         unlinkedCount: unlinkedSymbols.length,
         orphanedCount: orphanedSections.length,
         impliedCount: impliedReferences.length,
-        lowConfidenceCount: lowConfidenceMappings.length,
+        lowConfidenceCount: unreviewedMappings.length,
       },
     };
   } catch (err: any) {
@@ -235,7 +235,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
       unlinkedSymbols: [],
       orphanedSections: [],
       impliedReferences: [],
-      lowConfidenceMappings: [],
+      unreviewedMappings: [],
       skippedFiles: [],
       summary: {
         totalSymbols: 0,
@@ -281,12 +281,12 @@ export function formatReview(report: ReviewReport): string {
     lines.push('');
   }
 
-  if (report.lowConfidenceMappings.length > 0) {
-    lines.push(`### Low-Confidence Mappings (${report.lowConfidenceMappings.length})`);
+  if (report.unreviewedMappings.length > 0) {
+    lines.push(`### Low-Confidence Mappings (${report.unreviewedMappings.length})`);
     lines.push('');
     lines.push('These mappings were auto-generated and need review:');
     lines.push('');
-    for (const m of report.lowConfidenceMappings) {
+    for (const m of report.unreviewedMappings) {
       lines.push(`- [${m.confidence.toFixed(1)}] \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor} (${m.relType})`);
     }
     lines.push('');
@@ -316,7 +316,7 @@ export function formatReview(report: ReviewReport): string {
 
   if (report.unlinkedSymbols.length === 0 &&
       report.impliedReferences.length === 0 &&
-      report.lowConfidenceMappings.length === 0 &&
+      report.unreviewedMappings.length === 0 &&
       report.orphanedSections.length === 0 &&
       report.skippedFiles.length === 0) {
     lines.push('✅ All clear — no issues found.');
