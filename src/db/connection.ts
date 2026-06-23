@@ -74,7 +74,7 @@ export function getDb(projectRoot: string): Database.Database {
     }
   }
 
-  let db: Database.Database;
+  let db: Database.Database | undefined;
   const dbPath = path.join(dbDir, 'docrel.db');
 
   try {
@@ -94,7 +94,7 @@ export function getDb(projectRoot: string): Database.Database {
     // If the database was opened successfully but a subsequent pragma or
     // chmod call threw, the connection is now orphaned — close it to
     // prevent a file-lock leak until garbage collection or process exit.
-    if (db!) { try { db.close(); } catch { /* best effort */ } }
+    if (db) { try { db.close(); } catch { /* best effort */ } }
     // Sanitize the error message to avoid leaking the absolute filesystem
     // path (which is present in EACCES,mkdirSync,and Database constructor
     // errors) to MCP clients and CLI users.

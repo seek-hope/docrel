@@ -10,6 +10,7 @@
  *  `maxLength` defaults to 1024 (the lenient limit used by generated.ts);
  *  client.ts passes 256 for a stricter bound. */
 export function validateCommandSafety(cmd: string, maxLength = 1024): boolean {
+  if (typeof cmd !== 'string') return false;
   if (cmd.length > maxLength) return false;
   if (/[;&|`$()<>!]/.test(cmd) || /[\x00-\x1f]/.test(cmd)) return false;
   return true;

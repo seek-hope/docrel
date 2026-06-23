@@ -77,7 +77,8 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     // not filesystem paths, so including err.message is safe and dramatically
     // improves debuggability. Strip any absolute path references as a precaution.
     const sanitizedMsg = (err instanceof Error ? err.message : String(err))
-      .replace(projectRoot, '<projectRoot>');
+      .replace(projectRoot, '<projectRoot>')
+      .replace(/\/(?:home|opt|var|etc|tmp)\/[^\s:,)]*/g, '<path>');
     console.error(`Warning: Failed to load ${configRelPath}: ${sanitizedMsg}. Using defaults.`);
     return { project, ...DEFAULT_CONFIG };
   }
