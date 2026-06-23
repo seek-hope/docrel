@@ -4,6 +4,9 @@ import path from 'node:path';
 
 /** Validate that `filePath` resolves inside `projectRoot` (prevents path traversal). */
 export function validatePath(filePath: string, projectRoot: string): string | null {
+  // Reject empty file paths to prevent returning the project root itself
+  if (!filePath || filePath.trim() === '') return null;
+
   const resolved = path.resolve(projectRoot, filePath);
   const root = path.resolve(projectRoot);
   if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
@@ -11,7 +14,13 @@ export function validatePath(filePath: string, projectRoot: string): string | nu
     const real = fs.realpathSync(resolved);
     if (!real.startsWith(root + path.sep) && real !== root) return null;
   } catch {
-    // File doesn't exist yet — trust the resolved path
+    // File doesn't exist yet — but check for dangling symlinks to prevent bypass
+    try {
+      const lstat = fs.lstatSync(resolved);
+      if (lstat.isSymbolicLink()) return null; // dangling symlink — reject
+    } catch {
+      // lstat also failed — path genuinely doesn't exist, trust the resolved path
+    }
   }
   return resolved;
 }
