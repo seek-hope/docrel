@@ -115,13 +115,17 @@ export class CodegraphClient {
     // the result to avoid installing a stale client.
     const gen = this.connectGeneration;
 
-    // Validate command: reject shell metacharacters, path separators, and
-    // control characters before passing to which/execFileSync. While execFileSync
-    // does not invoke a shell, path separators and metacharacters can still
-    // cause which to search for unexpected paths or return ambiguous results.
+    // Validate command: reject shell metacharacters and control characters
+    // before passing to which/execFileSync. Absolute paths are allowed (they
+    // are validated by the which+realpathSync+prefix check pipeline below).
+    // Relative paths containing / or \ (e.g. ./binary, ../binary) are rejected.
     let cmd = this.command ?? 'codegraph';
-    if (/[\\/;&|`$()\n\r\t]/.test(cmd) || cmd.length > 256) {
+    if (/[;&|`$()\n\r\t]/.test(cmd) || cmd.length > 256) {
       throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
+    }
+    // Reject relative paths (contain path separators but don't start with /)
+    if ((cmd.includes('/') || cmd.includes('\\')) && !cmd.startsWith('/')) {
+      throw new Error(`Invalid codegraph command: ${cmd}. Relative paths are not allowed. Use an absolute path or a bare binary name.`);
     }
 
     // Always resolve and validate the binary path, whether it comes from
@@ -163,14 +167,17 @@ export class CodegraphClient {
       const connectPromise = client.connect(transport).catch((e) => {
         connectErr = e as Error;
       });
-      await Promise.race([
-        connectPromise,
-        new Promise<never>((_, reject) =>
-          setTimeout(() => {
-            reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`));
-          }, CONNECT_TIMEOUT_MS)
-        ),
-      ]);
+      let timer: NodeJS.Timeout;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`));
+        }, CONNECT_TIMEOUT_MS);
+      });
+      try {
+        await Promise.race([connectPromise, timeoutPromise]);
+      } finally {
+        clearTimeout(timer!);
+      }
       // If connect failed (not a timeout), surface the actual error
       if (connectErr) throw connectErr;
       // If a newer generation started while we were connecting, discard
