@@ -24,10 +24,10 @@ export interface ImpactReport {
 }
 
 function escapeLike(str: string): string {
-  // With ESCAPE '\', only % and _ need escaping. Do NOT escape backslashes
-  // — they would become literal backslashes in the LIKE pattern and fail to
-  // match Windows paths (e.g. 'C:\\foo\\bar' would not match 'C:\foo\bar').
-  return str.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // Escape backslashes FIRST so they don't become unintended escape characters
+  // in the LIKE pattern with ESCAPE '\'. For example, a Windows path like
+  // 'src\bar.ts' would match 'srcbar.ts' without proper escaping.
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 export function docrelImpact(
