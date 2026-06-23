@@ -16,7 +16,7 @@ import { docrelImpact } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelLink, docrelConfirm } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
-import { installHooks } from './git/hooks.js';
+import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson, listAllMappings } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
@@ -127,7 +127,7 @@ strategies:
       // 4. Install git hooks (unless --no-hooks)
       if (opts.hooks) {
         installHooks(projectRoot, opts.force);
-        steps.push('Installed git hooks (pre-commit, post-commit, pre-push)');
+        steps.push('Installed git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)');
       } else {
         steps.push('Skipped git hooks (run \'docrel install-hooks\' later)');
       }
@@ -335,6 +335,29 @@ program
       console.log('DocRel hooks installed successfully.');
     } catch (err: any) {
       console.error('Failed to install hooks:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('annotate-commit')
+  .description('Annotate a commit message with DocRel summary stats')
+  .argument('<commit-msg-file>', 'Path to the commit message file')
+  .action((commitMsgFile: string) => {
+    try {
+      const summary = prepareCommitMsg(db);
+      const fullPath = path.resolve(projectRoot, commitMsgFile);
+      let existing = '';
+      try {
+        existing = fs.readFileSync(fullPath, 'utf-8');
+      } catch {
+        // File may not exist yet (e.g., git commit without -m); start fresh
+      }
+      // Append summary after existing message, separated by a blank line
+      const annotated = existing.trimEnd() + '\n\n' + summary + '\n';
+      fs.writeFileSync(fullPath, annotated, 'utf-8');
+    } catch (err: any) {
+      console.error('Failed to annotate commit message:', errMsg(err));
       exit(1);
     }
   });

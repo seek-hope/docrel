@@ -35,8 +35,15 @@ if [ $? -ne 0 ]; then
 fi
 EOF
 
+cat > "$PROJECT_ROOT/.git/hooks/prepare-commit-msg" << 'EOF'
+#!/bin/sh
+# DocRel prepare-commit-msg hook
+docrel annotate-commit "$1"
+EOF
+
 chmod +x "$PROJECT_ROOT/.git/hooks/pre-commit"
 chmod +x "$PROJECT_ROOT/.git/hooks/post-commit"
 chmod +x "$PROJECT_ROOT/.git/hooks/pre-push"
+chmod +x "$PROJECT_ROOT/.git/hooks/prepare-commit-msg"
 
 echo "✅ DocRel hooks installed"

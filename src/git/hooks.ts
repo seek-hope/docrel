@@ -105,6 +105,22 @@ export async function postCommitHook(
   }
 }
 
+export function prepareCommitMsg(db: Database.Database): string {
+  const pendingChanges = (db.prepare(
+    "SELECT COUNT(*) as c FROM changelog WHERE sync_status = 'pending'"
+  ).get() as { c: number }).c;
+
+  const syncedDocs = (db.prepare(
+    "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'in_sync'"
+  ).get() as { c: number }).c;
+
+  const flaggedForReview = (db.prepare(
+    "SELECT COUNT(*) as c FROM doc_sections WHERE status = 'stale'"
+  ).get() as { c: number }).c;
+
+  return `DocRel: ${pendingChanges} symbols changed, ${syncedDocs} docs synced, ${flaggedForReview} docs flagged for review`;
+}
+
 export async function prePushHook(
   projectRoot: string,
   db: Database.Database,
@@ -237,6 +253,7 @@ export function installHooks(projectRoot: string, force = false): void {
   const preCommitPath = path.join(hooksDir, 'pre-commit');
   const postCommitPath = path.join(hooksDir, 'post-commit');
   const prePushPath = path.join(hooksDir, 'pre-push');
+  const prepareCommitMsgPath = path.join(hooksDir, 'prepare-commit-msg');
 
   // Validate that the resolved binary is actually a working docrel installation.
   // A bundled or corrupted binary may not support the expected CLI interface,
@@ -294,10 +311,16 @@ if [ $? -ne 0 ]; then
 fi
 `;
 
+  const prepareCommitMsgScript = `#!/bin/sh
+# DocRel prepare-commit-msg hook
+${docrelQuoted} annotate-commit "$1"
+`;
+
   const hooks = [
     { path: preCommitPath, script: preCommitScript, name: 'pre-commit' },
     { path: postCommitPath, script: postCommitScript, name: 'post-commit' },
     { path: prePushPath, script: prePushScript, name: 'pre-push' },
+    { path: prepareCommitMsgPath, script: prepareCommitMsgScript, name: 'prepare-commit-msg' },
   ];
 
   // Install with rollback on partial failure
