@@ -54,8 +54,10 @@ export interface StandaloneUpdateResult {
 export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: string): StandaloneUpdateResult {
   const resolved = validatePath(input.file, projectRoot);
   if (!resolved) return { success: false, reason: 'invalid file path or path traversal detected' };
-  if (!fs.existsSync(resolved)) return { success: false, reason: 'file not found' };
 
+  // openAndValidate handles file-not-found and does proper TOCTOU-safe validation.
+  // The redundant existsSync check is removed to avoid creating a false sense of
+  // validation with a TOCTOU window.
   const validated = openAndValidate(resolved, projectRoot);
   if (!validated) return { success: false, reason: 'could not read or validate file' };
 
@@ -108,7 +110,7 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
  */
 export function findSectionContent(file: string, anchor: string, projectRoot: string): string | null {
   if (!anchor) return null;
-  if (!projectRoot) throw new Error('findSectionContent: projectRoot is required');
+  if (!projectRoot) return null;
 
   const resolved = path.resolve(projectRoot, file);
 
@@ -152,9 +154,35 @@ export function findSectionContentFromString(content: string, anchor: string): s
   let startLevel = 0;
 
   const escapedAnchor = escapeRegex(anchor);
+
+  // Track fenced code block state so # characters inside code blocks are
+  // not incorrectly matched as headings or heading-level boundaries.
+  // Supports both ``` and ~~~ fences of 3+ characters.
+  let inCodeBlock = false;
+  let fenceToken = '';
+  const fenceRegex = /^(```+|~~~+)/;
+
   // Require exact heading match — nothing after the anchor text except optional trailing whitespace
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}\\s*$`));
+    const line = lines[i];
+    // Track code fence toggles before evaluating heading regex
+    if (!inCodeBlock) {
+      const fenceMatch = line.match(fenceRegex);
+      if (fenceMatch) {
+        inCodeBlock = true;
+        fenceToken = fenceMatch[1];
+        continue;
+      }
+    } else {
+      const fenceMatch = line.match(fenceRegex);
+      if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+        inCodeBlock = false;
+        fenceToken = '';
+      }
+      continue;
+    }
+
+    const match = line.match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}\\s*$`));
     if (match) {
       startLine = i;
       startLevel = match[1].length;
@@ -163,9 +191,31 @@ export function findSectionContentFromString(content: string, anchor: string): s
   }
   if (startLine < 0) return null;
 
+  // Reset code fence tracking for the end-boundary scan
+  inCodeBlock = false;
+  fenceToken = '';
+
   let endLine = lines.length;
   for (let i = startLine + 1; i < lines.length; i++) {
-    const match = lines[i].match(/^(#{1,6})\s/);
+    const line = lines[i];
+    // Track code fence toggles before evaluating heading regex
+    if (!inCodeBlock) {
+      const fenceMatch = line.match(fenceRegex);
+      if (fenceMatch) {
+        inCodeBlock = true;
+        fenceToken = fenceMatch[1];
+        continue;
+      }
+    } else {
+      const fenceMatch = line.match(fenceRegex);
+      if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+        inCodeBlock = false;
+        fenceToken = '';
+      }
+      continue;
+    }
+
+    const match = line.match(/^(#{1,6})\s/);
     if (match && match[1].length <= startLevel) {
       endLine = i;
       break;
