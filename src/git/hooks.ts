@@ -79,7 +79,17 @@ export async function postCommitHook(
     // Re-scan affected symbols and mark docs as stale where needed
     await scanProject(codegraph, db, config);
   } catch (err: any) {
+    // Log a prominent warning with actionable next steps. If the scan fails
+    // (e.g., codegraph not running), the commit succeeds but docs are not
+    // updated. Write a marker file that docrel status can detect so the user
+    // is not silently left with potentially stale documentation.
     console.error(`DocRel post-commit hook failed: ${err.message}`);
+    console.warn('DocRel: Post-commit scan failed — your documentation may be stale. Run `docrel status` to check.');
+    try {
+      const markerDir = path.join(projectRoot, '.docrel');
+      fs.mkdirSync(markerDir, { recursive: true });
+      fs.writeFileSync(path.join(markerDir, 'post-commit-failed'), Date.now().toString());
+    } catch { /* best-effort marker */ }
   }
 }
 
