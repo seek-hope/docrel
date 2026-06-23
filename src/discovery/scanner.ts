@@ -91,15 +91,24 @@ export async function scanProject(
 
   // Use scannedIds count instead of COUNT(*) to avoid counting symbols
   // from other projects or prior scans that this scan did not touch.
+  // Since the scan loop already upserted new symbols into the database,
+  // the subsequent SELECT returns ALL scanned symbols (both old and new).
+  // So existingSymbols.size already includes newSymbols — do NOT add it again.
   const existingSymbols = new Set<string>();
   if (scannedIds.size > 0) {
-    const existingRows = db.prepare(
-      'SELECT id FROM symbols WHERE id IN (' + [...scannedIds].map(() => '?').join(',') + ')'
-    ).all(...scannedIds) as Array<{ id: string }>;
-    for (const row of existingRows) existingSymbols.add(row.id);
+    // Batch IN query to avoid exceeding SQLite's SQLITE_MAX_VARIABLE_NUMBER (default 999)
+    const ids = [...scannedIds];
+    const BATCH_SIZE = 500;
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const existingRows = db.prepare(
+        'SELECT id FROM symbols WHERE id IN (' + batch.map(() => '?').join(',') + ')'
+      ).all(...batch) as Array<{ id: string }>;
+      for (const row of existingRows) existingSymbols.add(row.id);
+    }
   }
 
-  return { totalSymbols: existingSymbols.size + newSymbols, newSymbols, updatedSymbols };
+  return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols };
 }
 
 function detectLanguage(file: string): string {
