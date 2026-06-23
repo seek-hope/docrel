@@ -2,7 +2,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import crypto from 'node:crypto';
 
 const FETCH_TIMEOUT_MS = 5000;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -21,10 +20,13 @@ function validateCacheEntry(raw: unknown): CacheEntry | null {
 }
 
 function cachePath(): string {
-  // Use deterministic cache path to avoid unbounded file accumulation in /tmp.
-  // The filename includes a hash of the package name to avoid collision.
-  const pkgHash = crypto.createHash('sha256').update('docrel').digest('hex').slice(0, 16);
-  return path.join(os.tmpdir(), `docrel-update-check-${pkgHash}.json`);
+  // Use a user-specific cache directory (XDG-style) instead of os.tmpdir().
+  // os.tmpdir() is world-writable and the deterministic filename would allow
+  // an attacker on a multi-user system to pre-create a symlink at the path
+  // and corrupt arbitrary files when docrel writes the cache.
+  const cacheDir = path.join(os.homedir(), '.cache', 'docrel');
+  try { fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 }); } catch { /* best-effort */ }
+  return path.join(cacheDir, 'update-check.json');
 }
 
 function readCache(): CacheEntry | null {
