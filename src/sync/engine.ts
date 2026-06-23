@@ -92,7 +92,16 @@ export async function syncSymbol(
             db.prepare("UPDATE doc_sections SET file = ?, content_hash = '', status = 'stale', updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
-            const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
+            const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot);
+            // F1: If extractDocstring returns null (symbol not found in file,
+            // file unreadable, regex mismatch), skip the inline sync instead of
+            // converting null to '' with ?? ''. Converting to empty string and
+            // passing it to generateUpdatedDocstring would produce a minimal
+            // placeholder docstring, silently destroying hand-written JSDoc.
+            if (oldDocstring === null) {
+              result.warnings.push(`Could not extract existing docstring for ${symbol.name} — skipping inline sync to avoid data loss`);
+              continue;
+            }
             // Use raw_signature (human-readable) for JSDoc generation, not the hash.
             // If raw_signature is empty, the symbol was created without a raw signature
             // (e.g. manual creation or corrupted state) — we cannot generate meaningful docs.
@@ -257,10 +266,14 @@ export async function syncSymbol(
           result.errors.push(`Unknown doc_type '${doc.doc_type}' for doc ${doc.id} — cannot sync`);
       }
     } catch (err: any) {
-      // Log only the doc_id (SHA-256 hash), not the raw error which may
-      // contain absolute paths. Process supervisors (Docker, systemd) may
-      // capture stderr.
-      console.error(`DocRel: Error syncing doc ${mapping.doc_id}`);
+      // Log the error details for server-side diagnosis, but keep the
+      // result.errors message sanitized for MCP/CLI clients.
+      // F2: Capture the actual error message (sanitized) in both
+      // console.error and result.errors so operators can diagnose failures.
+      const msg = err instanceof Error ? err.message : String(err);
+      // Sanitize absolute paths from the error message before logging
+      const sanitized = msg.replace(/\/[^\s:,)]{20,}/g, '...');
+      console.error(`DocRel: Error syncing doc ${mapping.doc_id}:`, sanitized);
       result.errors.push(`Error syncing doc ${mapping.doc_id}: internal error — check server logs`);
     }
   }
@@ -304,6 +317,14 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // (e.g., TOCTOU hardening, additional checks) propagates here.
   const resolved = validatePath(file, projectRoot);
   if (!resolved) return { signature: null, reason: 'invalid file path or path traversal detected' };
+
+  // F17: Guard against corrupted symbol records with multi-kilobyte names
+  // that would produce pathological regex patterns. The symbol name comes from
+  // the SQLite database (trusted only to a degree — varchar values can be any
+  // length). Mirrors the MAX_ANCHOR_LENGTH (1000) pattern in standalone.ts.
+  if (symbolName.length > 500) {
+    return { signature: null, reason: 'symbol name too long — possible corruption' };
+  }
 
   let content: string;
   let fd: number | undefined;
