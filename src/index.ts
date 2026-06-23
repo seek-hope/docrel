@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { DOCREL_VERSION } from './version.js';
-import { getDb } from './db/connection.js';
+import { getDb, closeDb } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import type { DocRelConfig } from './utils/config.js';
@@ -69,7 +69,7 @@ server.tool(
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
-              passed: filtered.length === 0,
+              passed: strict ? filtered.length === 0 : true,
               staleDocs: filtered,
               summary: `${filtered.length} stale doc(s) in ${file}`,
             }, null, 2),
@@ -170,6 +170,16 @@ server.tool(
 );
 
 // ── Start ──────────────────────────────────────────────────────
+async function shutdown(): Promise<void> {
+  console.error('DocRel MCP Server shutting down...');
+  try { await codegraph.close(); } catch {}
+  try { closeDb(); } catch {}
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
