@@ -12,17 +12,6 @@ export function runMigrations(db: Database.Database): void {
   // the database from being left in a partially-migrated state if the
   // transaction fails.
   db.transaction(() => {
-    // Add raw_signature column for existing V1 databases
-    if (currentVersion >= 1) {
-      try {
-        db.exec('ALTER TABLE symbols ADD COLUMN raw_signature TEXT NOT NULL DEFAULT \'\'');
-      } catch (err: any) {
-        // Only swallow "column already exists" — surface real errors
-        // (locked database, corrupted schema, disk I/O error).
-        if (!/duplicate column|already exists/i.test(err?.message ?? '')) throw err;
-      }
-    }
-
     db.exec(`
       CREATE TABLE IF NOT EXISTS symbols (
         id            TEXT PRIMARY KEY,
@@ -74,6 +63,19 @@ export function runMigrations(db: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_changelog_symbol ON changelog(symbol_id);
       CREATE INDEX IF NOT EXISTS idx_changelog_status ON changelog(sync_status);
     `);
+
+    // Add raw_signature column for existing V0/V1 databases.
+    // Must run AFTER CREATE TABLE IF NOT EXISTS so the table exists.
+    if (currentVersion < SCHEMA_VERSION) {
+      try {
+        db.exec('ALTER TABLE symbols ADD COLUMN raw_signature TEXT NOT NULL DEFAULT \'\'');
+      } catch (err: any) {
+        // Check if column already exists via PRAGMA (locale-independent).
+        // Avoids relying on English error messages which may be localized.
+        const cols = db.prepare('PRAGMA table_info(symbols)').all() as Array<{ name: string }>;
+        if (!cols.some(c => c.name === 'raw_signature')) throw err;
+      }
+    }
 
     db.pragma(`user_version = ${SCHEMA_VERSION}`);
   })();

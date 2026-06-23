@@ -30,8 +30,13 @@ export function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Build a global RegExp from a user string, escaping special chars. */
-export function escapeRegexGlobal(str: string, maxLength = 200): RegExp {
-  if (str.length > maxLength) return /(?!)a^/;
+/** Build a global RegExp from a user string, escaping special chars.
+ *  Returns null when the string exceeds maxLength — callers MUST check for
+ *  null to distinguish "no match possible" from "search was aborted". */
+export function escapeRegexGlobal(str: string, maxLength = 200): RegExp | null {
+  if (str.length > maxLength) {
+    console.warn(`DocRel: escapeRegexGlobal aborted — string length ${str.length} exceeds max ${maxLength}`);
+    return null;
+  }
   return new RegExp(escapeRegex(str), 'g');
 }

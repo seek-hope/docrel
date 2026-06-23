@@ -3,6 +3,16 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 const connections = new Map<string, Database.Database>();
+const closedConnections = new WeakSet<Database.Database>();
+
+/** Check whether a database connection is still usable. Call before every query
+ *  in tools/sync/hooks modules to get a descriptive error instead of a raw
+ *  "Database is closed" message. */
+export function assertDbOpen(db: Database.Database): void {
+  if (closedConnections.has(db)) {
+    throw new Error('DocRel database connection has been closed. Re-initialize with getDb().');
+  }
+}
 
 export function getDb(projectRoot: string): Database.Database {
   const resolved = path.resolve(projectRoot);
@@ -28,11 +38,22 @@ export function getDb(projectRoot: string): Database.Database {
           const content = fs.readFileSync(fd, 'utf-8');
           const match = content.match(/gitdir:\s*(.+)/);
           if (match?.[1]) {
-            dbDir = path.resolve(resolved, match[1].trim());
-            // Validate that resolved path is within project root
+            const rawGitdir = match[1].trim();
+            dbDir = path.resolve(resolved, rawGitdir);
+            // Worktree gitdir resolves outside the worktree root (e.g. to
+            // /main-repo/.git/worktrees/feature). That is expected — use the
+            // main .git directory so all worktrees share the same database.
+            // Accept paths that end with /.git/worktrees/<name> and derive
+            // the main .git from them.
             const root = path.resolve(resolved);
             if (!dbDir.startsWith(root + path.sep) && dbDir !== root) {
-              dbDir = path.join(resolved, '.docrel');
+              const worktreesIdx = dbDir.lastIndexOf(`${path.sep}.git${path.sep}worktrees${path.sep}`);
+              if (worktreesIdx > 0) {
+                // Derive the main .git directory from the worktree path
+                dbDir = dbDir.slice(0, worktreesIdx) + path.sep + '.git';
+              } else {
+                dbDir = path.join(resolved, '.docrel');
+              }
             }
           } else {
             dbDir = path.join(resolved, '.docrel');
@@ -86,11 +107,13 @@ export function closeDb(projectRoot?: string): void {
     const key = path.resolve(projectRoot);
     const db = connections.get(key);
     if (db) {
+      closedConnections.add(db);
       try { db.close(); } catch { /* already closed */ }
       connections.delete(key);
     }
   } else {
     for (const db of connections.values()) {
+      closedConnections.add(db);
       try { db.close(); } catch { /* already closed */ }
     }
     connections.clear();

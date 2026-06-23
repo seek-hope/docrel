@@ -28,24 +28,11 @@ function cachePath(): string {
 }
 
 function readCache(): CacheEntry | null {
-  // Find the most recent cache file (glob for docrel-update-check-*.json)
   try {
-    const tmpDir = os.tmpdir();
-    const prefix = 'docrel-update-check-';
-    const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(prefix) && f.endsWith('.json'));
-    for (const file of files) {
-      try {
-        const raw = fs.readFileSync(path.join(tmpDir, file), 'utf-8');
-        const parsed = JSON.parse(raw);
-        const entry = validateCacheEntry(parsed);
-        if (entry) {
-          // Remove old-named cache files (backward compatibility)
-          const oldPath = path.join(os.tmpdir(), 'docrel-update-check.json');
-          try { if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath); } catch {}
-          return entry;
-        }
-      } catch { /* skip corrupt cache files */ }
-    }
+    const raw = fs.readFileSync(cachePath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    const entry = validateCacheEntry(parsed);
+    if (entry) return entry;
     return null;
   } catch {
     return null;
@@ -54,8 +41,10 @@ function readCache(): CacheEntry | null {
 
 function writeCache(entry: CacheEntry): void {
   try {
-    // Use exclusive creation flag (wx) to fail if file already exists
-    fs.writeFileSync(cachePath(), JSON.stringify(entry), { encoding: 'utf-8', flag: 'wx' });
+    // Overwrite (w) — cache must be updatable after first write.
+    // The original 'wx' (exclusive creation) flag would fail EEXIST on every
+    // subsequent call, leaving the cache permanently stale.
+    fs.writeFileSync(cachePath(), JSON.stringify(entry), { encoding: 'utf-8', flag: 'w' });
   } catch {
     // best-effort
   }
@@ -88,6 +77,15 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
     const data = await response.json();
     if (typeof data?.version !== 'string' || data.version.length === 0) return null;
     const latest = data.version;
+
+    // Validate semver-like format to guard against spoofed registry responses
+    if (!/^\d+\.\d+\.\d+(\+[a-zA-Z0-9.]+)?$/.test(latest)) return null;
+
+    // Reject pre-release versions (beta, alpha, rc) so stable users are not
+    // prompted to install unstable releases. Strip any build metadata (+) but
+    // keep the numeric version for comparison.
+    const stablePart = latest.split('+')[0] ?? latest;
+    if (stablePart.includes('-')) return null;
 
     writeCache({ lastCheck: Date.now(), latestVersion: latest });
 
