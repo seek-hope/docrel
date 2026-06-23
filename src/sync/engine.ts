@@ -22,10 +22,11 @@ export interface SyncResult {
 /** Parse a "file:line" location into { file, line }. Returns null if invalid. */
 function parseLocation(location: string): { file: string; line: number } | null {
   if (!location) return null;
-  const lastColon = location.lastIndexOf(':');
-  if (lastColon < 0) return null;
-  const file = location.slice(0, lastColon);
-  const line = parseInt(location.slice(lastColon + 1), 10);
+  // Use regex anchored at end to correctly handle Windows paths with drive letters
+  const match = location.match(/^(.+):(\d+)$/);
+  if (!match) return null;
+  const file = match[1];
+  const line = parseInt(match[2], 10);
   if (!file || isNaN(line)) return null;
   return { file, line };
 }
@@ -39,25 +40,26 @@ export async function syncSymbol(
 ): Promise<SyncResult> {
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], errors: [] };
 
-  const symbol = getSymbol(db, symbolId);
-  if (!symbol) {
-    result.errors.push(`Symbol not found: ${symbolId}`);
-    return result;
-  }
+  try {
+    const symbol = getSymbol(db, symbolId);
+    if (!symbol) {
+      result.errors.push(`Symbol not found: ${symbolId}`);
+      return result;
+    }
 
-  const mappings = getMappingsForSymbol(db, symbolId);
-  if (mappings.length === 0) {
-    return result; // No docs linked, nothing to sync
-  }
+    const mappings = getMappingsForSymbol(db, symbolId);
+    if (mappings.length === 0) {
+      return result; // No docs linked, nothing to sync
+    }
 
-  for (const mapping of mappings) {
-    const doc = getDocSection(db, mapping.doc_id);
-    if (!doc) continue;
+    for (const mapping of mappings) {
+      const doc = getDocSection(db, mapping.doc_id);
+      if (!doc) continue;
 
-    const strategy = config.strategies[doc.doc_type];
+      const strategy = config.strategies[doc.doc_type];
 
-    try {
-      switch (doc.doc_type) {
+      try {
+        switch (doc.doc_type) {
         case 'inline': {
           const loc = parseLocation(symbol.location);
           if (!loc) {
@@ -68,7 +70,10 @@ export async function syncSymbol(
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
             // Use raw_signature (human-readable) for JSDoc generation, not the hash
             const newSig = symbol.raw_signature || symbol.signature;
-            const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
+            // Guard against empty signatures — skip replacement to avoid garbled docs
+            const newDocstring = newSig
+              ? generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig)
+              : oldDocstring;
 
             // Extract current signature from the source to use as oldSignature
             const currentSig = extractCurrentSignature(loc.file, symbol.name, projectRoot);
@@ -150,16 +155,38 @@ export async function syncSymbol(
       result.errors.push(`Error syncing ${doc.file}: ${err.message}`);
     }
   }
+  } catch (err: any) {
+    result.errors.push(`Catastrophic sync error for ${symbolId}: ${err.message}`);
+  }
 
   return result;
+}
+
+const MAX_LINES = 100_000;
+
+/**
+ * Escape a string for use in a regular expression.
+ */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
  * Extract the current function/class/const signature from the source file.
  * This is used as the oldSignature for inline doc replacement.
+ * Uses a regex that matches only symbol definitions, not references.
  */
 function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): string | null {
   const resolved = path.resolve(projectRoot, file);
+
+  // Containment check: prevent path traversal
+  const root = path.resolve(projectRoot);
+  if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+  try {
+    const real = fs.realpathSync(resolved);
+    if (!real.startsWith(root + path.sep) && real !== root) return null;
+  } catch { return null; }
+
   if (!fs.existsSync(resolved)) return null;
   try {
     if (fs.statSync(resolved).size > 10 * 1024 * 1024) return null;
@@ -167,15 +194,22 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   } catch { return null; }
   const content = fs.readFileSync(resolved, 'utf-8');
   const lines = content.split('\n');
-  // Find the symbol definition line by matching the symbol name in a definition context
+
+  // Limit line count to prevent hangs on degenerate input
+  if (lines.length > MAX_LINES) return null;
+
+  const escaped = escapeRegex(symbolName);
+  // Match only symbol definitions, not references or usage sites
+  const symRegex = new RegExp(
+    `(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${escaped}\\b` +
+    `|(?:export\\s+(?:default\\s+)?)?(?:const|let|var)\\s+${escaped}\\b\\s*=` +
+    `|\\binterface\\s+${escaped}\\b` +
+    `|\\btype\\s+${escaped}\\b\\s*=`,
+  );
+
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.includes(symbolName) &&
-        (trimmed.includes('function') || trimmed.includes('class') ||
-         trimmed.includes('const') || trimmed.includes('let') ||
-         trimmed.includes('var') || trimmed.includes('interface') ||
-         trimmed.includes('type'))) {
-      return trimmed;
+    if (symRegex.test(line.trim())) {
+      return line.trim();
     }
   }
   return null;
