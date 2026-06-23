@@ -123,7 +123,7 @@ export function isNewer(current: string, latest: string): boolean {
 
   // If any segment is non-numeric, fall back to string comparison
   if (curParts.some(isNaN) || latParts.some(isNaN)) {
-    return latest !== current;
+    return false; // conservative: don't claim newer unless proven by numeric comparison
   }
 
   for (let i = 0; i < 3; i++) {

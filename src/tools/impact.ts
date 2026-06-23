@@ -112,8 +112,11 @@ export function docrelImpact(
         }
       }
     } catch (err: any) {
-      console.error(`Warning: Skipping ${file} due to error: ${err.message}`);
-      errors.push({ file, message: err.message });
+      const sanitized = (err instanceof Error ? err.message : String(err))
+        .replace(/\/home\/[^/]+/g, '<home>')
+        .slice(0, 200);
+      console.error(`Warning: Skipping ${file} due to error: ${sanitized}`);
+      errors.push({ file, message: sanitized });
     }
   }
 
