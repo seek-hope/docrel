@@ -56,6 +56,12 @@ export function getDb(projectRoot: string): Database.Database {
 
   try {
     fs.mkdirSync(dbDir, { recursive: true, mode: 0o700 });
+
+    // Pre-check: if dbPath exists, verify it is a regular file (not a directory)
+    if (fs.existsSync(dbPath) && !fs.statSync(dbPath).isFile()) {
+      throw new Error(`Database path exists but is not a regular file`);
+    }
+
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
@@ -67,7 +73,8 @@ export function getDb(projectRoot: string): Database.Database {
     try { if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600); } catch { /* WAL may not exist yet */ }
     try { if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600); } catch { /* SHM may not exist yet */ }
   } catch (err: any) {
-    throw new Error(`Failed to initialize DocRel database at ${dbPath}: ${err.message}`);
+    // Use relative path to avoid exposing absolute filesystem paths in error messages
+    throw new Error(`Failed to initialize DocRel database in .docrel/: ${err.message}`);
   }
 
   connections.set(resolved, db);
@@ -79,12 +86,12 @@ export function closeDb(projectRoot?: string): void {
     const key = path.resolve(projectRoot);
     const db = connections.get(key);
     if (db) {
-      db.close();
+      try { db.close(); } catch { /* already closed */ }
       connections.delete(key);
     }
   } else {
     for (const db of connections.values()) {
-      db.close();
+      try { db.close(); } catch { /* already closed */ }
     }
     connections.clear();
   }
