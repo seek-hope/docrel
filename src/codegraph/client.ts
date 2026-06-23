@@ -39,39 +39,55 @@ export class CodegraphClient {
   private client: Client | null = null;
   private connectPromise: Promise<void> | null = null;
   private connectAborted = false;
+  private livenessInProgress = false;
 
   constructor(private command?: string) {}
 
   async connect(): Promise<void> {
     if (this.client) {
-      // Liveness check: verify the underlying process is still alive
+      // Guard the liveness check so only one caller runs it at a time.
+      // Without this, two concurrent callers could both detect a dead client,
+      // both set this.client = null, and the second caller would read null
+      // on the retry path.
+      if (this.livenessInProgress) {
+        // Another caller is already checking — wait for connectPromise
+        if (this.connectPromise) return this.connectPromise;
+        await this.connect();
+        return;
+      }
+      this.livenessInProgress = true;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
-        const result = await this.client.callTool(
-          { name: 'codegraph_status', arguments: {} },
-          undefined,
-          { signal: controller.signal },
-        );
-        clearTimeout(timeout);
-        if (!result.isError) return;
-      } catch {
-        // One retry before discarding the client — transient errors
-        // (protocol timeouts, network hiccups) shouldn't force a full reconnect.
+        // Liveness check: verify the underlying process is still alive
         try {
-          const controller2 = new AbortController();
-          const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
-          const result2 = await this.client.callTool(
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+          const result = await this.client.callTool(
             { name: 'codegraph_status', arguments: {} },
             undefined,
-            { signal: controller2.signal },
+            { signal: controller.signal },
           );
-          clearTimeout(timeout2);
-          if (!result2.isError) return;
-        } catch {}
-        // Client died — close and reconnect below
-        try { await this.client.close(); } catch {}
-        this.client = null;
+          clearTimeout(timeout);
+          if (!result.isError) return;
+        } catch {
+          // One retry before discarding the client — transient errors
+          // (protocol timeouts, network hiccups) shouldn't force a full reconnect.
+          try {
+            const controller2 = new AbortController();
+            const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
+            const result2 = await this.client.callTool(
+              { name: 'codegraph_status', arguments: {} },
+              undefined,
+              { signal: controller2.signal },
+            );
+            clearTimeout(timeout2);
+            if (!result2.isError) return;
+          } catch {}
+          // Client died — close and reconnect below
+          try { await this.client.close(); } catch {}
+          this.client = null;
+        }
+      } finally {
+        this.livenessInProgress = false;
       }
     }
     if (this.connectPromise) return this.connectPromise;
@@ -88,9 +104,12 @@ export class CodegraphClient {
     // Reset the abort flag so a past timeout does not poison this attempt
     this.connectAborted = false;
 
-    // Validate command: reject path-based commands from user config
+    // Validate command: reject shell metacharacters, path separators, and
+    // control characters before passing to which/execFileSync. While execFileSync
+    // does not invoke a shell, path separators and metacharacters can still
+    // cause which to search for unexpected paths or return ambiguous results.
     let cmd = this.command ?? 'codegraph';
-    if (cmd.includes('\\') || cmd.length > 256) {
+    if (/[\\/;&|`$()<>\n\r\t]/.test(cmd) || cmd.length > 256) {
       throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
     }
 
@@ -226,8 +245,11 @@ export class CodegraphClient {
 
   async close(): Promise<void> {
     if (this.client) {
-      await this.client.close();
-      this.client = null;
+      try {
+        await this.client.close();
+      } finally {
+        this.client = null;
+      }
     }
   }
 
@@ -264,7 +286,7 @@ export class CodegraphClient {
       // Matches: async function, export async function, export default function/class, etc.
       // Also supports Python (def), Rust (fn), Go (func), and C (struct).
       const symbolMatch = line.match(
-        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+(\w+)/
+        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+([\w$]+)/
       );
       if (symbolMatch && currentFile) {
         const kindMatch = line.match(
@@ -290,7 +312,7 @@ export class CodegraphClient {
 
     // Fallback: if no symbols were associated with files, extract any remaining
     if (symbols.length === 0) {
-      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+(\w+)/g;
+      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+([\w$]+)/g;
       let match: RegExpExecArray | null;
       while ((match = symbolRegex.exec(content)) !== null) {
         symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });
