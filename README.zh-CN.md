@@ -1,10 +1,10 @@
 # DocRel — 代码与文档的关系型同步系统
 
+[**English**](README.md)
+
 [![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)](https://github.com/seek-hope/docrel/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
-
-[**English**](README.md)
 
 **像管理数据库一样管理文档。** DocRel 将关系型数据库的概念——外键、级联更新（CASCADE）、CHECK 约束——应用于代码与文档的同步。无需手动标注。
 

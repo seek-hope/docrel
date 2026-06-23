@@ -1,10 +1,10 @@
 # DocRel — Code-Documentation Relational Sync
 
+[**中文**](README.zh-CN.md)
+
 [![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)](https://github.com/seek-hope/docrel/actions)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
-
-[**中文**](README.zh-CN.md)
 
 **Treat documentation like a database.** DocRel applies relational database concepts — foreign keys, CASCADE updates, CHECK constraints — to keep code and documentation in sync automatically. No manual annotations required.
 
