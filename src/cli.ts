@@ -27,6 +27,9 @@ import { listSymbols } from './db/symbols.js';
 import { docSectionId, contentHash } from './utils/hash.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCREL_VERSION } from './version.js';
+import { detectAgent } from './agents/detector.js';
+import type { AgentKind } from './agents/detector.js';
+import { integrate } from './agents/integrate.js';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws. */
 function errMsg(e: unknown): string {
@@ -409,6 +412,50 @@ program
       console.log(`Exported ${mappings.length} mappings to ${outPath}`);
     } catch (err: any) {
       console.error(`Failed to export mappings: ${errMsg(err)}`);
+      exit(1);
+    }
+  });
+
+program
+  .command('integrate')
+  .description('Generate agent integration configs for DocRel')
+  .option('--agent <agent>', 'Agent to integrate with (claude-code, codex, opencode, oh-my-pi, hermes)')
+  .option('--dry-run', 'Preview what would be created without writing files')
+  .action(async (opts) => {
+    try {
+      const detected = detectAgent();
+      const agentKind: AgentKind | undefined = opts.agent as AgentKind | undefined;
+
+      // Validate agent flag if provided
+      const VALID_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'oh-my-pi', 'hermes', 'unknown']);
+      if (opts.agent && !VALID_AGENTS.has(opts.agent)) {
+        console.error(`Error: Unknown agent '${opts.agent}'. Valid: ${[...VALID_AGENTS].join(', ')}`);
+        exit(1);
+      }
+
+      const targetAgent = agentKind ?? detected.kind;
+
+      if (opts.dryRun) {
+        console.error(`Detected agent: ${detected.name} (${detected.kind})`);
+        if (agentKind) {
+          console.error(`Overriding with: ${agentKind}`);
+        }
+        console.error('Dry run — no files will be written.\n');
+      }
+
+      const result = await integrate(projectRoot, targetAgent, opts.dryRun ?? false);
+
+      if (opts.dryRun) {
+        if (result.filesCreated.length > 0) {
+          console.log(`Would create/update: ${result.filesCreated.join(', ')}`);
+        } else {
+          console.log('No changes needed — integration already configured.');
+        }
+      } else {
+        console.log(result.summary);
+      }
+    } catch (err: any) {
+      console.error('Integrate failed:', errMsg(err));
       exit(1);
     }
   });
