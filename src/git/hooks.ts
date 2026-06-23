@@ -46,7 +46,8 @@ export async function preCommitHook(
 
     return { allowed: true, message: 'DocRel: all docs in sync.' };
   } catch (err: any) {
-    return { allowed: false, message: `DocRel: failed to run pre-commit check: ${err.message}` };
+    console.error(`DocRel pre-commit hook error:`, err);
+    return { allowed: false, message: 'DocRel: pre-commit check failed: internal error — check docrel logs for details.' };
   }
 }
 
@@ -125,7 +126,8 @@ export async function prePushHook(
 
     return { allowed: true, message: 'DocRel: all docs in sync.' };
   } catch (err: any) {
-    return { allowed: false, message: `DocRel: pre-push check failed: ${err.message}` };
+    console.error(`DocRel pre-push hook error:`, err);
+    return { allowed: false, message: 'DocRel: pre-push check failed: internal error — check docrel logs for details.' };
   }
 }
 
@@ -138,13 +140,15 @@ export function installHooks(projectRoot: string, force = false): void {
   let gitDir = gitPath;
 
   let isWorktreeGit = false;
+  let gitFd: number | undefined;
   try {
-    const st = fs.statSync(gitPath);
-    isWorktreeGit = !st.isDirectory();
+    gitFd = fs.openSync(gitPath, 'r');
+    const fst = fs.fstatSync(gitFd);
+    isWorktreeGit = !fst.isDirectory();
   } catch { /* stat failed — treat as not a worktree */ }
   if (isWorktreeGit) {
     try {
-      const content = fs.readFileSync(gitPath, 'utf-8');
+      const content = fs.readFileSync(gitFd!, 'utf-8');
       const match = content.match(/gitdir:\s*(.+)/);
       if (match?.[1]) {
         const rawGitdir = match[1].trim();
@@ -164,6 +168,9 @@ export function installHooks(projectRoot: string, force = false): void {
         }
       }
     } catch { /* fall through to using .git path */ }
+  }
+  if (gitFd !== undefined) {
+    try { fs.closeSync(gitFd); } catch { /* best effort */ }
   }
 
   // Safety: if gitDir is still a file (not a directory), mkdirSync below
@@ -198,6 +205,13 @@ export function installHooks(projectRoot: string, force = false): void {
         throw new Error(`docrel resolved to unexpected path: ${docrelBin}`);
       }
       docrelBin = realBin;
+      // Verify the resolved binary immediately to close the TOCTOU window
+      // between which/realpathSync and use.
+      try {
+        execFileSync(docrelBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
+      } catch (verr: any) {
+        throw new Error(`docrel binary at ${docrelBin} does not appear to work: ${verr.message}`);
+      }
     } catch (err: any) {
       throw new Error(`Cannot locate docrel binary: ${err.message}. Install docrel globally or use --no-hooks.`);
     }
@@ -256,10 +270,7 @@ fi
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
 set -e
-changed=$(git diff --name-only -z HEAD~1..HEAD 2>/dev/null) || exit 0
-if [ -n "$changed" ]; then
-  echo "$changed" | xargs -0 -r ${docrelQuoted} impact --
-fi
+git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelQuoted} impact --
 `;
 
   const prePushScript = `#!/bin/sh
