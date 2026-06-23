@@ -34,6 +34,7 @@ export interface SymbolInput {
 
 export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolRow {
   if (!input.id) throw new Error('Symbol id cannot be empty');
+  if (!input.name || !input.name.trim()) throw new Error('Symbol name cannot be empty');
   // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) to avoid the
   // check-then-act race condition. In WAL mode with concurrent processes,
   // another connection could INSERT the same row between a SELECT and INSERT.

@@ -27,20 +27,21 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
   if (!input.file) throw new Error('doc_section file cannot be empty');
   if (!input.doc_type) throw new Error('doc_section doc_type cannot be empty');
 
-  const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(input.id);
-
-  if (existing) {
-    db.prepare(`
-      UPDATE doc_sections
-      SET file = ?, anchor = ?, content_hash = ?, doc_type = ?, status = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync', input.id);
-  } else {
-    db.prepare(`
-      INSERT INTO doc_sections (id, file, anchor, content_hash, doc_type, status)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync');
-  }
+  // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) instead of
+  // check-then-act to avoid race conditions in WAL mode where two
+  // concurrent writers could both see no existing row and both attempt
+  // INSERT, causing the second to fail with SQLITE_CONSTRAINT.
+  db.prepare(`
+    INSERT INTO doc_sections (id, file, anchor, content_hash, doc_type, status)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET
+      file = excluded.file,
+      anchor = excluded.anchor,
+      content_hash = excluded.content_hash,
+      doc_type = excluded.doc_type,
+      status = excluded.status,
+      updated_at = datetime('now')
+  `).run(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync');
 
   const row = getDocSection(db, input.id);
   if (!row) throw new Error(`DocSection ${input.id} was not found after upsert`);
