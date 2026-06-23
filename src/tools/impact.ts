@@ -42,6 +42,10 @@ export function docrelImpact(
   const MAX_PATH_LENGTH = 4096;
 
   for (const file of changedFiles) {
+    if (!file || file.trim() === '') {
+      errors.push({ file: file || '(empty)', message: 'Empty file path' });
+      continue;
+    }
     if (file.length > MAX_PATH_LENGTH) {
       console.error(`Warning: Skipping path exceeding ${MAX_PATH_LENGTH} chars: ${file.slice(0, 100)}...`);
       errors.push({ file, message: `Path exceeds ${MAX_PATH_LENGTH} characters` });
