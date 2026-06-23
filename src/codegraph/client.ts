@@ -43,7 +43,24 @@ export class CodegraphClient {
   constructor(private command?: string) {}
 
   async connect(): Promise<void> {
-    if (this.client) return;
+    if (this.client) {
+      // Liveness check: verify the underlying process is still alive
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
+        const result = await this.client.callTool(
+          { name: 'codegraph_status', arguments: {} },
+          undefined,
+          { signal: controller.signal },
+        );
+        clearTimeout(timeout);
+        if (!result.isError) return;
+      } catch {
+        // Client died — close and reconnect below
+        try { await this.client.close(); } catch {}
+        this.client = null;
+      }
+    }
     if (this.connectPromise) return this.connectPromise;
 
     this.connectPromise = this.doConnect();
@@ -55,6 +72,9 @@ export class CodegraphClient {
   }
 
   private async doConnect(): Promise<void> {
+    // Reset the abort flag so a past timeout does not poison this attempt
+    this.connectAborted = false;
+
     // Validate command: reject path-based commands from user config
     let cmd = this.command ?? 'codegraph';
     if (cmd.includes('/') || cmd.includes('\\') || cmd.length > 256) {
@@ -105,11 +125,15 @@ export class CodegraphClient {
   }
 
   async isAvailable(timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
+    // Reset abort flag so a past timeout does not poison future attempts
+    this.connectAborted = false;
+
+    let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
         this.connect(),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('timeout')), timeoutMs);
+          timer = setTimeout(() => reject(new Error('timeout')), timeoutMs);
         }),
       ]);
       return true;
@@ -121,13 +145,24 @@ export class CodegraphClient {
         this.client = null;
       }
       return false;
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  async explore(query: string, maxFiles = 12): Promise<ExploreResult> {
+  /** Ensure the client is connected and usable. Throws if not. */
+  private async ensureConnected(): Promise<Client> {
     await this.connect();
+    if (!this.client) {
+      throw new Error('Codegraph client is not connected');
+    }
+    return this.client;
+  }
 
-    const result = await this.client!.callTool({
+  async explore(query: string, maxFiles = 12): Promise<ExploreResult> {
+    const client = await this.ensureConnected();
+
+    const result = await client.callTool({
       name: 'codegraph_explore',
       arguments: { query, maxFiles },
     });
@@ -141,9 +176,9 @@ export class CodegraphClient {
   }
 
   async impact(symbol: string, depth = 2): Promise<ImpactResult> {
-    await this.connect();
+    const client = await this.ensureConnected();
 
-    const result = await this.client!.callTool({
+    const result = await client.callTool({
       name: 'codegraph_impact',
       arguments: { symbol, depth },
     });
@@ -157,12 +192,12 @@ export class CodegraphClient {
   }
 
   async search(query: string, kind?: string): Promise<SearchResult> {
-    await this.connect();
+    const client = await this.ensureConnected();
 
     const args: Record<string, unknown> = { query };
     if (kind) args.kind = kind;
 
-    const result = await this.client!.callTool({
+    const result = await client.callTool({
       name: 'codegraph_search',
       arguments: args,
     });
