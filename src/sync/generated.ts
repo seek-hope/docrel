@@ -34,6 +34,10 @@ const ALLOWED_BINARIES = new Set([
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   if (!validateCommandSafety(cmd)) return null;
+  // F24: Defensive guard — validateCommandSafety rejects empty strings and
+  // strings with shell metacharacters, but if validation is relaxed in the
+  // future, a whitespace-only string could produce empty parts after trim.
+  if (!cmd.trim()) return null;
   const parts = cmd.trim().split(/\s+/);
   if (parts.length === 0) return null;
   if (parts.length > MAX_ARGS + 1) return null;

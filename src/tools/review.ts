@@ -8,7 +8,7 @@ export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
   orphanedSections: OrphanedSection[];
   impliedReferences: ImpliedReference[];
-  lowConfidenceMappings: LowConfidenceMapping[];
+  unreviewedMappings: UnreviewedMapping[];
   skippedFiles: string[];
   summary: ReviewSummary;
 }
@@ -34,13 +34,13 @@ export interface ImpliedReference {
   mentionText: string;
 }
 
-export interface LowConfidenceMapping {
+export interface UnreviewedMapping {
   symbolId: string;
   symbolName: string;
   docId: string;
   docFile: string;
   docAnchor: string;
-  confidence: number;
+  reviewStatus: string;
   relType: string;
 }
 
@@ -50,7 +50,7 @@ export interface ReviewSummary {
   unlinkedCount: number;
   orphanedCount: number;
   impliedCount: number;
-  lowConfidenceCount: number;
+  unreviewedCount: number;
 }
 
 /** Find symbols with no mappings. */
@@ -121,10 +121,10 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
       if (!headingMatch || headingMatch.index === undefined) continue;
 
       const sectionStart = content.lastIndexOf('\n', headingMatch.index) + 1;
-      const restAfter = content.slice(headingMatch.index + headingMatch[0].length);
+      const restAfter = content.slice(headingMatch.index + headingMatch[auto].length);
       const nextHeading = restAfter.match(/^#{1,6}\s/m);
       const sectionEnd = nextHeading
-        ? headingMatch.index + headingMatch[0].length + (nextHeading.index ?? 0)
+        ? headingMatch.index + headingMatch[auto].length + (nextHeading.index ?? 0)
         : content.length;
 
       const sectionContent = content.slice(sectionStart, sectionEnd);
@@ -180,17 +180,17 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
 }
 
 /** Find mappings with confidence below threshold (default < 0.8). */
-function findLowConfidence(db: Database.Database, maxConfidence = 0.8): LowConfidenceMapping[] {
+function findUnreviewed(db: Database.Database, ): UnreviewedMapping[] {
   return db.prepare(`
     SELECT m.symbol_id AS symbolId, s.name AS symbolName,
            m.doc_id AS docId, d.file AS docFile, d.anchor AS docAnchor,
-           m.confidence, m.rel_type AS relType
+           m.review_status AS reviewStatus, m.rel_type AS relType
     FROM mappings m
     JOIN symbols s ON s.id = m.symbol_id
     JOIN doc_sections d ON d.id = m.doc_id
-    WHERE m.confidence < ?
-    ORDER BY m.confidence ASC
-  `).all(maxConfidence) as LowConfidenceMapping[];
+    WHERE m.review_status = 'auto'
+    ORDER BY s.name
+  `).all(maxConfidence) as UnreviewedMapping[];
 }
 
 function escapeRegex(str: string): string {
@@ -198,32 +198,55 @@ function escapeRegex(str: string): string {
 }
 
 export function docrelReview(db: Database.Database, projectRoot: string): ReviewReport {
-  assertDbOpen(db);
-  const unlinkedSymbols = findUnlinked(db);
-  const orphanedSections = findOrphaned(db);
-  const { references: impliedReferences, skippedFiles } = findImplied(db, projectRoot);
-  const lowConfidenceMappings = findLowConfidence(db);
+  // F19: Wrap the body in try/catch to handle DB errors, corrupted state,
+  // and I/O exceptions from findImplied — matching the defensive pattern
+  // used in docrelStatus, docrelCheck, and other tool functions.
+  try {
+    assertDbOpen(db);
+    const unlinkedSymbols = findUnlinked(db);
+    const orphanedSections = findOrphaned(db);
+    const { references: impliedReferences, skippedFiles } = findImplied(db, projectRoot);
+    const unreviewedMappings = findUnreviewed(db);
 
-  const totalSymbols = (db.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number }).c;
-  const linkedSymbols = (db.prepare(
-    'SELECT COUNT(DISTINCT symbol_id) AS c FROM mappings',
-  ).get() as { c: number }).c;
+    const totalSymbols = (db.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number }).c;
+    const linkedSymbols = (db.prepare(
+      'SELECT COUNT(DISTINCT symbol_id) AS c FROM mappings',
+    ).get() as { c: number }).c;
 
-  return {
-    unlinkedSymbols,
-    orphanedSections,
-    impliedReferences,
-    lowConfidenceMappings,
-    skippedFiles,
-    summary: {
-      totalSymbols,
-      linkedSymbols,
-      unlinkedCount: unlinkedSymbols.length,
-      orphanedCount: orphanedSections.length,
-      impliedCount: impliedReferences.length,
-      lowConfidenceCount: lowConfidenceMappings.length,
-    },
-  };
+    return {
+      unlinkedSymbols,
+      orphanedSections,
+      impliedReferences,
+      unreviewedMappings,
+      skippedFiles,
+      summary: {
+        totalSymbols,
+        linkedSymbols,
+        unlinkedCount: unlinkedSymbols.length,
+        orphanedCount: orphanedSections.length,
+        impliedCount: impliedReferences.length,
+        unreviewedCount: unreviewedMappings.length,
+      },
+    };
+  } catch (err: any) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('DocRel: docrelReview failed:', msg);
+    return {
+      unlinkedSymbols: [],
+      orphanedSections: [],
+      impliedReferences: [],
+      unreviewedMappings: [],
+      skippedFiles: [],
+      summary: {
+        totalSymbols: 0,
+        linkedSymbols: 0,
+        unlinkedCount: 0,
+        orphanedCount: 0,
+        impliedCount: 0,
+        unreviewedCount: 0,
+      },
+    };
+  }
 }
 
 /** Format the review as human-readable markdown. */
@@ -258,12 +281,12 @@ export function formatReview(report: ReviewReport): string {
     lines.push('');
   }
 
-  if (report.lowConfidenceMappings.length > 0) {
-    lines.push(`### Low-Confidence Mappings (${report.lowConfidenceMappings.length})`);
+  if (report.unreviewedMappings.length > 0) {
+    lines.push(`### Unreviewed Mappings (${report.unreviewedMappings.length})`);
     lines.push('');
-    lines.push('These mappings were auto-generated and need review:');
+    lines.push('These auto-discovered mappings need review (confirm or reject):');
     lines.push('');
-    for (const m of report.lowConfidenceMappings) {
+    for (const m of report.unreviewedMappings) {
       lines.push(`- [${m.confidence.toFixed(1)}] \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor} (${m.relType})`);
     }
     lines.push('');
@@ -293,7 +316,7 @@ export function formatReview(report: ReviewReport): string {
 
   if (report.unlinkedSymbols.length === 0 &&
       report.impliedReferences.length === 0 &&
-      report.lowConfidenceMappings.length === 0 &&
+      report.unreviewedMappings.length === 0 &&
       report.orphanedSections.length === 0 &&
       report.skippedFiles.length === 0) {
     lines.push('✅ All clear — no issues found.');

@@ -95,6 +95,16 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
   const parser = getParser(ext);
   if (!parser) return null;
 
+  // F14: Verify symlink containment for individual doc files.
+  // collectDocFiles() checks entry.isFile() which follows symlinks,
+  // so a symlink like docs/secrets.md -> /etc/shadow would pass.
+  // Resolve the real path and verify it stays within projectRoot.
+  try {
+    const realFile = fs.realpathSync(absPath);
+    const root = path.resolve(projectRoot);
+    if (!realFile.startsWith(root + path.sep) && realFile !== root) return null;
+  } catch { return null; }
+
   let content: string;
   let fd: number | undefined;
   try {

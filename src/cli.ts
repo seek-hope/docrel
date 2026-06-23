@@ -45,7 +45,11 @@ function exit(code: number): never {
   process.exit(code);
 }
 
-// Register exit handler for uncaught exceptions so WAL is always flushed
+// F23: Register exit handler for synchronous WAL checkpointing.
+// better-sqlite3's db.close() is synchronous (including WAL checkpoint),
+// so the 'exit' event is safe. If a future version adds async behavior,
+// index.ts:374 shows how to register a 'beforeExit' handler with a grace
+// period. Keep 'exit' as a last-resort synchronous cleanup.
 process.on('exit', () => {
   try { closeAllDbs(); } catch { /* best effort */ }
 });
@@ -558,7 +562,9 @@ program
         const realBin = fs.realpathSync(whichOutput);
         const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
         if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
-          console.error(`Security warning: npm binary resolved to unexpected path: ${realBin}`);
+          // F15: Sanitize the path to avoid disclosing full filesystem paths
+          // in CI/monitoring logs. Show only the prefix for diagnostics.
+          console.error(`Security warning: npm binary resolved to unexpected location (prefix: ${realBin.slice(0, 30)}...)`);
           exit(1);
         }
         // Verify the binary actually works before executing

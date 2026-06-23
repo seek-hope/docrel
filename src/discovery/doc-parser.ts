@@ -27,6 +27,31 @@ export interface DocParser {
  *  the full expression including nested parens and backticks inside args. */
 const FUNC_CALL_PREFIX_RE = /`([\w][\w\d_.]*\()/g;
 
+/** F10: Extract a plain function call (not backtick-wrapped) using bracket
+ *  counting to handle nested parentheses. Takes the position of the '('
+ *  character and returns the full expression like 'foo(bar(baz))' or null. */
+function extractPlainFuncCall(text: string, openParenIdx: number): string | null {
+  // Walk backward from openParenIdx to find the function name start
+  let nameEnd = openParenIdx;
+  let nameStart = openParenIdx - 1;
+  while (nameStart >= 0 && /[\w\d_.]/.test(text[nameStart])) nameStart--;
+  nameStart++;
+  if (nameStart >= nameEnd) return null;
+
+  // Walk forward from openParenIdx to find matching close paren
+  let depth = 0;
+  for (let i = openParenIdx; i < text.length; i++) {
+    if (text[i] === '(') depth++;
+    else if (text[i] === ')') {
+      depth--;
+      if (depth === 0) {
+        return text.slice(nameStart, i + 1);
+      }
+    }
+  }
+  return null;
+}
+
 /** Starting from a `symbolName(` match at position `openIdx` inside `text`,
  *  find the real closing paren and closing backtick using bracket counting
  *  with backtick-pair awareness. Returns the full expression including
@@ -75,8 +100,12 @@ function extractBacktickCall(text: string, openIdx: number): string | null {
 /** Detect backtick-wrapped symbol names like `login`, `AuthService.login`. */
 const BACKTICK_SYMBOL_RE = /`([\w][\w\d_.]+)`/g;
 
-/** Detect function-like identifiers in plain text (standalone, not in backticks). */
+/** Detect simple function-like identifiers (standalone, not in backticks).
+ *  Uses [^)]* for speed in code blocks and inline text.
+ *  For heading extraction where nested parens matter, use extractPlainFuncCall. */
 const PLAIN_FUNC_RE = /\b([\w][\w\d_.]+\([^)]*\))/g;
+/** Prefix detector for bracket-counting plain function call extraction. */
+const PLAIN_FUNC_PREFIX_RE = /\b([\w][\w\d_.]*)\(/g;
 
 /** Extract symbol names from heading text by splitting on common separators. */
 function extractSymbolsFromHeading(heading: string, lineInDoc: number): CodeRef[] {
@@ -92,12 +121,14 @@ function extractSymbolsFromHeading(heading: string, lineInDoc: number): CodeRef[
     }
   }
 
-  // Plain function calls in heading
-  for (const m of heading.matchAll(PLAIN_FUNC_RE)) {
-    const name = m[1];
-    if (!seen.has(name)) {
-      seen.add(name);
-      refs.push({ symbolName: name, refType: 'heading', confidence: 0.5, lineInDoc });
+  // Plain function calls in heading — F10: use bracket counting via
+  // extractPlainFuncCall instead of regex [^)]* to handle nested parens.
+  for (const m of heading.matchAll(PLAIN_FUNC_PREFIX_RE)) {
+    const call = extractPlainFuncCall(heading, m.index + m[0].length - 1);
+    if (!call) continue;
+    if (!seen.has(call)) {
+      seen.add(call);
+      refs.push({ symbolName: call, refType: 'heading', confidence: 0.5, lineInDoc });
     }
   }
 
@@ -511,8 +542,16 @@ export class HtmlParser implements DocParser {
     const headingRe = /<h([1-6])[^>]*>(.+?)<\/h\1>/gi;
     const matches: { index: number; endIndex: number; level: number; text: string }[] = [];
 
+    // F21: Cap heading match count to prevent memory exhaustion from
+    // crafted HTML files with millions of <h1> tags within the 10MB limit.
+    const MAX_HEADINGS = 50000;
+
     let m: RegExpExecArray | null;
     while ((m = headingRe.exec(content)) !== null) {
+      if (matches.length >= MAX_HEADINGS) {
+        console.warn(`DocRel: HtmlParser reached limit of ${MAX_HEADINGS} headings — truncating`);
+        break;
+      }
       matches.push({
         index: m.index,
         endIndex: m.index + m[0].length,

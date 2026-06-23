@@ -85,7 +85,6 @@ function fileStem(filePath: string): string {
 // ── Confidence scoring ───────────────────────────────────────────────────────
 
 interface ScoreResult {
-  confidence: number;
   matched: boolean;
 }
 
@@ -111,12 +110,12 @@ function scorePair(
   if (heading.length > 0) {
     const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
     if (wordBoundaryRe.test(heading)) {
-      return { confidence: 1.0, matched: 1.0 >= minConfidence };
+      return { matched: 1.0 >= minConfidence };
     }
     // 1b. Substring match in heading (confidence 0.7) — weaker signal,
     // catches partial-name matches like 'getUser' in 'getUserProfile'.
     if (containsIgnoreCase(symNameClean, heading) && symNameClean.length >= 3) {
-      return { confidence: 0.7, matched: 0.7 >= minConfidence };
+      return { matched: 0.7 >= minConfidence };
     }
   }
 
@@ -128,7 +127,7 @@ function scorePair(
           refClean === symName ||
           ref.symbolName === symName ||
           ref.symbolName === symNameClean) {
-        return { confidence: 0.9, matched: 0.9 >= minConfidence };
+        return { matched: 0.9 >= minConfidence };
       }
     }
   }
@@ -141,14 +140,14 @@ function scorePair(
           refClean === symName ||
           ref.symbolName === symName ||
           ref.symbolName === symNameClean) {
-        return { confidence: 0.7, matched: 0.7 >= minConfidence };
+        return { matched: 0.7 >= minConfidence };
       }
     }
   }
 
   // 4. Fuzzy heading match (confidence 0.6)
   if (heading.length > 0 && isFuzzySubstring(symNameClean, heading)) {
-    return { confidence: 0.6, matched: 0.6 >= minConfidence };
+    return { matched: 0.6 >= minConfidence };
   }
 
   // Also check fuzzy match on heading via CodeRef type 'heading'
@@ -157,7 +156,7 @@ function scorePair(
       const refClean = ref.symbolName.replace(/\(.*\)$/, '');
       if (refClean === symNameClean || ref.symbolName === symName ||
           isFuzzySubstring(symNameClean, ref.symbolName)) {
-        return { confidence: 0.6, matched: 0.6 >= minConfidence };
+        return { matched: 0.6 >= minConfidence };
       }
     }
   }
@@ -170,11 +169,11 @@ function scorePair(
     const symFileStem = fileStem(symLocation.split('/').pop() || symLocation);
     const docFileStem = fileStem(docFile.split('/').pop() || docFile);
     if (symFileStem === docFileStem && symFileStem.length > 0) {
-      return { confidence: 0.5, matched: 0.5 >= minConfidence };
+      return { matched: 0.5 >= minConfidence };
     }
   }
 
-  return { confidence: 0, matched: false };
+  return { matched: false };
 }
 
 // ── Main autoLink function ───────────────────────────────────────────────────
@@ -238,7 +237,7 @@ export function autoLink(
           symbol_id: symbol.id,
           doc_id: docId,
           rel_type: 'describes',
-          confidence: score.confidence,
+          review_status: 'auto',
         });
         existingKeys.add(mappingKey);
 

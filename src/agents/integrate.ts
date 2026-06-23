@@ -177,6 +177,13 @@ function appendToRulesFile(
   section: string,
   sectionMarker: string,
 ): boolean {
+  // F22: Guard against empty sectionMarker — anyString.includes('') is
+  // always true, causing silent idempotency bypass. Current callers pass
+  // non-empty constants, but this provides defense-in-depth.
+  if (!sectionMarker || sectionMarker.trim() === '') {
+    throw new Error('sectionMarker must not be empty');
+  }
+
   let existing = '';
   if (fs.existsSync(rulesPath)) {
     existing = fs.readFileSync(rulesPath, 'utf-8');
