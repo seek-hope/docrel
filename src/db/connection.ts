@@ -91,6 +91,10 @@ export function getDb(projectRoot: string): Database.Database {
     try { if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600); } catch { /* WAL may not exist yet */ }
     try { if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600); } catch { /* SHM may not exist yet */ }
   } catch (err: any) {
+    // If the database was opened successfully but a subsequent pragma or
+    // chmod call threw, the connection is now orphaned — close it to
+    // prevent a file-lock leak until garbage collection or process exit.
+    if (db!) { try { db.close(); } catch { /* best effort */ } }
     // Sanitize the error message to avoid leaking the absolute filesystem
     // path (which is present in EACCES,mkdirSync,and Database constructor
     // errors) to MCP clients and CLI users.

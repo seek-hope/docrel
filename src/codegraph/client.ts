@@ -410,7 +410,8 @@ export class CodegraphClient {
     // have changed its output format or returned an error message. Log a
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
-      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars — codegraph output format may have changed. Sample (first 80 chars): ${content.slice(0, 80)}`);
+      const linesCount = content.split('\n').length;
+      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
     }
 
     return { symbols, files };

@@ -52,73 +52,81 @@ export async function scanProject(
       const MAX_SYMBOLS_PER_DIR = 10000;
       let dirSymbolCount = 0;
       for (const sym of symbols) {
-        if (dirSymbolCount++ >= MAX_SYMBOLS_PER_DIR) {
-          console.warn(`DocRel: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
-          break;
-        }
-        const lang = sym.language;
-        // Include line number in the FQN to disambiguate same-named symbols
-        // in different scopes within the same file (e.g., method foo in class A
-        // and method foo in class B, both in src/index.ts).
-        // Escape the :: separator in file and name components to prevent
-        // symbol ID collisions when a file path or symbol name contains ::
-        // (e.g., C++ namespace-qualified names or Rust turbofish expressions).
-        const fqn = `${escFqn(sym.file)}::${sym.line}::${escFqn(sym.name)}`;
-        const id = symbolId(lang, fqn, sym.kind);
-        // Skip symbols that produce an empty ID (invalid/missing data from codegraph)
-        if (!id) continue;
-        const sig = contentHash(sym.signature ?? '');
-        const rawSig = sym.signature ?? '';
+        // Wrap per-symbol processing in its own try/catch to prevent a single
+        // malformed symbol (e.g., undefined fields from a changed codegraph
+        // response) from aborting the entire directory's scan.
+        try {
+          if (dirSymbolCount++ >= MAX_SYMBOLS_PER_DIR) {
+            console.warn(`DocRel: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
+            break;
+          }
+          const lang = sym.language;
+          // Include line number in the FQN to disambiguate same-named symbols
+          // in different scopes within the same file (e.g., method foo in class A
+          // and method foo in class B, both in src/index.ts).
+          // Escape the :: separator in file and name components to prevent
+          // symbol ID collisions when a file path or symbol name contains ::
+          // (e.g., C++ namespace-qualified names or Rust turbofish expressions).
+          const fqn = `${escFqn(sym.file)}::${sym.line}::${escFqn(sym.name)}`;
+          const id = symbolId(lang, fqn, sym.kind);
+          // Skip symbols that produce an empty ID (invalid/missing data from codegraph)
+          if (!id) continue;
+          const sig = contentHash(sym.signature ?? '');
+          const rawSig = sym.signature ?? '';
 
-        scannedIds.add(id);
+          scannedIds.add(id);
 
-        const existing = db.prepare('SELECT id, signature FROM symbols WHERE id = ?').get(id) as
-          | { id: string; signature: string }
-          | undefined;
+          const existing = db.prepare('SELECT id, signature FROM symbols WHERE id = ?').get(id) as
+            | { id: string; signature: string }
+            | undefined;
 
-        if (!existing) {
-          upsertSymbol(db, {
-            id,
-            name: sym.name,
-            kind: mapKind(sym.kind),
-            project: codeDir,
-            location: `${sym.file}:${sym.line}`,
-            signature: sig,
-            raw_signature: rawSig,
-          });
-          newSymbols++;
-        } else if (existing.signature !== sig) {
-          upsertSymbol(db, {
-            id,
-            name: sym.name,
-            kind: mapKind(sym.kind),
-            project: codeDir,
-            location: `${sym.file}:${sym.line}`,
-            signature: sig,
-            raw_signature: rawSig,
-          });
-          // Record changelog entry so docrelDiff and the changelog table
-          // surface what changed between scans.
-          const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig);
-          if (logged) {
-            updatedSymbols++;
-          } else {
-            // If markSignatureChanged returned false (0 rows updated), another
-            // connection may have deleted the symbol between our SELECT and the
-            // UPDATE inside markSignatureChanged. The symbol WAS upserted above
-            // with the new signature — check if it still exists and insert the
-            // changelog entry directly to prevent silently losing the record.
-            const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
-            if (stillExists) {
-              db.prepare(
-                "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig) VALUES (?, 'signature_changed', ?, ?)"
-              ).run(id, existing.signature, sig);
+          if (!existing) {
+            upsertSymbol(db, {
+              id,
+              name: sym.name,
+              kind: mapKind(sym.kind),
+              project: codeDir,
+              location: `${sym.file}:${sym.line}`,
+              signature: sig,
+              raw_signature: rawSig,
+            });
+            newSymbols++;
+          } else if (existing.signature !== sig) {
+            upsertSymbol(db, {
+              id,
+              name: sym.name,
+              kind: mapKind(sym.kind),
+              project: codeDir,
+              location: `${sym.file}:${sym.line}`,
+              signature: sig,
+              raw_signature: rawSig,
+            });
+            // Record changelog entry so docrelDiff and the changelog table
+            // surface what changed between scans.
+            const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig);
+            if (logged) {
               updatedSymbols++;
-              console.warn(`DocRel: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
             } else {
-              console.warn(`DocRel: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
+              // If markSignatureChanged returned false (0 rows updated), another
+              // connection may have deleted the symbol between our SELECT and the
+              // UPDATE inside markSignatureChanged. The symbol WAS upserted above
+              // with the new signature — check if it still exists and insert the
+              // changelog entry directly to prevent silently losing the record.
+              const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
+              if (stillExists) {
+                db.prepare(
+                  "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig) VALUES (?, 'signature_changed', ?, ?)"
+                ).run(id, existing.signature, sig);
+                updatedSymbols++;
+                console.warn(`DocRel: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
+              } else {
+                console.warn(`DocRel: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
+              }
             }
           }
+        } catch (e: any) {
+          console.warn(`DocRel: skipping malformed symbol in '${codeDir}': ${e?.message ?? e}`);
+          // continue to next symbol — individual failures do not abort the directory
         }
       }
     } catch (err: any) {

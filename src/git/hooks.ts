@@ -233,6 +233,7 @@ export function installHooks(projectRoot: string, force = false): void {
 
   const preCommitScript = `#!/bin/sh
 # DocRel pre-commit hook
+set -e
 ${docrelQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
@@ -243,11 +244,16 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelQuoted} impact --
+set -e
+changed=$(git diff --name-only -z HEAD~1..HEAD 2>/dev/null) || exit 0
+if [ -n "$changed" ]; then
+  echo "$changed" | xargs -0 -r ${docrelQuoted} impact --
+fi
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRel pre-push hook
+set -e
 ${docrelQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""

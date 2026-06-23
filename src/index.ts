@@ -17,6 +17,13 @@ import { docrelImpact } from './tools/impact.js';
 import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
+import { scanProject } from './discovery/scanner.js';
+import { scanDocs } from './discovery/doc-scanner.js';
+import { autoLink } from './discovery/auto-linker.js';
+import { upsertDocSection } from './db/docs.js';
+import { createMapping } from './db/mappings.js';
+import { listSymbols } from './db/symbols.js';
+import { docSectionId, contentHash } from './utils/hash.js';
 
 const DOCREL_DEBUG = process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true';
 
@@ -191,14 +198,89 @@ server.tool(
   async ({ symbol_id }) => {
     try {
       const diff = docrelDiff(db, symbol_id);
-      if (!diff) {
+      if (!diff.found) {
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Symbol not found' }) }],
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: diff.message || 'Symbol not found', reason: diff.reason }) }],
           isError: true,
         };
       }
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify(diff, null, 2) }],
+        content: [{ type: 'text' as const, text: JSON.stringify(diff.report, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_scan ────────────────────────────────────────────────
+server.tool(
+  'docrel_scan',
+  'Scan the codebase for symbols and documentation sections, then auto-link them',
+  {
+    docs: z.boolean().optional().default(true).describe('Also scan documentation files'),
+  },
+  async ({ docs }) => {
+    try {
+      const available = await extractor.isAvailable();
+      if (!available) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No symbol extractor is available.' }) }],
+          isError: true,
+        };
+      }
+
+      const symbolReport = await scanProject(extractor, db, config);
+
+      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
+      let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
+
+      if (docs) {
+        const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
+        let newDocs = 0;
+        let newMappings = 0;
+
+        for (const section of sections) {
+          const id = docSectionId(section.file, section.anchor);
+          if (!id) continue;
+          const hash = contentHash(section.content);
+          const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+          upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+          if (!existing) newDocs++;
+          for (const ref of section.codeRefs) {
+            const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
+            const matched = db.prepare('SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1').get(cleanName, ref.symbolName) as { id: string } | undefined;
+            if (matched) {
+              try {
+                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', confidence: ref.confidence });
+                newMappings++;
+              } catch { /* skip duplicates */ }
+            }
+          }
+        }
+
+        docReport = {
+          totalFiles: report.totalFiles,
+          totalSections: report.totalSections,
+          newDocSections: newDocs,
+          newMappings,
+          failedFiles: report.failedFiles,
+        };
+
+        // Run auto-linker
+        const allSymbols = listSymbols(db);
+        linkResult = autoLink(db, allSymbols, sections);
+      }
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            symbols: symbolReport,
+            docs: docReport,
+            autoLink: linkResult,
+          }, null, 2),
+        }],
       };
     } catch (err: any) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };

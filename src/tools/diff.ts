@@ -25,11 +25,18 @@ export interface DiffReport {
   }>;
 }
 
-export function docrelDiff(db: Database.Database, symbolId: string): DiffReport | null {
+export interface DiffResult {
+  found: boolean;
+  reason?: 'not_found' | 'db_error';
+  message?: string;
+  report?: DiffReport;
+}
+
+export function docrelDiff(db: Database.Database, symbolId: string): DiffResult {
   try {
     assertDbOpen(db);
     const symbol = getSymbol(db, symbolId);
-    if (!symbol) return null;
+    if (!symbol) return { found: false, reason: 'not_found', message: 'Symbol not found in database' };
 
     const changelog = db.prepare(
       'SELECT * FROM changelog WHERE symbol_id = ? ORDER BY timestamp DESC LIMIT 10',
@@ -44,12 +51,15 @@ export function docrelDiff(db: Database.Database, symbolId: string): DiffReport 
     });
 
     return {
-      symbol: { id: symbol.id, name: symbol.name, currentSignature: symbol.signature },
-      changeLog: changelog,
-      affectedDocs,
+      found: true,
+      report: {
+        symbol: { id: symbol.id, name: symbol.name, currentSignature: symbol.signature },
+        changeLog: changelog,
+        affectedDocs,
+      },
     };
   } catch (err: any) {
     console.error('docrelDiff failed:', err.message);
-    return null;
+    return { found: false, reason: 'db_error', message: 'Database query error — check server logs for details' };
   }
 }

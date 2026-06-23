@@ -36,12 +36,6 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
   return row;
 }
 
-function getMapping(db: Database.Database, symbolId: string, docId: string, relType: string): MappingRow | undefined {
-  return db.prepare(
-    'SELECT * FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?',
-  ).get(symbolId, docId, relType) as MappingRow | undefined;
-}
-
 export function getMappingsForSymbol(db: Database.Database, symbolId: string): MappingRow[] {
   if (!symbolId) return [];
   return db.prepare('SELECT * FROM mappings WHERE symbol_id = ?').all(symbolId) as MappingRow[];
