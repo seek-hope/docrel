@@ -19,15 +19,14 @@ const ALLOWED_BINARIES = new Set([
   'typedoc', 'openapi-generator',
 ]);
 
-/** Allowed command prefixes for validation — full command must start with one of these. */
-const ALLOWED_PREFIXES = [
-  /^typedoc\b/,
-  /^openapi-generator\b/,
-];
-
 /**
  * Split a generator command string into [binary, ...args].
  * The command is expected to be a safe space-delimited command without shell metacharacters.
+ * Validation happens in two layers:
+ *   1. ALLOWED_BINARIES: rejects binaries not on the allowlist (first line of defense).
+ *   2. Full-command prefix check: prevents option injection (e.g. `typedoc --evil-flag`).
+ *      Currently redundant with the allowlist alone, but provides defense-in-depth
+ *      when the allowlist is expanded in the future.
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   // Reject commands with shell metacharacters
@@ -42,14 +41,21 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   if (binary.includes('/') || binary.includes('\\')) {
     return null; // reject path-based commands
   }
-  // Validate against allowlist
+  // Validate against binary allowlist
   if (!ALLOWED_BINARIES.has(binary)) {
     return null;
   }
 
   // Validate the full command starts with an allowed prefix to prevent
-  // option injection attacks through package.json scripts
+  // option injection attacks through package.json scripts.
+  // This is defense-in-depth: ALLOWED_BINARIES already rejects unknown binaries,
+  // but when the allowlist is expanded with scripts like `tsx scripts/generate-docs.ts`,
+  // the prefix check also validates the full command.
   const fullCmd = cmd.trim();
+  const ALLOWED_PREFIXES: RegExp[] = [
+    /^typedoc\b/,
+    /^openapi-generator\b/,
+  ];
   if (!ALLOWED_PREFIXES.some((prefix) => prefix.test(fullCmd))) {
     return null;
   }
