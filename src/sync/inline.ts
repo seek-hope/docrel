@@ -23,29 +23,27 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   const resolved = validatePath(input.file, projectRoot);
   if (!resolved) return false;
 
-  if (!fs.existsSync(resolved)) return false;
-
-  let stat: fs.Stats;
-  try {
-    stat = fs.statSync(resolved);
-  } catch {
-    return false;
-  }
-  if (!stat.isFile()) return false;
-  if (stat.size > MAX_FILE_SIZE) return false;
-
-  // Open file before content-validating to reduce TOCTOU window
+  // Use file descriptor for TOCTOU-safe read — open once, operate on same inode
+  let fd: number | undefined;
   let content: string;
   try {
-    content = fs.readFileSync(resolved, 'utf-8');
+    fd = fs.openSync(resolved, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return false;
+    content = fs.readFileSync(fd, 'utf-8');
   } catch {
     return false;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
 
   let replaced = false;
 
   // Only replace if the old text appears exactly once (avoid ambiguity)
-  if (input.oldSignature && input.newSignature) {
+  // Trim to reject whitespace-only strings that pass truthiness
+  if (input.oldSignature.trim() && input.newSignature.trim()) {
     const count = countOccurrences(content, input.oldSignature);
     if (count === 1) {
       content = content.replace(input.oldSignature, input.newSignature);
@@ -54,7 +52,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // If count is 0 or >1, skip to avoid replacing wrong text
   }
 
-  if (input.oldDocstring && input.newDocstring) {
+  if (input.oldDocstring.trim() && input.newDocstring.trim()) {
     const count = countOccurrences(content, input.oldDocstring);
     if (count === 1) {
       content = content.replace(input.oldDocstring, input.newDocstring);
@@ -79,6 +77,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 }
 
 function countOccurrences(content: string, search: string): number {
+  if (search.length === 0) return 0;
   return (content.match(escapeRegexGlobal(search, MAX_SEARCH_LENGTH)) || []).length;
 }
 
@@ -139,14 +138,16 @@ export function extractDocstring(file: string, symbolName: string, projectRoot?:
  */
 function escapedSymRegex(symbolName: string): RegExp {
   const n = escapeRegex(symbolName);
-  // Match only definition patterns. The overly broad `\\b${n}\\s*\\(` alternation
-  // was removed because it matches call sites like `login(username)` or
-  // `return login(data);` which would extract the wrong docstring.
+  // Match only definition patterns.
+  // Includes class method definitions like 'async login(...)' or 'login(data) {'
+  // which lack a keyword prefix. The '{' or '=>' guard distinguishes definitions
+  // from call sites like `return login(data);`.
   return new RegExp(
     `(?:export\\s+)?(?:async\\s+)??(?:function|class)\\s+${n}\\b` +
     `|(?:export\\s+)?(?:const|let|var)\\s+${n}\\b` +
     `|\\binterface\\s+${n}\\b` +
-    `|\\btype\\s+${n}\\b`,
+    `|\\btype\\s+${n}\\b` +
+    `|(?:async\\s+)?${n}\\s*\\(.*?\\)\\s*[{:]`,
   );
 }
 
@@ -237,11 +238,46 @@ export function generateUpdatedDocstring(
 }
 
 function extractParams(signature: string): Array<{ name: string; type: string }> {
-  const paramMatch = signature.match(/\((.*?)\)/);
-  if (!paramMatch || !paramMatch[1]) return [];
+  // Use bracket-counting to handle nested parentheses in TypeScript signatures,
+  // e.g. `foo(cb: (x: number) => void): string`
+  const parenStart = signature.indexOf('(');
+  if (parenStart < 0) return [];
 
-  return paramMatch[1].split(',').map((p) => {
+  let depth = 0;
+  let parenEnd = -1;
+  for (let i = parenStart; i < signature.length; i++) {
+    if (signature[i] === '(') depth++;
+    else if (signature[i] === ')') {
+      depth--;
+      if (depth === 0) { parenEnd = i; break; }
+    }
+  }
+  if (parenEnd < 0) return [];
+
+  const paramsStr = signature.slice(parenStart + 1, parenEnd);
+  if (!paramsStr.trim()) return [];
+
+  return splitParams(paramsStr).map((p) => {
     const parts = p.trim().split(':');
     return { name: parts[0]?.trim() ?? 'arg', type: parts[1]?.trim() ?? 'any' };
   }).filter((p) => p.name.length > 0);
+}
+
+/** Split comma-separated params, respecting nested angle brackets and parentheses. */
+function splitParams(paramsStr: string): string[] {
+  const result: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of paramsStr) {
+    if (ch === '<' || ch === '(' || ch === '{' || ch === '[') depth++;
+    else if (ch === '>' || ch === ')' || ch === '}' || ch === ']') depth--;
+    if (ch === ',' && depth === 0) {
+      result.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) result.push(current);
+  return result;
 }
