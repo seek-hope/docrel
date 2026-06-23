@@ -154,12 +154,18 @@ export function installHooks(projectRoot: string, force = false): void {
   const postCommitPath = path.join(hooksDir, 'post-commit');
   const prePushPath = path.join(hooksDir, 'pre-push');
 
-  // Use single quotes for the binary path — filesystem paths cannot contain
-  // single-quote characters on standard Linux filesystems, so this prevents
-  // command injection via paths containing double-quote characters.
+  // Properly escape the binary path for single-quoted shell context using the
+  // standard shell quoting trick: replace every ' with '\''.
+  // This handles ALL possible filename characters including single quotes,
+  // which are valid on Linux filesystems (ext4, xfs, btrfs).
+  function shellQuote(str: string): string {
+    return "'" + str.replace(/'/g, "'\\''") + "'";
+  }
+  const docrelQuoted = shellQuote(docrelBin);
+
   const preCommitScript = `#!/bin/sh
 # DocRel pre-commit hook
-'${docrelBin}' check --strict
+${docrelQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Documentation is stale. Run 'docrel sync' or use --no-verify to skip."
@@ -169,12 +175,12 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r '${docrelBin}' impact --
+git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelQuoted} impact --
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRel pre-push hook
-'${docrelBin}' check --strict
+${docrelQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Cannot push with stale documentation."
