@@ -31,9 +31,12 @@ import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
 
-/** Safe error message: handles null, undefined, string, and non-Error throws. */
+/** Safe error message: handles null, undefined, string, and non-Error throws.
+ *  Sanitizes absolute filesystem paths to prevent information disclosure. */
 function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e ?? 'unknown error');
+  const raw = e instanceof Error ? e.message : String(e ?? 'unknown error');
+  // Sanitize project root paths from error messages
+  return raw.replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>');
 }
 
 /** Exit with database cleanup — ensures WAL checkpointing completes. */
@@ -183,6 +186,12 @@ program
   .action((opts) => {
     try {
       const report = docrelCheck(db, opts.strict);
+      // If the database query itself failed, report.error is set — treat
+      // this as a hard failure regardless of staleDoc count.
+      if (report.error) {
+        console.error('DocRel check failed:', report.error);
+        exit(1);
+      }
       let filtered = report.staleDocs;
       if (opts.file) {
         filtered = report.staleDocs.filter((d) => d.file === opts.file);
@@ -419,6 +428,22 @@ program
   });
 
 program
+  .command('review')
+  .description('Audit code-doc mappings: unlinked symbols, orphaned sections, implied refs')
+  .option('--format <format>', 'Output format: json or markdown', 'markdown')
+  .option('--json', 'Shortcut for --format json')
+  .action(async (opts) => {
+    const { docrelReview, formatReview } = await import('./tools/review.js');
+    const report = docrelReview(db, projectRoot);
+    const fmt = opts.json ? 'json' : opts.format;
+    if (fmt === 'json') {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatReview(report));
+    }
+  });
+
+program
   .command('export-mappings')
   .description('Export mappings to .docrel/mappings.json (for CodeGraph integration)')
   .action(() => {
@@ -519,7 +544,11 @@ program
         }
         npmBin = realBin;
       } catch (err: any) {
-        console.error(`Cannot locate npm binary: ${err.message || err}`);
+        if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+          console.error("Cannot locate npm: 'which' utility is not available on this system. Try updating manually with: npm install -g docrel@latest");
+        } else {
+          console.error(`Cannot locate npm binary: ${err.message || err}`);
+        }
         exit(1);
       }
 

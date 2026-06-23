@@ -1,4 +1,6 @@
 // src/index.ts — DocRel MCP Server entry point
+import fs from 'node:fs';
+import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -41,6 +43,17 @@ function sanitizeError(err: unknown): string {
 }
 
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
+
+// When DOCREL_PROJECT_ROOT is not set, verify .docrel/config.yaml exists in CWD.
+// If it does not, the MCP server will initialize against the wrong directory
+// (silently creating a DB in a random location).
+if (!process.env.DOCREL_PROJECT_ROOT) {
+  if (!fs.existsSync(path.join(projectRoot, '.docrel', 'config.yaml'))) {
+    console.error('DocRel: DOCREL_PROJECT_ROOT not set and .docrel/config.yaml not found in CWD.');
+    console.error('Set DOCREL_PROJECT_ROOT or run from the project root directory.');
+    process.exit(1);
+  }
+}
 
 let config: DocRelConfig;
 let db: ReturnType<typeof getDb>;
@@ -285,6 +298,25 @@ server.tool(
           }, null, 2),
         }],
       };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_review ──────────────────────────────────────────────
+server.tool(
+  'docrel_review',
+  'Audit code-doc mappings: find unlinked symbols, orphaned sections, implied references, low-confidence mappings',
+  {
+    format: z.enum(['json', 'markdown']).optional().default('markdown').describe('Output format'),
+  },
+  async ({ format }) => {
+    try {
+      const { docrelReview, formatReview } = await import('./tools/review.js');
+      const report = docrelReview(db, projectRoot);
+      const text = format === 'json' ? JSON.stringify(report, null, 2) : formatReview(report);
+      return { content: [{ type: 'text' as const, text }] };
     } catch (err: any) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
     }
