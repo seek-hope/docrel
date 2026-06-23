@@ -45,3 +45,26 @@ export function listAllMappings(db: Database.Database): MappingRow[] {
 export function deleteMapping(db: Database.Database, symbolId: string, docId: string, relType: string): void {
   db.prepare('DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?').run(symbolId, docId, relType);
 }
+
+/** Export mappings in CodeGraph-compatible format for .docrel/mappings.json */
+export function exportMappingsJson(db: Database.Database): Array<{
+  symbol_name: string;
+  doc_file: string;
+  doc_anchor: string;
+  rel_type: string;
+}> {
+  const rows = db.prepare(`
+    SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type
+    FROM mappings m
+    JOIN symbols s ON s.id = m.symbol_id
+    JOIN doc_sections d ON d.id = m.doc_id
+    ORDER BY s.name, d.file
+  `).all() as Array<{
+    symbol_name: string;
+    doc_file: string;
+    doc_anchor: string;
+    rel_type: string;
+  }>;
+
+  return rows;
+}

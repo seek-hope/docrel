@@ -117,4 +117,20 @@ program
     console.log('DocRel hooks installed successfully.');
   });
 
+import { exportMappingsJson } from './db/mappings.js';
+import fs from 'node:fs';
+import path from 'node:path';
+
+program
+  .command('export-mappings')
+  .description('Export mappings to .docrel/mappings.json (for CodeGraph integration)')
+  .action(() => {
+    const mappings = exportMappingsJson(db);
+    const docrelDir = path.join(projectRoot, '.docrel');
+    fs.mkdirSync(docrelDir, { recursive: true });
+    const outPath = path.join(docrelDir, 'mappings.json');
+    fs.writeFileSync(outPath, JSON.stringify(mappings, null, 2), 'utf-8');
+    console.log(`Exported ${mappings.length} mappings to ${outPath}`);
+  });
+
 program.parse();
