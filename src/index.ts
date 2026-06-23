@@ -40,10 +40,14 @@ server.tool(
   'docrel_status',
   'Get the overall health dashboard of code-documentation synchronization',
   async () => {
-    const status = docrelStatus(db);
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
-    };
+    try {
+      const status = docrelStatus(db);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+    }
   },
 );
 
@@ -56,23 +60,27 @@ server.tool(
     file: z.string().optional().describe('Check only a specific file'),
   },
   async ({ strict, file }) => {
-    const report = docrelCheck(db, strict);
-    if (file) {
-      const filtered = report.staleDocs.filter((d) => d.file === file);
+    try {
+      const report = docrelCheck(db, strict);
+      if (file) {
+        const filtered = report.staleDocs.filter((d) => d.file === file);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: JSON.stringify({
+              passed: filtered.length === 0,
+              staleDocs: filtered,
+              summary: `${filtered.length} stale doc(s) in ${file}`,
+            }, null, 2),
+          }],
+        };
+      }
       return {
-        content: [{
-          type: 'text' as const,
-          text: JSON.stringify({
-            passed: filtered.length === 0,
-            staleDocs: filtered,
-            summary: `${filtered.length} stale doc(s) in ${file}`,
-          }, null, 2),
-        }],
+        content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
       };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
     }
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
-    };
   },
 );
 
@@ -84,10 +92,14 @@ server.tool(
     paths: z.array(z.string()).describe('List of changed file paths'),
   },
   async ({ paths }) => {
-    const impact = docrelImpact(db, paths);
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
-    };
+    try {
+      const impact = docrelImpact(db, paths);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+    }
   },
 );
 
@@ -99,10 +111,14 @@ server.tool(
     symbol_id: z.string().describe('Stable symbol ID to sync docs for'),
   },
   async ({ symbol_id }) => {
-    const result = await syncSymbol(db, codegraph, config, symbol_id, projectRoot);
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+      const result = await syncSymbol(db, codegraph, config, symbol_id, projectRoot);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+    }
   },
 );
 
@@ -117,10 +133,14 @@ server.tool(
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']),
   },
   async ({ action, symbol_id, doc_id, rel_type }) => {
-    const result = docrelLink(db, { action, symbol_id, doc_id, rel_type });
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
-    };
+    try {
+      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
+    }
   },
 );
 
@@ -132,15 +152,19 @@ server.tool(
     symbol_id: z.string().describe('Stable symbol ID'),
   },
   async ({ symbol_id }) => {
-    const diff = docrelDiff(db, symbol_id);
-    if (!diff) {
+    try {
+      const diff = docrelDiff(db, symbol_id);
+      if (!diff) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Symbol not found' }) }],
+        };
+      }
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'Symbol not found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify(diff, null, 2) }],
       };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: err.message }) }], isError: true };
     }
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(diff, null, 2) }],
-    };
   },
 );
 

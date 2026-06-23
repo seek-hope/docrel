@@ -14,32 +14,37 @@ export interface CheckReport {
 }
 
 export function docrelCheck(db: Database.Database, strict = false): CheckReport {
-  const staleRows = db.prepare(`
-    SELECT d.id, d.file, d.anchor, d.doc_type, d.status
-    FROM doc_sections d
-    WHERE d.status = 'stale'
-  `).all() as Array<{ id: string; file: string; anchor: string; doc_type: string; status: string }>;
+  try {
+    const staleRows = db.prepare(`
+      SELECT d.id, d.file, d.anchor, d.doc_type, d.status
+      FROM doc_sections d
+      WHERE d.status = 'stale'
+    `).all() as Array<{ id: string; file: string; anchor: string; doc_type: string; status: string }>;
 
-  const staleDocs = staleRows.map((row) => {
-    const symbols = db.prepare(
-      'SELECT symbol_id FROM mappings WHERE doc_id = ?',
-    ).all(row.id) as Array<{ symbol_id: string }>;
+    const staleDocs = staleRows.map((row) => {
+      const symbols = db.prepare(
+        'SELECT symbol_id FROM mappings WHERE doc_id = ?',
+      ).all(row.id) as Array<{ symbol_id: string }>;
 
-    return {
-      ...row,
-      linkedSymbols: symbols.map((s) => s.symbol_id),
-    };
-  });
+      return {
+        ...row,
+        linkedSymbols: symbols.map((s) => s.symbol_id),
+      };
+    });
 
-  const passed = strict ? staleDocs.length === 0 : true;
+    const passed = strict ? staleDocs.length === 0 : true;
 
-  let summary: string;
-  if (staleDocs.length === 0) {
-    summary = 'All documentation is in sync.';
-  } else {
-    const uniqueFiles = [...new Set(staleDocs.map((d) => d.file))];
-    summary = `${staleDocs.length} doc section(s) are stale across ${uniqueFiles.length} file(s): ${uniqueFiles.join(', ')}`;
+    let summary: string;
+    if (staleDocs.length === 0) {
+      summary = 'All documentation is in sync.';
+    } else {
+      const uniqueFiles = [...new Set(staleDocs.map((d) => d.file))];
+      summary = `${staleDocs.length} doc section(s) are stale across ${uniqueFiles.length} file(s): ${uniqueFiles.join(', ')}`;
+    }
+
+    return { passed, staleDocs, summary };
+  } catch (err: any) {
+    console.error('docrelCheck failed:', err.message);
+    return { passed: false, staleDocs: [], summary: `Database error: check server logs for details.` };
   }
-
-  return { passed, staleDocs, summary };
 }

@@ -44,7 +44,10 @@ export function docrelLink(
       });
       return { action: 'created', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Mapping created.' };
     } else {
-      deleteMapping(db, params.symbol_id, params.doc_id, params.rel_type);
+      const deleted = deleteMapping(db, params.symbol_id, params.doc_id, params.rel_type);
+      if (!deleted) {
+        return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Mapping not found.' };
+      }
       return { action: 'deleted', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Mapping deleted.' };
     }
   } catch (err: any) {
@@ -61,10 +64,12 @@ export function docrelLink(
       } else if (!docExists) {
         message += `document section "${params.doc_id}" does not exist.`;
       } else {
-        message += `constraint violation: ${err.message}`;
+        message += 'constraint violation.';
       }
       return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message };
     }
-    return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: err.message };
+    // Don't leak internal DB details to external callers
+    console.error(`DocRel link error (${params.action}):`, err.message);
+    return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Internal database error. Check server logs for details.' };
   }
 }

@@ -19,6 +19,7 @@ export interface ImpactReport {
     status: string;
     relationship: string;
   }>;
+  errors: Array<{ file: string; message: string }>;
 }
 
 function escapeLike(str: string): string {
@@ -33,6 +34,7 @@ export function docrelImpact(
 ): ImpactReport {
   const affectedSymbols: ImpactReport['affectedSymbols'] = [];
   const affectedDocs: ImpactReport['affectedDocs'] = [];
+  const errors: ImpactReport['errors'] = [];
   const seenDocIds = new Set<string>();
 
   const seenSymbolIds = new Set<string>();
@@ -42,6 +44,7 @@ export function docrelImpact(
   for (const file of changedFiles) {
     if (file.length > MAX_PATH_LENGTH) {
       console.error(`Warning: Skipping path exceeding ${MAX_PATH_LENGTH} chars: ${file.slice(0, 100)}...`);
+      errors.push({ file, message: `Path exceeds ${MAX_PATH_LENGTH} characters` });
       continue;
     }
     try {
@@ -77,8 +80,9 @@ export function docrelImpact(
       }
     } catch (err: any) {
       console.error(`Warning: Skipping ${file} due to error: ${err.message}`);
+      errors.push({ file, message: err.message });
     }
   }
 
-  return { changedFiles, affectedSymbols, affectedDocs };
+  return { changedFiles, affectedSymbols, affectedDocs, errors };
 }
