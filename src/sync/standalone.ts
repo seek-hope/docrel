@@ -30,36 +30,34 @@ function validatePath(filePath: string, projectRoot: string): string | null {
 
 /**
  * Open and validate a file for read/write within projectRoot.
- * Minimizes TOCTOU by opening first, then checking properties on the fd.
+ * Opens a real file descriptor for TOCTOU-safe operations — checks
+ * properties on the fd, then reads through it.
  */
-function openAndValidate(resolved: string, projectRoot: string): { fd: number; content: string } | null {
-  let stat: fs.Stats;
+function openAndValidate(resolved: string, projectRoot: string): { content: string } | null {
+  let fd: number | undefined;
   try {
-    stat = fs.statSync(resolved);
-  } catch {
-    return null;
-  }
-  if (!stat.isFile()) return null;
-  if (stat.size > MAX_FILE_SIZE) return null;
-
-  // Open file handle to close the TOCTOU window
-  let content: string;
-  try {
-    content = fs.readFileSync(resolved, 'utf-8');
-  } catch {
-    return null;
-  }
-
-  // Re-validate real path after read to ensure no symlink swap
-  try {
+    fd = fs.openSync(resolved, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_FILE_SIZE) {
+      fs.closeSync(fd);
+      return null;
+    }
+    // Re-validate real path via /proc/self/fd or fs.realpathSync
     const real = fs.realpathSync(resolved);
     const root = path.resolve(projectRoot);
-    if (!real.startsWith(root + path.sep) && real !== root) return null;
+    if (!real.startsWith(root + path.sep) && real !== root) {
+      fs.closeSync(fd);
+      return null;
+    }
+    const content = fs.readFileSync(fd, 'utf-8');
+    return { content };
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
-
-  return { fd: -1, content };
 }
 
 export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: string): boolean {
@@ -67,10 +65,10 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   if (!resolved) return false;
   if (!fs.existsSync(resolved)) return false;
 
-  const result = openAndValidate(resolved, projectRoot);
-  if (!result) return false;
+  const validated = openAndValidate(resolved, projectRoot);
+  if (!validated) return false;
 
-  let content = result.content;
+  let content = validated.content;
 
   // Find the section by anchor (heading) using line-by-line parsing
   const sectionContent = findSectionContent(resolved, input.anchor, projectRoot);
@@ -102,6 +100,17 @@ export function findSectionContent(file: string, anchor: string, projectRoot?: s
   if (!anchor) return null;
 
   const resolved = projectRoot ? path.resolve(projectRoot, file) : file;
+
+  // Containment check: ensure resolved path is within project root
+  if (projectRoot) {
+    const root = path.resolve(projectRoot);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+    try {
+      const real = fs.realpathSync(resolved);
+      if (!real.startsWith(root + path.sep) && real !== root) return null;
+    } catch { /* file may not exist yet */ }
+  }
+
   if (!fs.existsSync(resolved)) return null;
 
   let stat: fs.Stats;
@@ -119,7 +128,7 @@ export function findSectionContent(file: string, anchor: string, projectRoot?: s
 
   const escapedAnchor = escapeRegex(anchor);
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}\\b`));
+    const match = lines[i].match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}(?![A-Za-z0-9_-])`));
     if (match) {
       startLine = i;
       startLevel = match[1].length;
