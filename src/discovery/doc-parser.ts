@@ -22,8 +22,25 @@ export interface DocParser {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Detect `funcName(...)`, `funcName()`, or `ClassName.method(...)` patterns. */
-const FUNC_CALL_RE = /`([\w][\w\d_.]*\([^)]*\))`/g;
+/** Detect `funcName(...)`, `funcName()`, or `ClassName.method(...)` patterns.
+ *  Uses bracket counting to handle nested parentheses like
+ *  `login(data, callback(err, result))`. */
+const FUNC_CALL_RE = /`([\w][\w\d_.]*\([^`]*\))`/g;
+
+/** Given a match from FUNC_CALL_RE, use bracket counting to find the correct
+ *  closing parenthesis. The regex above greedily captures to the LAST `)` before
+ *  the closing backtick — for most single-level cases this is correct. For
+ *  nested cases like `foo(bar(baz))`, the regex captures `foo(bar(baz)` (missing
+ *  one closing paren). This function corrects by advancing past balanced parens. */
+function fixNestedParens(raw: string): string {
+  let depth = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '(') depth++;
+    else if (raw[i] === ')') depth--;
+    if (depth === 0 && raw[i] === ')') return raw.slice(0, i + 1);
+  }
+  return raw; // fallback: return as-is
+}
 
 /** Detect backtick-wrapped symbol names like `login`, `AuthService.login`. */
 const BACKTICK_SYMBOL_RE = /`([\w][\w\d_.]+)`/g;
@@ -66,9 +83,9 @@ function extractBodyRefs(body: string, baseLine: number): CodeRef[] {
   for (let i = 0; i < lines.length; i++) {
     const lineNum = baseLine + i + 1; // 1-based line number
 
-    // Backtick `funcName(...)`
+    // Backtick `funcName(...)` — use bracket counting to handle nested parens
     for (const m of lines[i].matchAll(FUNC_CALL_RE)) {
-      const name = m[1];
+      const name = fixNestedParens(m[1]);
       if (!seen.has(name)) {
         seen.add(name);
         refs.push({ symbolName: name, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });
@@ -444,6 +461,14 @@ export class HtmlParser implements DocParser {
   readonly extensions = ['.html', '.htm'];
 
   parse(filePath: string, content: string): ParsedDocSection[] {
+    // HtmlParser processes the full HTML without splitting by line —
+    // use a 10MB content limit for defense-in-depth (doc-scanner already
+    // applies a 10MB file-size limit).
+    const MAX_HTML_SIZE = 10 * 1024 * 1024;
+    if (content.length > MAX_HTML_SIZE) {
+      console.warn(`DocRel: HtmlParser: content exceeds ${MAX_HTML_SIZE} bytes — skipping`);
+      return [];
+    }
     const sections: ParsedDocSection[] = [];
 
     // Find h1-h6 heading positions
@@ -555,7 +580,7 @@ function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
 
     // Backtick-wrapped symbols in text
     for (const m of lines[i].matchAll(FUNC_CALL_RE)) {
-      const name = m[1];
+      const name = fixNestedParens(m[1]);
       if (!seen.has(name)) {
         seen.add(name);
         refs.push({ symbolName: name, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });

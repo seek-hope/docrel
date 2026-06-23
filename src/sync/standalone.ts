@@ -28,8 +28,10 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
       fs.closeSync(fd);
       return null;
     }
-    // Re-validate real path via /proc/self/fd or fs.realpathSync
-    const real = fs.realpathSync(resolved);
+    // Re-validate real path using the actual open file descriptor instead of
+    // the filesystem path. This eliminates the TOCTOU gap where an attacker
+    // could swap a symlink between openSync and realpathSync.
+    const real = fs.realpathSync(`/proc/self/fd/${fd}`);
     const root = path.resolve(projectRoot);
     if (!real.startsWith(root + path.sep) && real !== root) {
       fs.closeSync(fd);
@@ -64,7 +66,9 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   let content = validated.content;
 
   // Guard against empty oldContent — String.includes('') always returns true
-  if (!input.oldContent || !input.newContent) return { success: false, reason: 'empty oldContent or newContent' };
+  // Trim to match inline.ts behaviour — whitespace-only strings produce
+  // misleading errors downstream (.includes('   ') always matches anything).
+  if (!input.oldContent?.trim() || !input.newContent?.trim()) return { success: false, reason: 'empty oldContent or newContent' };
 
   // Find the section by anchor (heading) using line-by-line parsing.
   // Pass the already-read content to avoid a TOCTOU race from a second disk read.

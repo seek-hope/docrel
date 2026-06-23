@@ -27,6 +27,12 @@ export async function preCommitHook(
 
     const report = docrelCheck(db, true);
 
+    // If the database query failed, report.error is set — treat as hard
+    // failure to prevent silently allowing commits with unverified docs.
+    if (report.error) {
+      return { allowed: false, message: `DocRel: database query failed — documentation health cannot be verified. ${report.error}` };
+    }
+
     // Check if any staged files correspond to stale docs
     const staleFiles = new Set(report.staleDocs.map((d) => d.file));
     const conflictFiles = staged.filter((f) => staleFiles.has(f));
@@ -104,6 +110,11 @@ export async function prePushHook(
 ): Promise<{ allowed: boolean; message: string }> {
   try {
     const report = docrelCheck(db, true);
+
+    // If the database query failed, treat as hard failure
+    if (report.error) {
+      return { allowed: false, message: `DocRel: database query failed — documentation health cannot be verified. ${report.error}` };
+    }
 
     if (!report.passed) {
       return {

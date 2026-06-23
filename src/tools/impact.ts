@@ -1,6 +1,7 @@
 // src/tools/impact.ts
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
+import path from 'node:path';
 import { assertDbOpen } from '../db/connection.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
@@ -34,6 +35,7 @@ function escapeLike(str: string): string {
 export function docrelImpact(
   db: Database.Database,
   changedFiles: string[],
+  projectRoot?: string,
 ): ImpactReport {
   try {
     assertDbOpen(db);
@@ -84,8 +86,9 @@ export function docrelImpact(
         let locReal = locFile;
         let fileReal = file;
         try {
-          locReal = fs.realpathSync(locFile);
-          fileReal = fs.realpathSync(file);
+          const root = projectRoot ?? process.cwd();
+          locReal = fs.realpathSync(path.resolve(root, locFile));
+          fileReal = fs.realpathSync(path.resolve(root, file));
         } catch { /* realpath may fail — fall back to literal comparison */ }
         if (locReal !== fileReal) continue;
 
