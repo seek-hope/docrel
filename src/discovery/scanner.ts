@@ -49,7 +49,10 @@ export async function scanProject(
 
       for (const sym of result.symbols) {
         const lang = detectLanguage(sym.file);
-        const fqn = `${sym.file}::${sym.name}`;
+        // Include line number in the FQN to disambiguate same-named symbols
+        // in different scopes within the same file (e.g., method foo in class A
+        // and method foo in class B, both in src/index.ts).
+        const fqn = `${sym.file}::${sym.line}::${sym.name}`;
         const id = symbolId(lang, fqn, sym.kind);
         const sig = contentHash(sym.signature ?? '');
         const rawSig = sym.signature ?? '';
