@@ -44,10 +44,11 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
     if (input.kind) console.warn(`DocRel: upsertSymbol received unknown kind '${input.kind}' — defaulting to 'unknown'`);
     input.kind = 'unknown';
   }
-  // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) to avoid the
-  // check-then-act race condition. In WAL mode with concurrent processes,
-  // another connection could INSERT the same row between a SELECT and INSERT.
-  db.prepare(`
+  // Use UPSERT with RETURNING to atomically insert/update and read back
+  // the row in a single statement. This avoids the TOCTOU race where a
+  // concurrent DELETE between the UPSERT and a separate SELECT causes a
+  // spurious "was not found after upsert" error.
+  const row = db.prepare(`
     INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
@@ -59,7 +60,8 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
       raw_signature = excluded.raw_signature,
       metadata = excluded.metadata,
       updated_at = datetime('now')
-  `).run(
+    RETURNING *
+  `).get(
     input.id,
     input.name,
     input.kind,
@@ -68,9 +70,8 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
     input.signature ?? '',
     input.raw_signature ?? '',
     safeStringify(input.metadata ?? {}),
-  );
+  ) as SymbolRow | undefined;
 
-  const row = getSymbol(db, input.id);
   if (!row) throw new Error(`Symbol ${input.id} was not found after upsert`);
   return row;
 }

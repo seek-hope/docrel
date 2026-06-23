@@ -25,53 +25,54 @@ export function getDb(projectRoot: string): Database.Database {
   let dbDir = path.join(resolved, '.docrel');
 
   try {
-    if (fs.existsSync(gitDir)) {
-      const stat = fs.statSync(gitDir);
-      if (stat.isDirectory()) {
-        dbDir = gitDir;
-      } else {
-        // .git is a file (worktree or submodule) — resolve the real git directory
-        // Open fd first to prevent TOCTOU between stat and read.
-        let fd: number | undefined;
-        try {
-          fd = fs.openSync(gitDir, 'r');
-          // Check file size before reading to prevent memory exhaustion from
-          // an extremely large or malicious .git file. The worktree-file format
-          // is a single line (typically under 256 bytes).
-          const fstat = fs.fstatSync(fd);
-          if (fstat.size <= 4096) {
-            const content = fs.readFileSync(fd, 'utf-8');
-            const match = content.match(/gitdir:\s*(.+)/);
-            if (match?.[1]) {
-              const rawGitdir = match[1].trim();
-              dbDir = path.resolve(resolved, rawGitdir);
-              // Worktree gitdir resolves outside the worktree root (e.g. to
-              // /main-repo/.git/worktrees/feature). That is expected — use the
-              // main .git directory so all worktrees share the same database.
-              // Accept paths that end with /.git/worktrees/<name> and derive
-              // the main .git from them.
-              const root = path.resolve(resolved);
-              if (!dbDir.startsWith(root + path.sep) && dbDir !== root) {
-                const worktreesIdx = dbDir.lastIndexOf(`${path.sep}.git${path.sep}worktrees${path.sep}`);
-                if (worktreesIdx > 0) {
-                  // Derive the main .git directory from the worktree path
-                  dbDir = dbDir.slice(0, worktreesIdx) + path.sep + '.git';
-                } else {
-                  dbDir = path.join(resolved, '.docrel');
-                }
+    // Use statSync directly without an existsSync guard to eliminate the
+    // TOCTOU race window between the existence check and the stat call.
+    // The catch block on line 76 falls back to .docrel/ safely.
+    const stat = fs.statSync(gitDir);
+    if (stat.isDirectory()) {
+      dbDir = gitDir;
+    } else {
+      // .git is a file (worktree or submodule) — resolve the real git directory
+      // Open fd first to prevent TOCTOU between stat and read.
+      let fd: number | undefined;
+      try {
+        fd = fs.openSync(gitDir, 'r');
+        // Check file size before reading to prevent memory exhaustion from
+        // an extremely large or malicious .git file. The worktree-file format
+        // is a single line (typically under 256 bytes).
+        const fstat = fs.fstatSync(fd);
+        if (fstat.size <= 4096) {
+          const content = fs.readFileSync(fd, 'utf-8');
+          const match = content.match(/gitdir:\s*(.+)/);
+          if (match?.[1]) {
+            const rawGitdir = match[1].trim();
+            dbDir = path.resolve(resolved, rawGitdir);
+            // Worktree gitdir resolves outside the worktree root (e.g. to
+            // /main-repo/.git/worktrees/feature). That is expected — use the
+            // main .git directory so all worktrees share the same database.
+            // Accept paths that end with /.git/worktrees/<name> and derive
+            // the main .git from them.
+            const root = path.resolve(resolved);
+            if (!dbDir.startsWith(root + path.sep) && dbDir !== root) {
+              const worktreesIdx = dbDir.lastIndexOf(`${path.sep}.git${path.sep}worktrees${path.sep}`);
+              if (worktreesIdx > 0) {
+                // Derive the main .git directory from the worktree path
+                dbDir = dbDir.slice(0, worktreesIdx) + path.sep + '.git';
+              } else {
+                dbDir = path.join(resolved, '.docrel');
               }
-            } else {
-              dbDir = path.join(resolved, '.docrel');
             }
           } else {
             dbDir = path.join(resolved, '.docrel');
           }
-        } catch {
+        } else {
           dbDir = path.join(resolved, '.docrel');
-        } finally {
-          if (fd !== undefined) {
-            try { fs.closeSync(fd); } catch { /* best effort */ }
-          }
+        }
+      } catch {
+        dbDir = path.join(resolved, '.docrel');
+      } finally {
+        if (fd !== undefined) {
+          try { fs.closeSync(fd); } catch { /* best effort */ }
         }
       }
     }

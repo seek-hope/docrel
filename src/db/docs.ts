@@ -27,11 +27,11 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
   if (!input.file) throw new Error('doc_section file cannot be empty');
   if (!input.doc_type) throw new Error('doc_section doc_type cannot be empty');
 
-  // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) instead of
-  // check-then-act to avoid race conditions in WAL mode where two
-  // concurrent writers could both see no existing row and both attempt
-  // INSERT, causing the second to fail with SQLITE_CONSTRAINT.
-  db.prepare(`
+  // Use UPSERT with RETURNING to atomically insert/update and read back
+  // the row in a single statement. This avoids the TOCTOU race where a
+  // concurrent DELETE between the UPSERT and a separate SELECT causes a
+  // spurious "was not found after upsert" error.
+  const row = db.prepare(`
     INSERT INTO doc_sections (id, file, anchor, content_hash, doc_type, status)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
@@ -41,9 +41,9 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
       doc_type = excluded.doc_type,
       status = excluded.status,
       updated_at = datetime('now')
-  `).run(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync');
+    RETURNING *
+  `).get(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync') as DocSectionRow | undefined;
 
-  const row = getDocSection(db, input.id);
   if (!row) throw new Error(`DocSection ${input.id} was not found after upsert`);
   return row;
 }
