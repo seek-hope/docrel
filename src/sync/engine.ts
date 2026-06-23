@@ -1,7 +1,6 @@
 // src/sync/engine.ts
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
-import path from 'node:path';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
@@ -188,7 +187,7 @@ export async function syncSymbol(
 
 const MAX_LINES = 100_000;
 
-import { escapeRegex } from '../utils/fs.js';
+import { escapeRegex, validatePath } from '../utils/fs.js';
 
 /**
  * Extract the current function/class/const signature from the source file.
@@ -196,22 +195,20 @@ import { escapeRegex } from '../utils/fs.js';
  * Uses a regex that matches only symbol definitions, not references.
  */
 function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): string | null {
-  const resolved = path.resolve(projectRoot, file);
+  // Use the shared validatePath() for path-traversal defense and dangling
+  // symlink detection. This ensures future hardening of validatePath
+  // (e.g., TOCTOU hardening, additional checks) propagates here.
+  const resolved = validatePath(file, projectRoot);
+  if (!resolved) return null;
 
-  // Containment check: prevent path traversal
-  const root = path.resolve(projectRoot);
-  if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+  let content: string;
   try {
-    const real = fs.realpathSync(resolved);
-    if (!real.startsWith(root + path.sep) && real !== root) return null;
-  } catch { return null; }
-
-  if (!fs.existsSync(resolved)) return null;
-  try {
-    if (fs.statSync(resolved).size > 10 * 1024 * 1024) return null;
-    if (!fs.statSync(resolved).isFile()) return null;
-  } catch { return null; }
-  const content = fs.readFileSync(resolved, 'utf-8');
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return null;
+    content = fs.readFileSync(resolved, 'utf-8');
+  } catch {
+    return null;
+  }
   const lines = content.split('\n');
 
   // Limit line count to prevent hangs on degenerate input
@@ -234,6 +231,24 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   for (const line of lines) {
     const trimmed = line.trim();
     if (keywordRegex.test(trimmed)) {
+      // For 'function' declarations: skip overload signatures that end with
+      // ';' (e.g., `async function login(a: string): Promise<void>;`) to find
+      // the actual implementation line instead.
+      if (trimmed.includes('function')) {
+        const parenIdx = trimmed.indexOf('(');
+        if (parenIdx >= 0) {
+          const closeParen = findMatchingClose(trimmed, parenIdx);
+          if (closeParen >= 0) {
+            const after = trimmed.slice(closeParen + 1).trimStart();
+            if (!after.startsWith('{') && !after.startsWith(':')) {
+              continue; // no body follows — overload declaration, skip
+            }
+            if (after.endsWith(';')) {
+              continue; // overload declaration ending with ; — skip
+            }
+          }
+        }
+      }
       return trimmed;
     }
     const mStart = methodRegex.exec(trimmed);

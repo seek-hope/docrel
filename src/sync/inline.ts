@@ -291,7 +291,7 @@ function stripCommentsAndStrings(line: string): string {
 export function generateUpdatedDocstring(
   symbolName: string,
   kind: string,
-  oldSignature: string,
+  _oldSignature: string,
   newSignature: string,
 ): string {
   // Generate a basic updated JSDoc/docstring based on the new signature
