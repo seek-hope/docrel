@@ -22,24 +22,54 @@ export interface DocParser {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-/** Detect `funcName(...)`, `funcName()`, or `ClassName.method(...)` patterns.
- *  Uses bracket counting to handle nested parentheses like
- *  `login(data, callback(err, result))`. */
-const FUNC_CALL_RE = /`([\w][\w\d_.]*\([^`]*\))`/g;
+/** Match `symbolName(` patterns at the start of a backtick-wrapped
+ *  function call. Used as a prefix detector; bracket counting handles
+ *  the full expression including nested parens and backticks inside args. */
+const FUNC_CALL_PREFIX_RE = /`([\w][\w\d_.]*\()/g;
 
-/** Given a match from FUNC_CALL_RE, use bracket counting to find the correct
- *  closing parenthesis. The regex above greedily captures to the LAST `)` before
- *  the closing backtick — for most single-level cases this is correct. For
- *  nested cases like `foo(bar(baz))`, the regex captures `foo(bar(baz)` (missing
- *  one closing paren). This function corrects by advancing past balanced parens. */
-function fixNestedParens(raw: string): string {
-  let depth = 0;
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] === '(') depth++;
-    else if (raw[i] === ')') depth--;
-    if (depth === 0 && raw[i] === ')') return raw.slice(0, i + 1);
+/** Starting from a `symbolName(` match at position `openIdx` inside `text`,
+ *  find the real closing paren and closing backtick using bracket counting
+ *  with backtick-pair awareness. Returns the full expression including
+ *  surrounding backticks, or null if parens/backticks are unmatched. */
+function extractBacktickCall(text: string, openIdx: number): string | null {
+  // openIdx points to the opening backtick. Walk forward tracking:
+  // - parenDepth: when '(' opened and not closed
+  // - inBacktick: whether we're inside a nested `...` pair
+  let parenDepth = 0;
+  let inBacktick = false;
+  for (let i = openIdx + 1; i < text.length; i++) {
+    const ch = text[i];
+    if (inBacktick) {
+      if (ch === '\\') { i++; continue; }
+      if (ch === '`') { inBacktick = false; }
+      continue;
+    }
+    if (ch === '`') {
+      // Closing backtick of the outermost call — we're done
+      if (parenDepth === 0) return text.slice(openIdx, i + 1);
+      // Otherwise it's a nested backtick start
+      inBacktick = true;
+      continue;
+    }
+    if (ch === '(') { parenDepth++; }
+    else if (ch === ')') {
+      parenDepth--;
+      if (parenDepth === 0) {
+        // Scan ahead to find the closing backtick (skipping whitespace)
+        let j = i + 1;
+        while (j < text.length && text[j] !== '`') {
+          if (text[j] === '(') parenDepth++;
+          else if (text[j] === ')') parenDepth--;
+          j++;
+        }
+        if (j < text.length && parenDepth === 0) {
+          return text.slice(openIdx, j + 1);
+        }
+        // Didn't find closing backtick — keep going
+      }
+    }
   }
-  return raw; // fallback: return as-is
+  return null;
 }
 
 /** Detect backtick-wrapped symbol names like `login`, `AuthService.login`. */
@@ -83,12 +113,18 @@ function extractBodyRefs(body: string, baseLine: number): CodeRef[] {
   for (let i = 0; i < lines.length; i++) {
     const lineNum = baseLine + i + 1; // 1-based line number
 
-    // Backtick `funcName(...)` — use bracket counting to handle nested parens
-    for (const m of lines[i].matchAll(FUNC_CALL_RE)) {
-      const name = fixNestedParens(m[1]);
-      if (!seen.has(name)) {
-        seen.add(name);
-        refs.push({ symbolName: name, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });
+    // Backtick `funcName(...)` — use bracket counting with backtick-pair
+    // awareness to handle nested parens and backticks inside arguments.
+    for (const m of lines[i].matchAll(FUNC_CALL_PREFIX_RE)) {
+      const full = extractBacktickCall(lines[i], m.index);
+      if (full) {
+        // full is `...` — strip surrounding backticks for the symbol name
+        const inner = full.slice(1, -1); // remove outer backticks
+        const name = inner; // already bracket-counted by extractBacktickCall
+        if (!seen.has(name)) {
+          seen.add(name);
+          refs.push({ symbolName: name, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });
+        }
       }
     }
 
@@ -578,12 +614,15 @@ function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
       }
     }
 
-    // Backtick-wrapped symbols in text
-    for (const m of lines[i].matchAll(FUNC_CALL_RE)) {
-      const name = fixNestedParens(m[1]);
-      if (!seen.has(name)) {
-        seen.add(name);
-        refs.push({ symbolName: name, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });
+    // Backtick-wrapped function calls in text
+    for (const m of lines[i].matchAll(FUNC_CALL_PREFIX_RE)) {
+      const full = extractBacktickCall(lines[i], m.index);
+      if (full) {
+        const inner = full.slice(1, -1);
+        if (!seen.has(inner)) {
+          seen.add(inner);
+          refs.push({ symbolName: inner, refType: 'backtick', confidence: 0.85, lineInDoc: lineNum });
+        }
       }
     }
   }

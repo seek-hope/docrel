@@ -110,5 +110,20 @@ export function getDocHealthContext(db: Database.Database): string {
  * Return the full structured health context object for programmatic use.
  */
 export function getDocHealthContextObject(db: Database.Database): DocHealthContext {
-  return queryHealthContext(db);
+  try {
+    return queryHealthContext(db);
+  } catch (err: any) {
+    console.error('DocRel: getDocHealthContextObject failed:', err instanceof Error ? err.message : err);
+    return {
+      totalSymbols: 0,
+      linkedSymbols: 0,
+      linkedPercentage: 0,
+      totalDocs: 0,
+      syncedDocs: 0,
+      staleDocs: 0,
+      syncPercentage: 0,
+      staleDocFiles: [],
+      staleDocDetails: [],
+    };
+  }
 }

@@ -8,6 +8,7 @@ export interface ReviewReport {
   orphanedSections: OrphanedSection[];
   impliedReferences: ImpliedReference[];
   lowConfidenceMappings: LowConfidenceMapping[];
+  skippedFiles: string[];
   summary: ReviewSummary;
 }
 
@@ -76,8 +77,9 @@ function findOrphaned(db: Database.Database): OrphanedSection[] {
  * (backtick-wrapped or CamelCase/snake_case identifier)
  * but has no corresponding mapping.
  */
-function findImplied(db: Database.Database, projectRoot: string): ImpliedReference[] {
-  const result: ImpliedReference[] = [];
+function findImplied(db: Database.Database, projectRoot: string): { references: ImpliedReference[]; skippedFiles: string[] } {
+  const references: ImpliedReference[] = [];
+  const skippedFiles: string[] = [];
 
   // Get all known symbol names
   const symRows = db.prepare('SELECT name FROM symbols').all() as { name: string }[];
@@ -148,7 +150,7 @@ function findImplied(db: Database.Database, projectRoot: string): ImpliedReferen
           }
         }
 
-        result.push({
+        references.push({
           symbolName,
           docFile: doc.file,
           docAnchor: doc.anchor,
@@ -156,12 +158,16 @@ function findImplied(db: Database.Database, projectRoot: string): ImpliedReferen
           mentionText: sectionLines[mentionLine]?.trim().slice(0, 120) ?? '',
         });
       }
-    } catch {
-      // Skip unreadable files
+    } catch (err: any) {
+      // Collect unreadable files so operators know which docs could not be
+      // analyzed. EACCES, EIO, and file-not-found are all treated as skips
+      // but the user gets a count in the summary.
+      const code = (err as NodeJS.ErrnoException)?.code ?? 'UNKNOWN';
+      skippedFiles.push(`${doc.file} (${code})`);
     }
   }
 
-  return result;
+  return { references, skippedFiles };
 }
 
 /** Find mappings with confidence below threshold (default < 0.8). */
@@ -185,7 +191,7 @@ function escapeRegex(str: string): string {
 export function docrelReview(db: Database.Database, projectRoot: string): ReviewReport {
   const unlinkedSymbols = findUnlinked(db);
   const orphanedSections = findOrphaned(db);
-  const impliedReferences = findImplied(db, projectRoot);
+  const { references: impliedReferences, skippedFiles } = findImplied(db, projectRoot);
   const lowConfidenceMappings = findLowConfidence(db);
 
   const totalSymbols = (db.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number }).c;
@@ -198,6 +204,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
     orphanedSections,
     impliedReferences,
     lowConfidenceMappings,
+    skippedFiles,
     summary: {
       totalSymbols,
       linkedSymbols,
@@ -263,10 +270,22 @@ export function formatReview(report: ReviewReport): string {
     lines.push('');
   }
 
+  if (report.skippedFiles.length > 0) {
+    lines.push(`### Skipped Files (${report.skippedFiles.length})`);
+    lines.push('');
+    lines.push('These documentation files could not be read:');
+    lines.push('');
+    for (const f of report.skippedFiles) {
+      lines.push(`- ${f}`);
+    }
+    lines.push('');
+  }
+
   if (report.unlinkedSymbols.length === 0 &&
       report.impliedReferences.length === 0 &&
       report.lowConfidenceMappings.length === 0 &&
-      report.orphanedSections.length === 0) {
+      report.orphanedSections.length === 0 &&
+      report.skippedFiles.length === 0) {
     lines.push('✅ All clear — no issues found.');
     lines.push('');
   }

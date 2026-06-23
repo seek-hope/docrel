@@ -165,12 +165,17 @@ export async function syncSymbol(
                 // updated_at reflects when the doc was last marked stale;
                 // a newer mtime means the file was genuinely rewritten.
                 let fileModified = false;
-                try {
-                  const st = fs.statSync(doc.file);
-                  // doc.updated_at is in ISO format from SQLite datetime('now')
-                  const docDate = new Date(doc.updated_at + 'Z').getTime();
-                  fileModified = st.mtimeMs > docDate;
-                } catch { /* stat failed — do not transition */ }
+                const resolvedPath = validatePath(doc.file, projectRoot);
+                if (resolvedPath) {
+                  try {
+                    const st = fs.statSync(resolvedPath);
+                    // doc.updated_at uses space-separated format from SQLite
+                    // datetime('now'). Replace space with 'T' for valid
+                    // ISO 8601 per ECMAScript spec (Date.parse requires T).
+                    const docDate = new Date(doc.updated_at.replace(' ', 'T') + 'Z').getTime();
+                    fileModified = st.mtimeMs > docDate;
+                  } catch { /* stat failed — do not transition */ }
+                }
                 if (fileModified) {
                   if (markDocSynced(db, doc.id)) {
                     result.docsChecked.push(doc.file);

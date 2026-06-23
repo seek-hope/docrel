@@ -124,13 +124,21 @@ server.tool(
           };
         }
         const filtered = report.staleDocs.filter((d) => d.file === file);
+        // Recompute passed from filtered results — matching CLI logic at
+        // cli.ts:201. Do not use report.passed which reflects the unfiltered
+        // result and may be false even when the requested file is clean.
+        const filteredPassed = !strict || filtered.length === 0;
+        const filteredFiles = [...new Set(filtered.map((d: { file: string }) => d.file))];
+        const filteredSummary = filtered.length === 0
+          ? 'All documentation in sync.'
+          : `${filtered.length} stale doc(s) in ${filteredFiles.join(', ')}`;
         return {
           content: [{
             type: 'text' as const,
             text: JSON.stringify({
-              passed: report.passed && (strict ? filtered.length === 0 : true),
+              passed: filteredPassed,
               staleDocs: filtered,
-              summary: `${filtered.length} stale doc(s) in ${file}`,
+              summary: filteredSummary,
             }, null, 2),
           }],
         };

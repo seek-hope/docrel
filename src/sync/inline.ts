@@ -90,11 +90,13 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   }
 
   // Diagnostic: log when non-comment signature count differs significantly
-  // from full-content count, helping debug comment-stripping edge cases.
+  // from full-content count. Comment-stripped vs full-content count differences
+  // are expected when signatures appear in JSDoc example blocks — the guards at
+  // lines 105-108 and 140-143 already protect against actual mismatches.
   if (sigCount >= 0) {
     const fullCount = countOccurrences(content, input.oldSignature);
     if (Math.abs(sigCount - fullCount) > 1) {
-      console.warn(`DocRel: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
+      console.debug(`DocRel: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
     }
   }
 
