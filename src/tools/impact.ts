@@ -23,9 +23,10 @@ export interface ImpactReport {
 }
 
 function escapeLike(str: string): string {
-  // Escape backslash first so that literal backslashes in the path
-  // don't combine with our escape-inserted backslashes.
-  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // With ESCAPE '\', only % and _ need escaping. Do NOT escape backslashes
+  // — they would become literal backslashes in the LIKE pattern and fail to
+  // match Windows paths (e.g. 'C:\\foo\\bar' would not match 'C:\foo\bar').
+  return str.replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 export function docrelImpact(
@@ -53,13 +54,21 @@ export function docrelImpact(
     }
     try {
       const escaped = escapeLike(file);
-      // Match locations in "file:line" format via LIKE prefix match
-      const allSymbols = db.prepare(
+      // Match locations in "file:line" format via LIKE prefix match.
+      // Filter results to ensure the file portion (before the last colon)
+      // exactly equals the changed file. LIKE prefix match alone would also
+      // match 'src/foo_test.ts' when checking 'src/foo.ts'.
+      const candidateSymbols = db.prepare(
         `SELECT id, name, kind, location FROM symbols
          WHERE location LIKE ? || ':%' ESCAPE '\\'`
       ).all(escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
-      for (const dbSym of allSymbols) {
+      for (const dbSym of candidateSymbols) {
+        // Verify the file portion of the location exactly matches
+        const lastColon = dbSym.location.lastIndexOf(':');
+        const locFile = lastColon > 0 ? dbSym.location.slice(0, lastColon) : dbSym.location;
+        if (locFile !== file) continue;
+
         if (seenSymbolIds.has(dbSym.id)) continue;
         seenSymbolIds.add(dbSym.id);
         affectedSymbols.push(dbSym);

@@ -51,7 +51,7 @@ export async function scanProject(
         const lang = detectLanguage(sym.file);
         const fqn = `${sym.file}::${sym.name}`;
         const id = symbolId(lang, fqn, sym.kind);
-        const sig = contentHash(sym.signature ?? sym.name);
+        const sig = contentHash(sym.signature ?? '');
         const rawSig = sym.signature ?? '';
 
         scannedIds.add(id);
