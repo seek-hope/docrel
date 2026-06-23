@@ -78,7 +78,7 @@ function scorePair(
   }
 
   // 2. Backtick match (confidence 0.9) — CodeRef with refType 'backtick'
-  for (const ref of section.codeRefs) {
+  for (const ref of (section.codeRefs ?? [])) {
     if (ref.refType === 'backtick') {
       const refClean = ref.symbolName.replace(/\(.*\)$/, '');
       if (refClean === symNameClean ||
@@ -91,7 +91,7 @@ function scorePair(
   }
 
   // 3. Code block match (confidence 0.7) — CodeRef with refType 'codeblock'
-  for (const ref of section.codeRefs) {
+  for (const ref of (section.codeRefs ?? [])) {
     if (ref.refType === 'codeblock') {
       const refClean = ref.symbolName.replace(/\(.*\)$/, '');
       if (refClean === symNameClean ||
@@ -109,7 +109,7 @@ function scorePair(
   }
 
   // Also check fuzzy match on heading via CodeRef type 'heading'
-  for (const ref of section.codeRefs) {
+  for (const ref of (section.codeRefs ?? [])) {
     if (ref.refType === 'heading') {
       const refClean = ref.symbolName.replace(/\(.*\)$/, '');
       if (refClean === symNameClean || ref.symbolName === symName ||

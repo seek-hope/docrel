@@ -123,7 +123,7 @@ export class MarkdownParser implements DocParser {
     // Find all heading positions
     const headings: { level: number; line: number; text: string }[] = [];
     for (let i = 0; i < lines.length; i++) {
-      const m = lines[i].match(/^(#{2,4})\s+(.+)/);
+      const m = lines[i].match(/^(#{1,6})\s+(.+)/);
       if (m) {
         headings.push({ level: m[1].length, line: i, text: m[2].trim() });
       }
