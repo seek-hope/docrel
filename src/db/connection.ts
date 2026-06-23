@@ -105,20 +105,21 @@ export function getDb(projectRoot: string): Database.Database {
   return db;
 }
 
-export function closeDb(projectRoot?: string): void {
-  if (projectRoot) {
-    const key = path.resolve(projectRoot);
-    const db = connections.get(key);
-    if (db) {
-      closedConnections.add(db);
-      try { db.close(); } catch { /* already closed */ }
-      connections.delete(key);
-    }
-  } else {
-    for (const db of connections.values()) {
-      closedConnections.add(db);
-      try { db.close(); } catch { /* already closed */ }
-    }
-    connections.clear();
+export function closeDb(projectRoot: string): void {
+  const key = path.resolve(projectRoot);
+  const db = connections.get(key);
+  if (db) {
+    closedConnections.add(db);
+    try { db.close(); } catch { /* already closed */ }
+    connections.delete(key);
   }
+}
+
+/** Close ALL database connections. Only use during process shutdown. */
+export function closeAllDbs(): void {
+  for (const db of connections.values()) {
+    closedConnections.add(db);
+    try { db.close(); } catch { /* already closed */ }
+  }
+  connections.clear();
 }

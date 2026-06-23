@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getDb, closeDb } from '../../src/db/connection.js';
+import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { loadConfig } from '../../src/utils/config.js';
 import { docrelStatus } from '../../src/tools/status.js';
@@ -34,7 +34,7 @@ describe('DocRel E2E', () => {
   });
 
   afterEach(() => {
-    closeDb();
+    closeAllDbs();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

@@ -124,7 +124,7 @@ function countOccurrences(content: string, search: string): number {
  * avoiding catastrophic backtracking from monolithic regex.
  */
 export function extractDocstring(file: string, symbolName: string, projectRoot: string): string | null {
-  if (!projectRoot) throw new Error('extractDocstring: projectRoot is required');
+  if (!projectRoot) return null;
   const resolved = validatePath(file, projectRoot);
   if (!resolved || !fs.existsSync(resolved)) return null;
 

@@ -46,24 +46,29 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
   }
 }
 
-export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: string): boolean {
+export interface StandaloneUpdateResult {
+  success: boolean;
+  reason?: string;
+}
+
+export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: string): StandaloneUpdateResult {
   const resolved = validatePath(input.file, projectRoot);
-  if (!resolved) return false;
-  if (!fs.existsSync(resolved)) return false;
+  if (!resolved) return { success: false, reason: 'invalid file path or path traversal detected' };
+  if (!fs.existsSync(resolved)) return { success: false, reason: 'file not found' };
 
   const validated = openAndValidate(resolved, projectRoot);
-  if (!validated) return false;
+  if (!validated) return { success: false, reason: 'could not read or validate file' };
 
   let content = validated.content;
 
   // Guard against empty oldContent — String.includes('') always returns true
-  if (!input.oldContent || !input.newContent) return false;
+  if (!input.oldContent || !input.newContent) return { success: false, reason: 'empty oldContent or newContent' };
 
   // Find the section by anchor (heading) using line-by-line parsing.
   // Pass the already-read content to avoid a TOCTOU race from a second disk read.
   const sectionContent = findSectionContentFromString(content, input.anchor);
-  if (!sectionContent) return false;
-  if (!sectionContent.includes(input.oldContent)) return false;
+  if (!sectionContent) return { success: false, reason: `section '${input.anchor}' not found in file` };
+  if (!sectionContent.includes(input.oldContent)) return { success: false, reason: 'oldContent not found in section' };
 
   // Use replace (not replaceAll) to replace only the FIRST occurrence.
   // replaceAll would silently replace ALL occurrences of oldContent within
@@ -76,7 +81,7 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
 
   // Atomic write: use project-local temp directory with restrictive permissions
   const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
-  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return false; }
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return { success: false, reason: 'could not create temp directory' }; }
   const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
   // Capture original file mode before rename replaces the inode
   let originalMode: number | undefined;
@@ -90,10 +95,10 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
     }
   } catch {
     try { fs.unlinkSync(tmpPath); } catch {}
-    return false;
+    return { success: false, reason: 'atomic write failed' };
   }
 
-  return true;
+  return { success: true };
 }
 
 /**

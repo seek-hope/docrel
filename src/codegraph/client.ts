@@ -120,7 +120,7 @@ export class CodegraphClient {
     // does not invoke a shell, path separators and metacharacters can still
     // cause which to search for unexpected paths or return ambiguous results.
     let cmd = this.command ?? 'codegraph';
-    if (/[\\/;&|`$()<>\n\r\t]/.test(cmd) || cmd.length > 256) {
+    if (/[\\/;&|`$()\n\r\t]/.test(cmd) || cmd.length > 256) {
       throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
     }
 
@@ -195,7 +195,11 @@ export class CodegraphClient {
         }),
       ]);
       return true;
-    } catch {
+    } catch (err) {
+      // Log the underlying error for diagnostics, then return false.
+      // The empty catch previously swallowed all connection errors,
+      // making it impossible to diagnose why codegraph was unavailable.
+      console.warn('DocRel: codegraph isAvailable() failed:', err instanceof Error ? err.message : err);
       // Bump the generation so any in-flight doConnect discards its result
       this.connectGeneration++;
       if (this.client) {

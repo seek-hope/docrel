@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { DOCREL_VERSION } from './version.js';
-import { getDb, closeDb } from './db/connection.js';
+import { getDb, closeDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import type { DocRelConfig } from './utils/config.js';
@@ -197,16 +197,20 @@ server.tool(
 let shuttingDown = false;
 
 async function shutdown(): Promise<void> {
-  // Guard against concurrent SIGINT+SIGTERM. If both signals arrive in
-  // quick succession, two invocations of shutdown would run concurrently,
-  // and the first process.exit(0) could cut short the second's cleanup.
+  // Set the flag FIRST to prevent re-entrancy from uncaughtException firing
+  // concurrently with unhandledRejection (which Node can deliver synchronously
+  // during exception handling).
   if (shuttingDown) return;
   shuttingDown = true;
 
   console.error('DocRel MCP Server shutting down...');
   try { await codegraph.close(); } catch {}
-  try { closeDb(); } catch {}
-  process.exit(0);
+  try { closeAllDbs(); } catch {}
+  // Use exitCode to let the event loop drain gracefully instead of
+  // immediately terminating — gives async cleanup a chance to finish.
+  process.exitCode = 0;
+  // Force-exit after a short grace period in case something is still pending
+  setTimeout(() => { process.exit(0); }, 500).unref();
 }
 
 process.on('SIGINT', shutdown);

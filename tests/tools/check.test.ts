@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { getDb, closeDb } from '../../src/db/connection.js';
+import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertDocSection, markDocStale } from '../../src/db/docs.js';
 import { docrelCheck } from '../../src/tools/check.js';
@@ -20,7 +20,7 @@ describe('docrelCheck', () => {
   });
 
   afterEach(() => {
-    closeDb();
+    closeAllDbs();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

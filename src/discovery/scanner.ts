@@ -62,6 +62,8 @@ export async function scanProject(
         // (e.g., C++ namespace-qualified names or Rust turbofish expressions).
         const fqn = `${escFqn(sym.file)}::${sym.line}::${escFqn(sym.name)}`;
         const id = symbolId(lang, fqn, sym.kind);
+        // Skip symbols that produce an empty ID (invalid/missing data from codegraph)
+        if (!id) continue;
         const sig = contentHash(sym.signature ?? '');
         const rawSig = sym.signature ?? '';
 
@@ -94,8 +96,12 @@ export async function scanProject(
           });
           // Record changelog entry so docrelDiff and the changelog table
           // surface what changed between scans.
-          markSignatureChanged(db, id, existing.signature, sig, rawSig);
-          updatedSymbols++;
+          const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig);
+          if (logged) {
+            updatedSymbols++;
+          } else {
+            console.warn(`DocRel: markSignatureChanged failed for ${id} — changelog entry not created`);
+          }
         }
       }
     } catch (err: any) {

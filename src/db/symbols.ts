@@ -35,6 +35,15 @@ export interface SymbolInput {
 export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolRow {
   if (!input.id) throw new Error('Symbol id cannot be empty');
   if (!input.name || !input.name.trim()) throw new Error('Symbol name cannot be empty');
+  // Validate kind against allowed values and default unknown kinds instead of
+  // letting SQLite reject with a cryptic CHECK constraint violation.
+  const ALLOWED_KINDS = new Set<SymbolRow['kind']>([
+    'function', 'class', 'module', 'api_endpoint', 'type', 'interface', 'variable', 'unknown',
+  ]);
+  if (!input.kind || !ALLOWED_KINDS.has(input.kind)) {
+    if (input.kind) console.warn(`DocRel: upsertSymbol received unknown kind '${input.kind}' — defaulting to 'unknown'`);
+    input.kind = 'unknown';
+  }
   // Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE) to avoid the
   // check-then-act race condition. In WAL mode with concurrent processes,
   // another connection could INSERT the same row between a SELECT and INSERT.

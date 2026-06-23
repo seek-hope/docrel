@@ -49,7 +49,7 @@ program
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
     try {
-      notifyIfOutdated(); // fire-and-forget update check
+      notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
       const docrelDir = path.join(projectRoot, '.docrel');
       let steps: string[] = [];
