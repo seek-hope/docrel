@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { getDb } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
+import type { DocRelConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
 import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
@@ -14,11 +15,20 @@ import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
-const config = loadConfig(projectRoot);
-const db = getDb(projectRoot);
-const codegraph = new CodegraphClient(config.codegraph?.command);
 
-runMigrations(db);
+let config: DocRelConfig;
+let db: ReturnType<typeof getDb>;
+let codegraph: CodegraphClient;
+
+try {
+  config = loadConfig(projectRoot);
+  db = getDb(projectRoot);
+  runMigrations(db);
+  codegraph = new CodegraphClient(config.codegraph?.command);
+} catch (err: any) {
+  console.error('Failed to initialize DocRel:', err.message);
+  process.exit(1);
+}
 
 const server = new McpServer({
   name: 'docrel',

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
+import { z } from 'zod';
 
 export interface DocRelConfig {
   project: string;
@@ -17,6 +18,22 @@ export interface DocRelConfig {
     mcpServerName?: string;
   };
 }
+
+const userConfigSchema = z.object({
+  project: z.string().optional(),
+  doc_dirs: z.array(z.string()).optional(),
+  code_dirs: z.array(z.string()).optional(),
+  strategies: z.object({
+    inline: z.enum(['auto_update', 'mark_stale']).optional(),
+    standalone: z.enum(['auto_update', 'mark_stale', 'prompt']).optional(),
+    generated: z.enum(['auto_update', 'mark_stale']).optional(),
+    architecture: z.enum(['mark_stale', 'ignore']).optional(),
+  }).optional(),
+  codegraph: z.object({
+    command: z.string().optional(),
+    mcpServerName: z.string().optional(),
+  }).optional(),
+});
 
 const DEFAULT_CONFIG: DocRelConfig = {
   project: path.basename(process.cwd()),
@@ -41,7 +58,13 @@ export function loadConfig(projectRoot: string): DocRelConfig {
 
   try {
     const raw = fs.readFileSync(configPath, 'utf-8');
-    userConfig = parseYaml(raw) as Partial<DocRelConfig>;
+    const parsed = parseYaml(raw);
+    const result = userConfigSchema.safeParse(parsed);
+    if (!result.success) {
+      console.error(`Warning: Invalid config in ${configPath}: ${result.error.message}. Using defaults.`);
+      return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
+    }
+    userConfig = result.data as Partial<DocRelConfig>;
   } catch (err: any) {
     console.error(`Warning: Failed to load ${configPath}: ${err.message}. Using defaults.`);
     return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };

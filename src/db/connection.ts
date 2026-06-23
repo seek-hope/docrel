@@ -10,24 +10,38 @@ export function getDb(projectRoot: string): Database.Database {
   if (existing) return existing;
 
   const gitDir = path.join(resolved, '.git');
-  let dbDir = gitDir;
+  // Default to .docrel/ instead of .git/ to avoid creating a fake .git directory
+  // when no git repo exists (git init would fail).
+  let dbDir = path.join(resolved, '.docrel');
 
-  if (fs.existsSync(gitDir)) {
-    if (!fs.statSync(gitDir).isDirectory()) {
-      // .git is a file (worktree or submodule) — resolve the real git directory
-      try {
-        const content = fs.readFileSync(gitDir, 'utf-8');
-        const match = content.match(/gitdir:\s*(.+)/);
-        if (match?.[1]) {
-          dbDir = path.resolve(resolved, match[1].trim());
-        } else {
-          // Fallback: place db next to .git file
+  try {
+    if (fs.existsSync(gitDir)) {
+      const stat = fs.statSync(gitDir);
+      if (stat.isDirectory()) {
+        dbDir = gitDir;
+      } else {
+        // .git is a file (worktree or submodule) — resolve the real git directory
+        try {
+          const content = fs.readFileSync(gitDir, 'utf-8');
+          const match = content.match(/gitdir:\s*(.+)/);
+          if (match?.[1]) {
+            dbDir = path.resolve(resolved, match[1].trim());
+            // Validate that resolved path is within project root
+            const root = path.resolve(resolved);
+            if (!dbDir.startsWith(root + path.sep) && dbDir !== root) {
+              dbDir = path.join(resolved, '.docrel');
+            }
+          } else {
+            dbDir = path.join(resolved, '.docrel');
+          }
+        } catch {
           dbDir = path.join(resolved, '.docrel');
         }
-      } catch {
-        dbDir = path.join(resolved, '.docrel');
       }
     }
+  } catch {
+    // stat failed (e.g. EACCES) — fall back to .docrel
+    dbDir = path.join(resolved, '.docrel');
   }
 
   let db: Database.Database;
@@ -38,6 +52,13 @@ export function getDb(projectRoot: string): Database.Database {
     db = new Database(dbPath);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+
+    // Restrictive permissions on the database and companion files
+    fs.chmodSync(dbPath, 0o600);
+    const walPath = dbPath + '-wal';
+    const shmPath = dbPath + '-shm';
+    if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600);
+    if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600);
   } catch (err: any) {
     throw new Error(`Failed to initialize DocRel database at ${dbPath}: ${err.message}`);
   }

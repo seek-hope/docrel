@@ -40,8 +40,14 @@ export class CodegraphClient {
   async connect(): Promise<void> {
     if (this.client) return;
 
+    // Validate command: reject path-based commands from user config
+    const cmd = this.command ?? 'codegraph';
+    if (cmd.includes('/') || cmd.includes('\\') || cmd.length > 256) {
+      throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or an absolute path to a known codegraph installation.`);
+    }
+
     const transport = new StdioClientTransport({
-      command: this.command ?? 'codegraph',
+      command: cmd,
       args: ['mcp'],
     });
 
@@ -60,13 +66,26 @@ export class CodegraphClient {
   }
 
   async isAvailable(timeoutMs = 5000): Promise<boolean> {
+    const controller = new AbortController();
     try {
       await Promise.race([
         this.connect(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error('timeout'));
+          }, timeoutMs);
+          // Clean up timer if connect resolves
+          controller.signal.addEventListener('abort', () => clearTimeout(timer));
+        }),
       ]);
       return true;
     } catch {
+      // Clean up the client that may have connected after timeout
+      if (this.client) {
+        this.client.close().catch(() => {});
+        this.client = null;
+      }
       return false;
     }
   }
@@ -138,10 +157,13 @@ export class CodegraphClient {
     let currentFile = '';
     let currentLine = 0;
 
+    if (!content) return { symbols: [], files: [] };
+
     const lines = content.split('\n');
     for (const line of lines) {
       // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
-      const fileHeader = line.match(/^##\s+(?:File:\s*)?(\S+\.\w+)/);
+      // Allow extensionless files (Makefile, Dockerfile, .gitignore, etc.)
+      const fileHeader = line.match(/^##\s+(?:File:\s*)?(\S+)/);
       if (fileHeader) {
         currentFile = fileHeader[1];
         currentLine = 0;
@@ -194,6 +216,8 @@ export class CodegraphClient {
   }
 
   private parseImpactOutput(symbol: string, content: string): ImpactResult {
+    if (!content) return { symbol, affected: [] };
+
     const affected: ImpactResult['affected'] = [];
     const lines = content.split('\n');
 
@@ -209,6 +233,8 @@ export class CodegraphClient {
   }
 
   private parseSearchOutput(content: string): SearchResult {
+    if (!content) return { items: [] };
+
     const items: SearchResult['items'] = [];
     const lines = content.split('\n');
 

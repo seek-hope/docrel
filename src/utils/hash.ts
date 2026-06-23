@@ -11,5 +11,6 @@ export function docSectionId(file: string, anchor: string): string {
 }
 
 export function contentHash(content: string): string {
+  if (content == null) content = '';
   return crypto.createHash('sha256').update(content).digest('hex');
 }

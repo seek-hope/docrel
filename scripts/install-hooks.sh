@@ -16,10 +16,7 @@ EOF
 
 cat > "$PROJECT_ROOT/.git/hooks/post-commit" << 'EOF'
 #!/bin/sh
-changed=$(git diff --name-only HEAD~1..HEAD 2>/dev/null || echo "")
-if [ -n "$changed" ]; then
-  docrel impact $changed
-fi
+git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r docrel impact --
 EOF
 
 cat > "$PROJECT_ROOT/.git/hooks/pre-push" << 'EOF'

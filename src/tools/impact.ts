@@ -22,7 +22,9 @@ export interface ImpactReport {
 }
 
 function escapeLike(str: string): string {
-  return str.replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // Escape backslash first so that literal backslashes in the path
+  // don't combine with our escape-inserted backslashes.
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 export function docrelImpact(
@@ -35,14 +37,20 @@ export function docrelImpact(
 
   const seenSymbolIds = new Set<string>();
 
+  const MAX_PATH_LENGTH = 4096;
+
   for (const file of changedFiles) {
+    if (file.length > MAX_PATH_LENGTH) {
+      console.error(`Warning: Skipping path exceeding ${MAX_PATH_LENGTH} chars: ${file.slice(0, 100)}...`);
+      continue;
+    }
     try {
       const escaped = escapeLike(file);
-      // Exact match OR location matches "file:line" format
+      // Match locations in "file:line" format via LIKE prefix match
       const allSymbols = db.prepare(
         `SELECT id, name, kind, location FROM symbols
-         WHERE location = ? OR location LIKE ? || ':%' ESCAPE '\\'`
-      ).all(file, escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
+         WHERE location LIKE ? || ':%' ESCAPE '\\'`
+      ).all(escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
       for (const dbSym of allSymbols) {
         if (seenSymbolIds.has(dbSym.id)) continue;

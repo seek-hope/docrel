@@ -14,11 +14,20 @@ import { installHooks } from './git/hooks.js';
 
 const program = new Command();
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
-const config = loadConfig(projectRoot);
-const db = getDb(projectRoot);
-const codegraph = new CodegraphClient(config.codegraph?.command);
 
-runMigrations(db);
+let config: ReturnType<typeof loadConfig>;
+let db: ReturnType<typeof getDb>;
+let codegraph: CodegraphClient;
+
+try {
+  config = loadConfig(projectRoot);
+  db = getDb(projectRoot);
+  runMigrations(db);
+  codegraph = new CodegraphClient(config.codegraph?.command);
+} catch (err: any) {
+  console.error('DocRel initialization failed:', err.message);
+  process.exit(1);
+}
 
 program
   .name('docrel')
@@ -73,12 +82,17 @@ program
   .description('Sync documentation for a symbol')
   .option('--symbol <id>', 'Symbol ID to sync')
   .action(async (opts) => {
-    if (!opts.symbol) {
-      console.error('Error: --symbol <id> is required');
+    try {
+      if (!opts.symbol) {
+        console.error('Error: --symbol <id> is required');
+        process.exit(1);
+      }
+      const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
+      console.log(JSON.stringify(result, null, 2));
+    } catch (err: any) {
+      console.error('Sync failed:', err.message);
       process.exit(1);
     }
-    const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
-    console.log(JSON.stringify(result, null, 2));
   });
 
 program

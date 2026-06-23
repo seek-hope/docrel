@@ -1,5 +1,14 @@
 import type Database from 'better-sqlite3';
 
+function safeStringify(obj: unknown): string {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    return '{}';
+  }
+}
+
+
 export interface SymbolRow {
   id: string;
   name: string;
@@ -7,6 +16,7 @@ export interface SymbolRow {
   project: string;
   location: string;
   signature: string;
+  raw_signature: string;
   metadata: string;
   created_at: string;
   updated_at: string;
@@ -19,6 +29,7 @@ export interface SymbolInput {
   project?: string;
   location?: string;
   signature?: string;
+  raw_signature?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -29,7 +40,7 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
     db.prepare(`
       UPDATE symbols
       SET name = ?, kind = ?, project = ?, location = ?, signature = ?,
-          metadata = ?, updated_at = datetime('now')
+          raw_signature = ?, metadata = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(
       input.name,
@@ -37,13 +48,14 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
       input.project ?? '',
       input.location ?? '',
       input.signature ?? '',
-      JSON.stringify(input.metadata ?? {}),
+      input.raw_signature ?? '',
+      safeStringify(input.metadata ?? {}),
       input.id,
     );
   } else {
     db.prepare(`
-      INSERT INTO symbols (id, name, kind, project, location, signature, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.id,
       input.name,
@@ -51,7 +63,8 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
       input.project ?? '',
       input.location ?? '',
       input.signature ?? '',
-      JSON.stringify(input.metadata ?? {}),
+      input.raw_signature ?? '',
+      safeStringify(input.metadata ?? {}),
     );
   }
 

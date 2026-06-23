@@ -49,7 +49,7 @@ export function docrelLink(
     }
   } catch (err: any) {
     // Check for SQLite constraint errors (SQLITE_CONSTRAINT = 19, includes FK, PK, UNIQUE, CHECK)
-    const isConstraint = err.code === 'SQLITE_CONSTRAINT' || err.errno === 19;
+    const isConstraint = err.code?.startsWith('SQLITE_CONSTRAINT') || err.errno === 19;
     if (isConstraint) {
       const symExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(params.symbol_id);
       const docExists = db.prepare('SELECT 1 FROM doc_sections WHERE id = ?').get(params.doc_id);

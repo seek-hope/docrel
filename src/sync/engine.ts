@@ -1,5 +1,7 @@
 // src/sync/engine.ts
 import type Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
@@ -64,19 +66,29 @@ export async function syncSymbol(
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
-            const newSig = symbol.signature;
+            // Use raw_signature (human-readable) for JSDoc generation, not the hash
+            const newSig = symbol.raw_signature || symbol.signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
-            updateInlineDoc({
+            // Extract current signature from the source to use as oldSignature
+            const currentSig = extractCurrentSignature(loc.file, symbol.name, projectRoot);
+            const oldSig = currentSig ?? '';
+
+            const updated = updateInlineDoc({
               file: loc.file,
               symbolName: symbol.name,
-              oldSignature: '',
-              newSignature: '',
+              oldSignature: oldSig,
+              newSignature: newSig,
               oldDocstring,
               newDocstring,
             }, projectRoot);
-            markDocSynced(db, doc.id);
-            result.docsUpdated.push(doc.file);
+
+            if (updated) {
+              markDocSynced(db, doc.id);
+              result.docsUpdated.push(doc.file);
+            } else {
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}`);
+            }
           } else {
             markDocStale(db, doc.id);
             result.docsStaled.push(doc.file);
@@ -88,7 +100,7 @@ export async function syncSymbol(
           if (strategy === 'auto_update') {
             // Agent already rewrote the doc before calling syncSymbol.
             // Detect the new hash and record the sync.
-            const sectionContent = findSectionContent(doc.file, doc.anchor);
+            const sectionContent = findSectionContent(doc.file, doc.anchor, projectRoot);
             if (sectionContent) {
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
@@ -116,6 +128,10 @@ export async function syncSymbol(
               } else {
                 result.errors.push(`Failed to regenerate ${doc.file}: ${genResult.output}`);
               }
+            } else {
+              result.errors.push(`No generator found for ${doc.file}. Marking as stale.`);
+              markDocStale(db, doc.id);
+              result.docsStaled.push(doc.file);
             }
           } else {
             markDocStale(db, doc.id);
@@ -136,4 +152,31 @@ export async function syncSymbol(
   }
 
   return result;
+}
+
+/**
+ * Extract the current function/class/const signature from the source file.
+ * This is used as the oldSignature for inline doc replacement.
+ */
+function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): string | null {
+  const resolved = path.resolve(projectRoot, file);
+  if (!fs.existsSync(resolved)) return null;
+  try {
+    if (fs.statSync(resolved).size > 10 * 1024 * 1024) return null;
+    if (!fs.statSync(resolved).isFile()) return null;
+  } catch { return null; }
+  const content = fs.readFileSync(resolved, 'utf-8');
+  const lines = content.split('\n');
+  // Find the symbol definition line by matching the symbol name in a definition context
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.includes(symbolName) &&
+        (trimmed.includes('function') || trimmed.includes('class') ||
+         trimmed.includes('const') || trimmed.includes('let') ||
+         trimmed.includes('var') || trimmed.includes('interface') ||
+         trimmed.includes('type'))) {
+      return trimmed;
+    }
+  }
+  return null;
 }

@@ -16,6 +16,11 @@ export async function scanProject(
   db: Database.Database,
   config: DocRelConfig,
 ): Promise<ScanReport> {
+  if (config.code_dirs.length === 0) {
+    console.warn('Warning: No code directories configured. Set code_dirs in .docrel/config.yaml');
+    return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0 };
+  }
+
   let newSymbols = 0;
   let updatedSymbols = 0;
 
@@ -28,6 +33,7 @@ export async function scanProject(
       const fqn = `${sym.file}::${sym.name}`;
       const id = symbolId(lang, fqn, sym.kind);
       const sig = contentHash(sym.signature ?? sym.name);
+      const rawSig = sym.signature ?? '';
 
       const existing = db.prepare('SELECT id, signature FROM symbols WHERE id = ?').get(id) as
         | { id: string; signature: string }
@@ -41,6 +47,7 @@ export async function scanProject(
           project: codeDir,
           location: `${sym.file}:${sym.line}`,
           signature: sig,
+          raw_signature: rawSig,
         });
         newSymbols++;
       } else if (existing.signature !== sig) {
@@ -51,6 +58,7 @@ export async function scanProject(
           project: codeDir,
           location: `${sym.file}:${sym.line}`,
           signature: sig,
+          raw_signature: rawSig,
         });
         updatedSymbols++;
       }

@@ -1,6 +1,8 @@
 // src/sync/inline.ts
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 
 export interface InlineSyncInput {
   file: string;
@@ -10,6 +12,9 @@ export interface InlineSyncInput {
   oldDocstring: string;
   newDocstring: string;
 }
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_SEARCH_LENGTH = 100_000;
 
 /** Resolve and validate that filePath is within projectRoot. Returns resolved path or null. */
 function validatePath(filePath: string, projectRoot: string): string | null {
@@ -32,7 +37,22 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   if (!fs.existsSync(resolved)) return false;
 
-  let content = fs.readFileSync(resolved, 'utf-8');
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(resolved);
+  } catch {
+    return false;
+  }
+  if (!stat.isFile()) return false;
+  if (stat.size > MAX_FILE_SIZE) return false;
+
+  // Open file before content-validating to reduce TOCTOU window
+  let content: string;
+  try {
+    content = fs.readFileSync(resolved, 'utf-8');
+  } catch {
+    return false;
+  }
 
   let replaced = false;
 
@@ -56,10 +76,11 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   if (!replaced) return false;
 
-  // Atomic write: write to temp file then rename
-  const tmpPath = resolved + '.docrel.tmp';
+  // Atomic write: use os.tmpdir() with random name (not deterministic path)
+  const tmpPath = path.join(os.tmpdir(), `docrel-${crypto.randomUUID()}.tmp`);
   try {
-    fs.writeFileSync(tmpPath, content, 'utf-8');
+    // Use exclusive creation flag to fail if file already exists
+    fs.writeFileSync(tmpPath, content, { encoding: 'utf-8', flag: 'wx' });
     fs.renameSync(tmpPath, resolved);
   } catch {
     try { fs.unlinkSync(tmpPath); } catch {}
@@ -74,24 +95,39 @@ function countOccurrences(content: string, search: string): number {
 }
 
 function escapeRegexGlobal(str: string): RegExp {
+  if (str.length > MAX_SEARCH_LENGTH) {
+    // If too large, return a regex that won't match anything
+    return /(?!)a^/;
+  }
   return new RegExp(str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
 }
 
+/**
+ * Extract the docstring preceding a symbol definition.
+ * Uses a state-machine approach to strip comments and strings safely,
+ * avoiding catastrophic backtracking from monolithic regex.
+ */
 export function extractDocstring(file: string, symbolName: string, projectRoot?: string): string | null {
   const resolved = projectRoot ? validatePath(file, projectRoot) : file;
   if (!resolved || !fs.existsSync(resolved)) return null;
 
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(resolved);
+  } catch {
+    return null;
+  }
+  if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
+
   const content = fs.readFileSync(resolved, 'utf-8');
   const lines = content.split('\n');
+
+  const symRegex = escapedSymRegex(symbolName);
+
   const symbolLine = lines.findIndex((l) => {
-    // Skip lines that are inside string literals or comments
-    const codePart = l.replace(/("[^"]*"|'[^']*'|`[^`]*`|\/\/.*|\/\*.*?\*\/)/g, '');
-    return (
-      codePart.includes(`function ${symbolName}`) ||
-      codePart.includes(`class ${symbolName}`) ||
-      codePart.includes(`const ${symbolName}`) ||
-      codePart.includes(`${symbolName}(`)
-    );
+    // Strip comments and strings using a simple state machine
+    const codePart = stripCommentsAndStrings(l);
+    return symRegex.test(codePart);
   });
 
   if (symbolLine < 0) return null;
@@ -108,6 +144,93 @@ export function extractDocstring(file: string, symbolName: string, projectRoot?:
   }
 
   return commentLines.length > 0 ? commentLines.join('\n') : null;
+}
+
+/**
+ * Build a regex that matches a symbol definition broadly:
+ *   export async function symbolName
+ *   export function symbolName
+ *   async function symbolName
+ *   function symbolName
+ *   class symbolName
+ *   export class symbolName
+ *   const/let/var symbolName = ( =>  (arrow functions)
+ *   symbolName (    (method calls on same line, class methods)
+ */
+function escapedSymRegex(symbolName: string): RegExp {
+  const n = escapeRegexChar(symbolName);
+  // Match many definition styles in one alternation
+  return new RegExp(
+    `(?:export\\s+)?(?:async\\s+)?function\\s+${n}\\b` +
+    `|(?:export\\s+)?class\\s+${n}\\b` +
+    `|(?:export\\s+)?(?:const|let|var)\\s+${n}\\b` +
+    `|\\b${n}\\s*\\(`,
+  );
+}
+
+function escapeRegexChar(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Strip comments and strings from a single line using a character-by-character
+ * state machine. This avoids catastrophic backtracking that can occur with
+ * monolithic regex patterns on crafted input.
+ */
+function stripCommentsAndStrings(line: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    const c = line[i];
+    const next = line[i + 1];
+
+    // Double-quoted string
+    if (c === '"') {
+      i++;
+      while (i < line.length) {
+        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Single-quoted string
+    if (c === "'") {
+      i++;
+      while (i < line.length) {
+        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === "'") { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Template literal
+    if (c === '`') {
+      i++;
+      while (i < line.length) {
+        if (line[i] === '\\') { i += 2; continue; }
+        if (line[i] === '`') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    // Line comment
+    if (c === '/' && next === '/') {
+      break; // rest of line is comment
+    }
+    // Block comment start
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < line.length - 1) {
+        if (line[i] === '*' && line[i + 1] === '/') { i += 2; break; }
+        i++;
+      }
+      continue;
+    }
+    out.push(c);
+    i++;
+  }
+  return out.join('');
 }
 
 export function generateUpdatedDocstring(
