@@ -5,10 +5,31 @@ import type { DocRelConfig } from '../utils/config.js';
 import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
 import { assertDbOpen } from '../db/connection.js';
+import { isIgnored } from '../utils/ignore.js';
 
 /** Escape :: in FQN components to prevent symbol ID collisions. */
 function escFqn(s: string): string {
   return s.replace(/::/g, '%3A%3A');
+}
+
+// ── Progress reporter ──────────────────────────────────────────────────────────
+
+/** Log progress to stderr every `interval` percent. Only active when stderr is
+ *  a TTY — no noise when piped or redirected. */
+function createProgressReporter(total: number, label: string, interval: number = 5) {
+  if (!process.stderr.isTTY || total === 0) return () => {};
+
+  let lastReportedPercent = -interval;
+
+  return (current: number) => {
+    const pct = Math.round((current / total) * 100);
+    // Report when pct crosses the next interval threshold (or at 100%).
+    if (pct >= lastReportedPercent + interval || pct >= 100) {
+      lastReportedPercent = Math.floor(pct / interval) * interval;
+      process.stderr.write(`\r${label}... ${current}/${total} (${pct}%)`);
+      if (pct >= 100) process.stderr.write('\n');
+    }
+  };
 }
 
 /** Codegraph symbol kind → canonical DocRel kind mapping (module-level). */
@@ -26,6 +47,9 @@ export interface ScanReport {
   newSymbols: number;
   updatedSymbols: number;
   failedDirs: string[];
+  /** All symbol IDs that were found during this scan. Used by `docrel gc` to
+   *  identify symbols that existed in the database but were not re-discovered. */
+  scannedIds: string[];
 }
 
 export async function scanProject(
@@ -37,7 +61,7 @@ export async function scanProject(
   const failedDirs: string[] = [];
   if (config.code_dirs.length === 0) {
     console.warn('Warning: No code directories configured. Set code_dirs in .docrel/config.yaml');
-    return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs };
+    return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs, scannedIds: [] };
   }
 
   let newSymbols = 0;
@@ -53,12 +77,18 @@ export async function scanProject(
 
       const MAX_SYMBOLS_PER_DIR = 10000;
       let dirSymbolCount = 0;
+      let symIdx = 0;
+      const reportProgress = createProgressReporter(symbols.length, `Scanning ${codeDir}`);
       for (const sym of symbols) {
+        reportProgress(++symIdx);
+        // Skip symbols whose source file matches a .docrelignore pattern
+        if (isIgnored(sym.file, projectRoot)) continue;
+
         // Wrap per-symbol processing in its own try/catch to prevent a single
         // malformed symbol (e.g., undefined fields from a changed codegraph
         // response) from aborting the entire directory's scan.
         try {
-          if (dirSymbolCount++ >= MAX_SYMBOLS_PER_DIR) {
+          if (++dirSymbolCount > MAX_SYMBOLS_PER_DIR) {
             console.warn(`DocRel: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
             break;
           }
@@ -169,7 +199,7 @@ export async function scanProject(
     "INSERT INTO metadata (key, value, updated_at) VALUES ('last_scan_at', datetime('now'), datetime('now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
   ).run();
 
-  return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols, failedDirs };
+  return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols, failedDirs, scannedIds: [...scannedIds] };
 }
 
 function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' | 'unknown' {

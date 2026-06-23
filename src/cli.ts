@@ -30,6 +30,7 @@ import { DOCREL_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
+import { docrelGc } from './tools/gc.js';
 import { stringify as stringifyYaml } from 'yaml';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
@@ -746,6 +747,43 @@ program
       console.error('DocRel database has been reset and re-initialized.');
     } catch (err: any) {
       console.error('Reset failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('gc')
+  .description('Garbage-collect symbols no longer found in the codebase (two-pass: stale then delete)')
+  .option('--dry-run', 'Preview what would be removed without deleting')
+  .action(async (opts) => {
+    // Resolve extractor at action time (same fallback logic as `scan` command).
+    // The top-level extractor may have been initialized before codegraph was
+    // available; re-create and re-check here for the gc action.
+    try {
+      const codegraphExt = new CodegraphExtractor(codegraph);
+      const builtinExt = new BuiltinExtractor();
+      const codegraphAvailable = await codegraphExt.isAvailable();
+      const gcExtractor = codegraphAvailable ? codegraphExt : builtinExt;
+
+      if (codegraphAvailable) {
+        console.error('Using Codegraph extractor');
+      } else {
+        console.error('Codegraph not available — falling back to builtin regex extractor');
+      }
+
+      console.error('Scanning codebase for GC...');
+      const scanReport = await scanProject(gcExtractor, db, config);
+
+      console.error('Running garbage collection...');
+      const gcReport = docrelGc(db, scanReport, opts.dryRun ?? false);
+
+      if (gcReport.dryRun) {
+        console.error(`[dry-run] Would remove ${gcReport.symbolsRemoved} symbol(s), would mark ${gcReport.symbolsMarkedStale} symbol(s) as stale`);
+      } else {
+        console.error(`${gcReport.symbolsRemoved} symbol(s) removed, ${gcReport.symbolsMarkedStale} symbol(s) marked as stale`);
+      }
+    } catch (err: any) {
+      console.error('GC failed:', errMsg(err));
       exit(1);
     }
   });

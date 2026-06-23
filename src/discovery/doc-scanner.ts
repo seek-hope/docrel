@@ -2,6 +2,26 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getParser, type ParsedDocSection } from './doc-parser.js';
+import { isIgnored } from '../utils/ignore.js';
+
+// ── Progress reporter ──────────────────────────────────────────────────────────
+
+/** Log progress to stderr every `interval` percent. Only active when stderr is
+ *  a TTY — no noise when piped or redirected. */
+function createProgressReporter(total: number, label: string, interval: number = 5) {
+  if (!process.stderr.isTTY || total === 0) return () => {};
+
+  let lastReportedPercent = -interval;
+
+  return (current: number) => {
+    const pct = Math.round((current / total) * 100);
+    if (pct >= lastReportedPercent + interval || pct >= 100) {
+      lastReportedPercent = Math.floor(pct / interval) * interval;
+      process.stderr.write(`\r${label}... ${current}/${total} (${pct}%)`);
+      if (pct >= 100) process.stderr.write('\n');
+    }
+  };
+}
 
 export interface DocScanReport {
   totalSections: number;
@@ -58,10 +78,13 @@ export async function scanDocs(
     }
 
     if (stat.isFile()) {
-      totalFiles++;
-      const parsed = parseFile(absDir, projectRoot);
-      if (parsed) {
-        sections.push(...parsed);
+      const relPath = path.relative(projectRoot, absDir);
+      if (!isIgnored(relPath, projectRoot)) {
+        totalFiles++;
+        const parsed = parseFile(absDir, projectRoot);
+        if (parsed) {
+          sections.push(...parsed);
+        }
       }
       continue;
     }
@@ -69,10 +92,12 @@ export async function scanDocs(
     if (!stat.isDirectory()) continue;
 
     // Recursively walk directory
-    const files = collectDocFiles(absDir);
+    const files = collectDocFiles(absDir, projectRoot);
+    const reportProgress = createProgressReporter(files.length, `Scanning docs in ${docDir}`);
     for (const file of files) {
       if (totalFiles >= MAX_FILES) break;
       totalFiles++;
+      reportProgress(totalFiles);
       const parsed = parseFile(file, projectRoot);
       if (parsed) {
         sections.push(...parsed);
@@ -130,8 +155,8 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
   return parser.parse(relativePath, content);
 }
 
-/** Collect all doc files recursively. Skips hidden dirs and common non-doc dirs. */
-function collectDocFiles(dir: string): string[] {
+/** Collect all doc files recursively. Skips hidden dirs, common non-doc dirs, and .docrelignore patterns. */
+function collectDocFiles(dir: string, projectRoot: string): string[] {
   const result: string[] = [];
   const supportedExts = new Set([
     '.md', '.mdx', '.rst', '.adoc', '.asciidoc', '.html', '.htm',
@@ -149,15 +174,18 @@ function collectDocFiles(dir: string): string[] {
     for (const entry of entries) {
       if (result.length >= MAX_FILES) break;
       const fullPath = path.join(current, entry.name);
+      const relPath = path.relative(projectRoot, fullPath);
       if (entry.isDirectory()) {
         if (entry.name.startsWith('.') || entry.name === 'node_modules' ||
             entry.name === 'dist' || entry.name === 'build' || entry.name === '.git') {
           continue;
         }
+        // Skip directories matching .docrelignore patterns
+        if (isIgnored(relPath, projectRoot)) continue;
         stack.push(fullPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (supportedExts.has(ext)) {
+        if (supportedExts.has(ext) && !isIgnored(relPath, projectRoot)) {
           result.push(fullPath);
         }
       }

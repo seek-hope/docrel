@@ -8,6 +8,7 @@ import { autoLink } from '../discovery/auto-linker.js';
 import { upsertDocSection } from '../db/docs.js';
 import { docSectionId, contentHash } from '../utils/hash.js';
 import { listSymbols } from '../db/symbols.js';
+import { isIgnored } from '../utils/ignore.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -61,6 +62,10 @@ export async function startWatch(
 
     const handleChange = (eventType: string, filePath: string) => {
       const rel = path.relative(projectRoot, filePath);
+
+      // Skip files matching .docrelignore patterns
+      if (isIgnored(rel, projectRoot)) return;
+
       const inCode = config.code_dirs.some(d => rel.startsWith(d));
 
       // Debounce: group rapid changes
