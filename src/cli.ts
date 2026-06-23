@@ -334,6 +334,17 @@ program
   });
 
 program
+  .command('watch')
+  .description('Watch for file changes and auto-update mappings (for non-agent use)')
+  .action(async () => {
+    const { startWatch } = await import('./tools/watch.js');
+    const cleanup = await startWatch(projectRoot, db, extractor, config);
+    // Keep running until SIGINT
+    process.on('SIGINT', () => { cleanup(); process.exit(0); });
+    process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+  });
+
+program
   .command('scan')
   .description('Scan the codebase and discover all symbols and documentation sections')
   .option('--no-docs', 'Skip scanning documentation files')
@@ -445,15 +456,17 @@ program
 program
   .command('review')
   .description('Audit code-doc mappings: unlinked symbols, orphaned sections, implied refs')
-  .option('--format <format>', 'Output format: json or markdown', 'markdown')
+  .option('--format <format>', 'Output format: json, markdown, or detailed', 'markdown')
   .option('--json', 'Shortcut for --format json')
+  .option('--side-by-side', 'Show code↔doc blocks for unreviewed mappings')
   .action(async (opts) => {
     try {
-      const { docrelReview, formatReview } = await import('./tools/review.js');
+      const { docrelReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
       const report = docrelReview(db, projectRoot);
-      const fmt = opts.json ? 'json' : opts.format;
-      if (fmt === 'json') {
+      if (opts.json || opts.format === 'json') {
         console.log(JSON.stringify(report, null, 2));
+      } else if (opts.sideBySide || opts.format === 'detailed') {
+        console.log(formatReviewDetailed(report, projectRoot));
       } else {
         console.log(formatReview(report));
       }

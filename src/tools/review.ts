@@ -8,7 +8,7 @@ export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
   orphanedSections: OrphanedSection[];
   impliedReferences: ImpliedReference[];
-  unreviewedMappings: LowConfidenceMapping[];
+  unreviewedMappings: UnreviewedMapping[];
   skippedFiles: string[];
   summary: ReviewSummary;
 }
@@ -34,13 +34,13 @@ export interface ImpliedReference {
   mentionText: string;
 }
 
-export interface LowConfidenceMapping {
+export interface UnreviewedMapping {
   symbolId: string;
   symbolName: string;
   docId: string;
   docFile: string;
   docAnchor: string;
-  confidence: number;
+  reviewStatus: string;
   relType: string;
 }
 
@@ -50,7 +50,7 @@ export interface ReviewSummary {
   unlinkedCount: number;
   orphanedCount: number;
   impliedCount: number;
-  lowConfidenceCount: number;
+  unreviewedCount: number;
 }
 
 /** Find symbols with no mappings. */
@@ -180,17 +180,17 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
 }
 
 /** Find mappings with confidence below threshold (default < 0.8). */
-function findUnreviewed(db: Database.Database): LowConfidenceMapping[] {
+function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
   return db.prepare(`
     SELECT m.symbol_id AS symbolId, s.name AS symbolName,
            m.doc_id AS docId, d.file AS docFile, d.anchor AS docAnchor,
-           m.confidence, m.confidence, m.rel_type AS relType
+           m.review_status AS reviewStatus, m.rel_type AS relType
     FROM mappings m
     JOIN symbols s ON s.id = m.symbol_id
     JOIN doc_sections d ON d.id = m.doc_id
-    WHERE m.confidence < ?
+    WHERE m.review_status = 'auto'
     ORDER BY s.name
-  `).all() as LowConfidenceMapping[];
+  `).all() as UnreviewedMapping[];
 }
 
 function escapeRegex(str: string): string {
@@ -287,7 +287,7 @@ export function formatReview(report: ReviewReport): string {
     lines.push('These mappings were auto-generated and need review:');
     lines.push('');
     for (const m of report.unreviewedMappings) {
-      lines.push(`- [${m.confidence.toFixed(1)}] \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor} (${m.relType})`);
+      lines.push(`- [${m.reviewStatus}] \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor} (${m.relType})`);
     }
     lines.push('');
   }
@@ -325,3 +325,148 @@ export function formatReview(report: ReviewReport): string {
 
   return lines.join('\n');
 }
+
+/**
+ * Format review with side-by-side code ←→ doc blocks for unreviewed mappings.
+ * Reads actual source and doc content from disk for context.
+ */
+export function formatReviewDetailed(report: ReviewReport, projectRoot: string): string {
+  const lines: string[] = [];
+  const w = 70; // column width
+
+  lines.push('## DocRel Review — Detailed');
+  lines.push('');
+
+  if (report.unreviewedMappings.length > 0) {
+    lines.push(`### Unreviewed Mappings (${report.unreviewedMappings.length})`);
+    lines.push('');
+
+    for (let i = 0; i < report.unreviewedMappings.length; i++) {
+      const m = report.unreviewedMappings[i];
+      lines.push(`#### ${i + 1}. \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor}`);
+      lines.push('');
+
+      // Read source snippet
+      const sourceSnippet = readSourceSnippet(m.symbolName, projectRoot);
+      const docSnippet = readDocSnippet(m.docFile, m.docAnchor, projectRoot);
+
+      const srcLines = sourceSnippet.split('\n');
+      const docLines = docSnippet.split('\n');
+      const maxRows = Math.max(srcLines.length, docLines.length);
+
+      // Header
+      const srcHeader = '─ SOURCE '.padEnd(w, '─');
+      const docHeader = '─ DOC '.padEnd(w, '─');
+      lines.push(`\`\`\`${srcHeader}┬${docHeader}\`\`\``);
+
+      for (let r = 0; r < maxRows; r++) {
+        const src = (srcLines[r] || '').padEnd(w);
+        const doc = (docLines[r] || '').padEnd(w);
+        lines.push(`\`${src}│ ${doc}\``);
+      }
+
+      lines.push(`\`\`\`${'─'.repeat(w)}┴${'─'.repeat(w)}\`\`\``);
+      lines.push('');
+      lines.push(`→ \`docrel confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docrel reject --symbol ${m.symbolId} --doc ${m.docId}\``);
+      lines.push('');
+    }
+  }
+
+  // Fallback to standard format for other sections
+  const standardRest = formatReview({
+    ...report,
+    unreviewedMappings: [],
+    unlinkedSymbols: report.unlinkedSymbols,
+    orphanedSections: report.orphanedSections,
+    impliedReferences: report.impliedReferences,
+  });
+  lines.push(standardRest);
+
+  return lines.join('\n');
+}
+
+/** Read a short snippet of source code around a symbol definition. */
+function readSourceSnippet(symbolName: string, projectRoot: string): string {
+  try {
+    // Search src/ for the symbol
+    const srcDir = path.join(projectRoot, 'src');
+    if (!fs.existsSync(srcDir)) return `(no src/ directory found)`;
+
+    const walkDir = (dir: string): string | null => {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
+          const found = walkDir(full);
+          if (found) return found;
+        } else if (e.isFile() && /\.(ts|js|py|rs|go|java)$/.test(e.name)) {
+          const content = fs.readFileSync(full, 'utf-8');
+          if (content.includes(symbolName)) {
+            // Extract surrounding lines
+            const lines = content.split('\n');
+            const idx = lines.findIndex(l =>
+              l.includes(`function ${symbolName}`) ||
+              l.includes(`class ${symbolName}`) ||
+              l.includes(`def ${symbolName}`) ||
+              l.includes(`fn ${symbolName}`) ||
+              l.includes(`const ${symbolName}`) ||
+              l.includes(`${symbolName}(`)
+            );
+            if (idx >= 0) {
+              const start = Math.max(0, idx - 3);
+              const end = Math.min(lines.length, idx + 10);
+              const prefix = `// ${path.relative(projectRoot, full)}:${idx + 1}\n`;
+              return prefix + lines.slice(start, end).join('\n');
+            }
+            // Fallback: first occurrence
+            const firstLine = lines.findIndex(l => l.includes(symbolName));
+            if (firstLine >= 0) {
+              const start = Math.max(0, firstLine - 2);
+              const end = Math.min(lines.length, firstLine + 8);
+              const prefix = `// ${path.relative(projectRoot, full)}:${firstLine + 1}\n`;
+              return prefix + lines.slice(start, end).join('\n');
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    return walkDir(srcDir) ?? `(symbol "${symbolName}" source not found)`;
+  } catch (err: any) {
+    return `(error reading source: ${err.message})`;
+  }
+}
+
+/** Read a short snippet of a doc section. */
+function readDocSnippet(docFile: string, anchor: string, projectRoot: string): string {
+  try {
+    const fullPath = path.join(projectRoot, docFile);
+    if (!fs.existsSync(fullPath)) return `(file not found: ${docFile})`;
+
+    const content = fs.readFileSync(fullPath, 'utf-8');
+    const lines = content.split('\n');
+
+    if (!anchor) {
+      // No anchor — show file header
+      const prefix = `// ${docFile}\n`;
+      return prefix + lines.slice(0, 15).join('\n');
+    }
+
+    // Find the anchor heading
+    const escaped = escapeRegex(anchor);
+    const headingRegex = new RegExp(`^#{1,6}\\s+${escaped}\\s*$`, 'im');
+    const match = content.match(headingRegex);
+    if (!match || match.index === undefined) return `(anchor "${anchor}" not found in ${docFile})`;
+
+    const headingLine = content.slice(0, match.index).split('\n').length;
+    const start = Math.max(0, headingLine - 1);
+    const end = Math.min(lines.length, headingLine + 12);
+    const prefix = `// ${docFile}:${headingLine + 1}\n`;
+
+    return prefix + lines.slice(start, end).join('\n');
+  } catch (err: any) {
+    return `(error reading doc: ${err.message})`;
+  }
+}
+
