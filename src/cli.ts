@@ -41,6 +41,7 @@ program
   .option('--no-scan', 'Skip scanning the codebase (requires codegraph)')
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
+    notifyIfOutdated(); // fire-and-forget update check
     const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
     const docrelDir = path.join(projectRoot, '.docrel');
     let steps: string[] = [];
@@ -107,6 +108,7 @@ program
   .description('Show health dashboard')
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action((opts) => {
+    notifyIfOutdated(); // fire-and-forget update check
     const status = docrelStatus(db);
     if (opts.format === 'markdown') {
       console.log(`## DocRel Status
@@ -245,6 +247,37 @@ program
       console.log(`Exported ${mappings.length} mappings to ${outPath}`);
     } catch (err: any) {
       console.error(`Failed to export mappings: ${err.message}`);
+      process.exit(1);
+    }
+  });
+
+// ── background update check (non-blocking, cached daily) ────
+import { checkForUpdates, isNewer } from './utils/update-check.js';
+const DOCREL_VERSION = '0.1.0';
+
+async function notifyIfOutdated(): Promise<void> {
+  try {
+    const latest = await checkForUpdates(DOCREL_VERSION);
+    if (latest && isNewer(DOCREL_VERSION, latest)) {
+      console.error(`\n  DocRel ${latest} is available (you have ${DOCREL_VERSION}). Run 'docrel update' to upgrade.\n`);
+    }
+  } catch {
+    // Never let update check break the main command
+  }
+}
+
+program
+  .command('update')
+  .description('Update DocRel to the latest version via npm')
+  .action(() => {
+    const { execSync } = require('node:child_process');
+    try {
+      console.log('Updating DocRel...');
+      const output = execSync('npm install -g docrel@latest', { encoding: 'utf-8', timeout: 60_000 });
+      console.log(output || 'DocRel updated to the latest version.');
+    } catch (err: any) {
+      console.error(`Update failed: ${err.stderr ?? err.message}`);
+      console.error('Try: npm install -g docrel@latest');
       process.exit(1);
     }
   });
