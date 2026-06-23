@@ -65,11 +65,13 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   if (!sectionContent) return false;
   if (!sectionContent.includes(input.oldContent)) return false;
 
+  // Use replace (not replaceAll) to replace only the FIRST occurrence.
+  // replaceAll would silently replace ALL occurrences of oldContent within
+  // the section, corrupting the documentation when oldContent text appears
+  // multiple times (e.g., a parameter name 'id' appearing in multiple
+  // descriptions or code examples within the same heading section).
   // Use function-based replacement to avoid $ special-pattern injection.
-  // String.replaceAll interprets $&, $', $`, $$, and $n as special patterns,
-  // which would silently corrupt replacement text containing these sequences
-  // (common in shell commands, env vars, or code examples).
-  const updatedSection = sectionContent.replaceAll(input.oldContent, () => input.newContent);
+  const updatedSection = sectionContent.replace(input.oldContent, () => input.newContent);
   content = content.replace(sectionContent, updatedSection);
 
   // Atomic write: use project-local temp directory with restrictive permissions

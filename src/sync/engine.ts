@@ -83,8 +83,8 @@ export async function syncSymbol(
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
             // Extract current signature from the source to use as oldSignature
-            const currentSig = extractCurrentSignature(loc.file, symbol.name, projectRoot);
-            const oldSig = currentSig ?? '';
+            const extractResult = extractCurrentSignature(loc.file, symbol.name, projectRoot);
+            const oldSig = extractResult.signature ?? '';
 
             const updated = updateInlineDoc({
               file: loc.file,
@@ -99,7 +99,7 @@ export async function syncSymbol(
               markDocSynced(db, doc.id);
               result.docsUpdated.push(doc.file);
             } else if (!oldSig) {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}: could not extract current signature from source file (template types, destructured params, or non-JS syntax may cause this)`);
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}: ${extractResult.reason ?? 'could not extract current signature'}`);
             } else {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}`);
             }
@@ -191,30 +191,38 @@ const MAX_LINES = 100_000;
 
 import { escapeRegex, validatePath } from '../utils/fs.js';
 
+interface ExtractResult {
+  signature: string | null;
+  reason?: string;
+}
+
 /**
  * Extract the current function/class/const signature from the source file.
  * This is used as the oldSignature for inline doc replacement.
  * Uses a regex that matches only symbol definitions, not references.
+ * Returns a structured result with a reason when extraction fails, so
+ * callers can provide specific error messages instead of a generic fallback.
  */
-function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): string | null {
+function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): ExtractResult {
   // Use the shared validatePath() for path-traversal defense and dangling
   // symlink detection. This ensures future hardening of validatePath
   // (e.g., TOCTOU hardening, additional checks) propagates here.
   const resolved = validatePath(file, projectRoot);
-  if (!resolved) return null;
+  if (!resolved) return { signature: null, reason: 'invalid file path or path traversal detected' };
 
   let content: string;
   try {
     const stat = fs.statSync(resolved);
-    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return null;
+    if (!stat.isFile()) return { signature: null, reason: 'not a regular file' };
+    if (stat.size > 10 * 1024 * 1024) return { signature: null, reason: 'file exceeds 10 MB size limit' };
     content = fs.readFileSync(resolved, 'utf-8');
   } catch {
-    return null;
+    return { signature: null, reason: 'could not read source file' };
   }
   const lines = content.split('\n');
 
   // Limit line count to prevent hangs on degenerate input
-  if (lines.length > MAX_LINES) return null;
+  if (lines.length > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
 
   const escaped = escapeRegex(symbolName);
   // Match only symbol definitions, not references or usage sites.
@@ -251,7 +259,7 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
           }
         }
       }
-      return trimmed;
+      return { signature: trimmed };
     }
     const mStart = methodRegex.exec(trimmed);
     if (mStart) {
@@ -260,12 +268,12 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
       if (closing >= 0 && closing < trimmed.length - 1) {
         const after = trimmed.slice(closing + 1).trimStart();
         if (after.startsWith('{') || after.startsWith(':')) {
-          return trimmed;
+          return { signature: trimmed };
         }
       }
     }
   }
-  return null;
+  return { signature: null, reason: 'symbol definition not found in source file' };
 }
 
 /** Find the index of the closing ) matching the open-paren at `openIdx`. */

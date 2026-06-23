@@ -41,10 +41,13 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   let replaced = false;
 
   // Compute occurrence counts on the ORIGINAL content before any mutations.
-  // Strip comments and strings from the content used to count signature
+  // Strip all comments and strings from the content used to count signature
   // occurrences — prevents the old signature text inside a docstring from
   // inflating the count and causing the signature replacement to be skipped.
-  const contentNoComments = stripCommentsAndStrings(stripNonJsdocBlockComments(content));
+  // Strip ALL block comments (including JSDoc) first, then per-line
+  // comments and strings, so JSDoc body lines (e.g., '* Processes login()')
+  // do not inflate the occurrence count.
+  const contentNoComments = stripCommentsAndStrings(stripAllBlockComments(content));
   const sigCount = (input.oldSignature?.trim() && input.newSignature?.trim())
     ? countOccurrences(contentNoComments, input.oldSignature) : -1;
   const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
@@ -199,7 +202,54 @@ function stripNonJsdocBlockComments(content: string): string {
   const out: string[] = [];
   let i = 0;
   while (i < content.length) {
-    if (content[i] === '/' && content[i + 1] === '*' && content[i + 2] !== '*') {
+    // Track string literals to avoid stripping /* ... */ inside strings
+    const ch = content[i];
+    const next = content[i + 1];
+
+    if (ch === '"') {
+      out.push(ch); i++;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      out.push(ch); i++;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === "'") { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '`') {
+      out.push(ch); i++;
+      let nestDepth = 0;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '$' && content[i + 1] === '{') {
+          nestDepth++; i++; continue;
+        }
+        if (content[i] === '}' && nestDepth > 0) {
+          nestDepth--; i++; continue;
+        }
+        if (content[i] === '`' && nestDepth === 0) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      // Block comment — strip if NOT JSDoc (/** ... */)
+      if (content[i + 2] === '*') {
+        // JSDoc comment — keep it
+        out.push(ch); i++;
+        continue;
+      }
       // Non-JSDoc block comment — scan forward for closing */
       i += 2;
       while (i < content.length - 1) {
@@ -211,7 +261,68 @@ function stripNonJsdocBlockComments(content: string): string {
       }
       continue;
     }
-    out.push(content[i]);
+    out.push(ch);
+    i++;
+  }
+  return out.join('');
+}
+
+/**
+ * Strip ALL block comments (both /* ... *​/ and /** ... *​/) from content using
+ * a state machine. Used before counting signature occurrences to prevent JSDoc
+ * body lines (e.g., '* Processes login(username: string): User') containing
+ * the old signature text from inflating the count.
+ */
+function stripAllBlockComments(content: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    if (ch === '"') {
+      out.push(ch); i++;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '"') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      out.push(ch); i++;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === "'") { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '`') {
+      out.push(ch); i++;
+      while (i < content.length) {
+        out.push(content[i]);
+        if (content[i] === '\\') { out.push(content[i + 1] ?? ''); i += 2; continue; }
+        if (content[i] === '`') { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      // Block comment (including JSDoc /** ... */) — skip entirely
+      i += 2;
+      while (i < content.length - 1) {
+        if (content[i] === '*' && content[i + 1] === '/') {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    out.push(ch);
     i++;
   }
   return out.join('');
