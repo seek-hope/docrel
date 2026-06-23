@@ -37,8 +37,15 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
   }
 
-  const raw = fs.readFileSync(configPath, 'utf-8');
-  const userConfig = parseYaml(raw) as Partial<DocRelConfig>;
+  let userConfig: Partial<DocRelConfig>;
+
+  try {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    userConfig = parseYaml(raw) as Partial<DocRelConfig>;
+  } catch (err: any) {
+    console.error(`Warning: Failed to load ${configPath}: ${err.message}. Using defaults.`);
+    return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
+  }
 
   return {
     ...DEFAULT_CONFIG,
