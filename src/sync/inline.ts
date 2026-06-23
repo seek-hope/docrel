@@ -44,13 +44,20 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   // Strip comments and strings from the content used to count signature
   // occurrences — prevents the old signature text inside a docstring from
   // inflating the count and causing the signature replacement to be skipped.
-  const contentNoComments = stripCommentsAndStrings(content);
+  const contentNoComments = stripCommentsAndStrings(stripNonJsdocBlockComments(content));
   const sigCount = (input.oldSignature?.trim() && input.newSignature?.trim())
     ? countOccurrences(contentNoComments, input.oldSignature) : -1;
   const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
     ? countOccurrences(content, input.oldDocstring) : -1;
 
   if (sigCount === 1) {
+    // Guard against replacing the wrong occurrence: if the old signature
+    // appears once in non-comment code but multiple times in the full content
+    // (e.g., once in a comment before the definition), skip the replacement
+    // to avoid corrupting the wrong location.
+    if (countOccurrences(content, input.oldSignature) !== 1) {
+      return false;
+    }
     // Use function-based replacement to avoid $ special-pattern injection.
     // String.replace interprets $&, $', $`, $$, and $n as special patterns,
     // which would silently corrupt replacement text containing these sequences.
@@ -120,12 +127,11 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
 
   let content = fs.readFileSync(resolved, 'utf-8');
   // Strip all multi-line block comments (/* ... */) from the full content
-  // before per-line processing. The state machine in stripCommentsAndStrings
-  // does not track open block comments across lines, so a multi-line
-  // /* ... */ could cause a symbol name inside the comment to be falsely
-  // matched as a definition. Exclude JSDoc-style comments (/** ... */) which
-  // use a double-asterisk and are the very docstrings we aim to extract.
-  content = content.replace(/\/\*[^*][\s\S]*?\*\//g, '');
+  // before per-line processing. Use a state machine instead of a regex to
+  // avoid catastrophic backtracking on files with unclosed block comments.
+  // Exclude JSDoc-style comments (/** ... */) which are the very docstrings
+  // we aim to extract.
+  content = stripNonJsdocBlockComments(content);
   const lines = content.split('\n');
 
   const symRegex = escapedSymRegex(symbolName);
@@ -183,6 +189,34 @@ function escapedSymRegex(symbolName: string): RegExp {
  * state machine. This avoids catastrophic backtracking that can occur with
  * monolithic regex patterns on crafted input.
  */
+/**
+ * Strip non-JSDoc block comments (/* ... *​/) from full content using a
+ * simple state machine. This avoids catastrophic backtracking from the
+ * monolithic regex `/\/\*[^*][\s\S]*?\*\//g` on inputs with unclosed
+ * block comments.
+ */
+function stripNonJsdocBlockComments(content: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < content.length) {
+    if (content[i] === '/' && content[i + 1] === '*' && content[i + 2] !== '*') {
+      // Non-JSDoc block comment — scan forward for closing */
+      i += 2;
+      while (i < content.length - 1) {
+        if (content[i] === '*' && content[i + 1] === '/') {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    out.push(content[i]);
+    i++;
+  }
+  return out.join('');
+}
+
 function stripCommentsAndStrings(line: string): string {
   // Safety: operates per-line only — each while loop is bounded by line.length.
   // Multi-line strings are not supported; input is always split by '\n' first.
@@ -212,12 +246,25 @@ function stripCommentsAndStrings(line: string): string {
       }
       continue;
     }
-    // Template literal
+    // Template literal — track ${...} nesting depth so that inner
+    // template literals (e.g., css`...${func(`inner`)}...`) do not
+    // prematurely terminate the state machine's string tracking.
     if (c === '`') {
       i++;
+      let nestDepth = 0;
       while (i < line.length) {
         if (line[i] === '\\') { i += 2; continue; }
-        if (line[i] === '`') { i++; break; }
+        if (line[i] === '$' && line[i + 1] === '{') {
+          nestDepth++;
+          i += 2;
+          continue;
+        }
+        if (line[i] === '}' && nestDepth > 0) {
+          nestDepth--;
+          i++;
+          continue;
+        }
+        if (line[i] === '`' && nestDepth === 0) { i++; break; }
         i++;
       }
       continue;
