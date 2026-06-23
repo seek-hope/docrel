@@ -127,7 +127,10 @@ export function installHooks(projectRoot: string, force = false): void {
   let gitDir = gitPath;
 
   let isWorktreeGit = false;
-  try { isWorktreeGit = fs.existsSync(gitPath) && !fs.statSync(gitPath).isDirectory(); } catch { /* stat failed — treat as not a worktree */ }
+  try {
+    const st = fs.statSync(gitPath);
+    isWorktreeGit = !st.isDirectory();
+  } catch { /* stat failed — treat as not a worktree */ }
   if (isWorktreeGit) {
     try {
       const content = fs.readFileSync(gitPath, 'utf-8');
