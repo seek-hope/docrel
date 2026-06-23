@@ -2,6 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { validateCommandSafety } from '../utils/command.js';
 
 export interface GeneratedSyncInput {
   file: string;
@@ -18,15 +19,6 @@ const MAX_ARGS = 50;
 const ALLOWED_BINARIES = new Set([
   'typedoc', 'openapi-generator',
 ]);
-
-/** Shared shell-metacharacter and length validation. Used by both splitCommand
- *  and detectGenerator to keep validation with command discovery, preventing
- *  a future refactor from silently accepting arbitrary package.json scripts. */
-function validateCommandSafety(cmd: string): boolean {
-  if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return false;
-  if (cmd.length > MAX_COMMAND_LENGTH) return false;
-  return true;
-}
 
 /**
  * Split a generator command string into [binary, ...args].

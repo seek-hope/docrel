@@ -1,6 +1,7 @@
 // src/codegraph/client.ts
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { validateCommandSafety } from '../utils/command.js';
 
 const CONNECT_TIMEOUT_MS = 5000;
 
@@ -138,7 +139,7 @@ export class CodegraphClient {
     // are validated by the which+realpathSync+prefix check pipeline below).
     // Relative paths containing / or \ (e.g. ./binary, ../binary) are rejected.
     let cmd = this.command ?? 'codegraph';
-    if (/[;&|`$()\n\r\t]/.test(cmd) || cmd.length > 256) {
+    if (!validateCommandSafety(cmd, 256)) {
       throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
     }
     // Reject relative paths (contain path separators but don't start with /)
@@ -149,6 +150,7 @@ export class CodegraphClient {
     // Always resolve and validate the binary path, whether it comes from
     // the default 'codegraph' or from user config. Skipping validation
     // for user-configured commands undermines the PATH hijacking defense.
+    let realStat: { ino: number; dev: number } | null = null;
     try {
       const { execFileSync } = await import('node:child_process');
       cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8' }).trim();
@@ -158,6 +160,25 @@ export class CodegraphClient {
       // Resolve symlinks before prefix check to prevent symlink bypass
       const fs = await import('node:fs');
       cmd = fs.realpathSync(cmd);
+
+      // Capture inode/device for TOCTOU verification before spawn.
+      // A local attacker with write access to the directory could swap
+      // the binary between realpathSync resolution and the spawn call
+      // inside StdioClientTransport. We record the file identity now
+      // and re-verify immediately before transport creation.
+      try {
+        const st = fs.statSync(cmd);
+        if (!st.isFile()) {
+          throw new Error(`codegraph resolved to non-file: ${cmd}`);
+        }
+        realStat = { ino: st.ino, dev: st.dev };
+      } catch (err: any) {
+        if (err.code === 'ENOENT') {
+          throw new Error(`codegraph binary not found at ${cmd}`);
+        }
+        throw new Error(`Cannot stat codegraph binary: ${err.message}`);
+      }
+
       // Validate resolved path is in expected installation locations.
       // Use specific known paths rather than broad directory prefixes like
       // /usr/ which would match both /usr/bin and /usr/local/bin, allowing
@@ -170,6 +191,17 @@ export class CodegraphClient {
       }
     } catch (err: any) {
       throw new Error(`Cannot resolve codegraph binary: ${err.message}`);
+    }
+
+    // TOCTOU guard: verify the binary hasn't been swapped since realpathSync.
+    // Compare inode and device — if they differ, a local attacker replaced the
+    // file between resolution and spawn.
+    if (realStat) {
+      const fs = await import('node:fs');
+      const currentStat = fs.statSync(cmd);
+      if (currentStat.ino !== realStat.ino || currentStat.dev !== realStat.dev) {
+        throw new Error('codegraph binary was modified after resolution — refusing to spawn');
+      }
     }
 
     const transport = new StdioClientTransport({
