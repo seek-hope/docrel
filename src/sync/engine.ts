@@ -16,6 +16,7 @@ export interface SyncResult {
   symbolId: string;
   docsUpdated: string[];
   docsStaled: string[];
+  docsChecked: string[];
   errors: string[];
 }
 
@@ -40,7 +41,7 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
 ): Promise<SyncResult> {
-  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], errors: [] };
+  const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [] };
 
   try {
     assertDbOpen(db);
@@ -80,7 +81,8 @@ export async function syncSymbol(
           // Normalize both paths to avoid false mismatches from differing formats
           // (e.g., src/foo.ts vs ./src/foo.ts or inconsistent slash direction).
           if (path.normalize(loc.file) !== path.normalize(doc.file)) {
-            result.errors.push(`Inline doc for ${symbol.name}: registered file ${relPath(doc.file, projectRoot)} differs from symbol location ${relPath(loc.file, projectRoot)} — file mismatch persists`);
+            result.errors.push(`Inline doc for ${symbol.name}: registered file ${relPath(doc.file, projectRoot)} differs from symbol location ${relPath(loc.file, projectRoot)} — updating doc_sections.file to match`);
+            db.prepare("UPDATE doc_sections SET file = ?, updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
@@ -144,6 +146,11 @@ export async function syncSymbol(
                 } else {
                   result.docsUpdated.push(doc.file);
                 }
+              } else if (doc.status === 'stale') {
+                // Content already reflects the code change — transition back
+                // to in_sync so the doc does not remain permanently stale.
+                markDocSynced(db, doc.id);
+                result.docsChecked.push(doc.file);
               }
             } else {
               result.errors.push(`Cannot find section '${doc.anchor}' in ${relPath(doc.file, projectRoot)} — doc may have been restructured`);
@@ -240,13 +247,19 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   if (!resolved) return { signature: null, reason: 'invalid file path or path traversal detected' };
 
   let content: string;
+  let fd: number | undefined;
   try {
-    const stat = fs.statSync(resolved);
+    fd = fs.openSync(resolved, 'r');
+    const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return { signature: null, reason: 'not a regular file' };
     if (stat.size > 10 * 1024 * 1024) return { signature: null, reason: 'file exceeds 10 MB size limit' };
-    content = fs.readFileSync(resolved, 'utf-8');
+    content = fs.readFileSync(fd, 'utf-8');
   } catch {
     return { signature: null, reason: 'could not read source file' };
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
   const lines = content.split('\n');
 
