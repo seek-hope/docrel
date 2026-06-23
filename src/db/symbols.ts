@@ -33,6 +33,7 @@ export interface SymbolInput {
 }
 
 export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolRow {
+  if (!input.id) throw new Error('Symbol id cannot be empty');
   const existing = db.prepare('SELECT id FROM symbols WHERE id = ?').get(input.id);
 
   if (existing) {
@@ -107,7 +108,7 @@ export function markSignatureChanged(
   id: string,
   oldSig: string,
   newSig: string,
-): void {
+): boolean {
   const info = db.prepare(
     "UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?"
   ).run(newSig, id);
@@ -115,11 +116,13 @@ export function markSignatureChanged(
   // Only insert changelog if the symbol actually exists — avoids orphans
   if (info.changes === 0) {
     console.warn(`DocRel: markSignatureChanged called for non-existent symbol: ${id}`);
-    return;
+    return false;
   }
 
   db.prepare(`
     INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig)
     VALUES (?, 'signature_changed', ?, ?)
   `).run(id, oldSig, newSig);
+
+  return true;
 }
