@@ -93,7 +93,7 @@ export async function prePushHook(
   }
 }
 
-export function installHooks(projectRoot: string): void {
+export function installHooks(projectRoot: string, force = false): void {
   const hooksDir = path.join(projectRoot, '.git', 'hooks');
   try {
     fs.mkdirSync(hooksDir, { recursive: true });
@@ -137,7 +137,7 @@ fi
   ];
 
   for (const hook of hooks) {
-    if (fs.existsSync(hook.path)) {
+    if (fs.existsSync(hook.path) && !force) {
       console.warn(`DocRel: ${hook.name} hook already exists — skipping (use --force to override)`);
       continue;
     }
