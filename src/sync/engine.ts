@@ -71,8 +71,14 @@ export async function syncSymbol(
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
-            // Use raw_signature (human-readable) for JSDoc generation, not the hash
-            const newSig = symbol.raw_signature || symbol.signature;
+            // Use raw_signature (human-readable) for JSDoc generation, not the hash.
+            // If raw_signature is empty, the symbol was created without a raw signature
+            // (e.g. manual creation or corrupted state) — we cannot generate meaningful docs.
+            if (!symbol.raw_signature) {
+              result.errors.push(`Skipped inline sync for ${symbol.name}: symbol has no raw signature (DB may be corrupted)`);
+              continue;
+            }
+            const newSig = symbol.raw_signature;
             // Guard against empty signatures — skip replacement to avoid garbled docs
             if (!newSig) {
               result.errors.push(`Skipped inline sync for ${symbol.name}: empty signature`);
@@ -96,6 +102,8 @@ export async function syncSymbol(
             if (updated) {
               markDocSynced(db, doc.id);
               result.docsUpdated.push(doc.file);
+            } else if (!oldSig) {
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}: could not extract current signature from source file (template types, destructured params, or non-JS syntax may cause this)`);
             } else {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${doc.file}`);
             }
@@ -128,6 +136,8 @@ export async function syncSymbol(
           } else if (strategy === 'mark_stale') {
             markDocStale(db, doc.id);
             result.docsStaled.push(doc.file);
+          } else if (strategy === 'prompt') {
+            result.errors.push(`Standalone doc ${doc.file}: 'prompt' strategy not yet implemented. Docs will not be auto-synced.`);
           }
           break;
         }
@@ -156,8 +166,10 @@ export async function syncSymbol(
         }
 
         case 'architecture': {
-          markDocStale(db, doc.id);
-          result.docsStaled.push(doc.file);
+          if (strategy !== 'ignore') {
+            markDocStale(db, doc.id);
+            result.docsStaled.push(doc.file);
+          }
           break;
         }
       }
