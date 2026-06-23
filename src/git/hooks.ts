@@ -94,12 +94,29 @@ export async function prePushHook(
 }
 
 export function installHooks(projectRoot: string, force = false): void {
-  const hooksDir = path.join(projectRoot, '.git', 'hooks');
+  // Resolve the real git directory (handles worktrees where .git is a file)
+  const gitPath = path.join(projectRoot, '.git');
+  let gitDir = gitPath;
+
+  if (fs.existsSync(gitPath) && !fs.statSync(gitPath).isDirectory()) {
+    try {
+      const content = fs.readFileSync(gitPath, 'utf-8');
+      const match = content.match(/gitdir:\s*(.+)/);
+      if (match?.[1]) {
+        gitDir = path.resolve(projectRoot, match[1].trim());
+      }
+    } catch { /* fall through to using .git path */ }
+  }
+
+  const hooksDir = path.join(gitDir, 'hooks');
   try {
     fs.mkdirSync(hooksDir, { recursive: true });
   } catch (err: any) {
     throw new Error(`Failed to create hooks directory ${hooksDir}: ${err.message}`);
   }
+
+  // Resolve docrel binary path to prevent PATH hijacking
+  const docrelBin = path.resolve(process.argv[1]);
 
   const preCommitPath = path.join(hooksDir, 'pre-commit');
   const postCommitPath = path.join(hooksDir, 'post-commit');
@@ -107,7 +124,7 @@ export function installHooks(projectRoot: string, force = false): void {
 
   const preCommitScript = `#!/bin/sh
 # DocRel pre-commit hook
-docrel check --strict
+${docrelBin} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Documentation is stale. Run 'docrel sync' or use --no-verify to skip."
@@ -117,12 +134,12 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r docrel impact --
+git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r ${docrelBin} impact --
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRel pre-push hook
-docrel check --strict
+${docrelBin} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Cannot push with stale documentation."
@@ -136,17 +153,24 @@ fi
     { path: prePushPath, script: prePushScript, name: 'pre-push' },
   ];
 
-  for (const hook of hooks) {
-    if (fs.existsSync(hook.path) && !force) {
-      console.warn(`DocRel: ${hook.name} hook already exists — skipping (use --force to override)`);
-      continue;
-    }
-    try {
+  // Install with rollback on partial failure
+  const installed: string[] = [];
+  try {
+    for (const hook of hooks) {
+      if (fs.existsSync(hook.path) && !force) {
+        console.warn(`DocRel: ${hook.name} hook already exists — skipping (use --force to override)`);
+        continue;
+      }
       fs.writeFileSync(hook.path, hook.script, { mode: 0o755 });
-    } catch (err: any) {
-      throw new Error(`Failed to install ${hook.name} hook: ${err.message}`);
+      installed.push(hook.path);
     }
+  } catch (err: any) {
+    // Rollback: remove successfully installed hooks on failure
+    for (const p of installed) {
+      try { fs.unlinkSync(p); } catch { /* best effort */ }
+    }
+    throw new Error(`Failed to install hooks: ${err.message}. Removed ${installed.length} partially installed hooks.`);
   }
 
-  console.log('DocRel hooks installed in .git/hooks/');
+  console.log(`DocRel hooks installed in ${hooksDir}/`);
 }
