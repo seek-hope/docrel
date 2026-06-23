@@ -17,11 +17,13 @@ import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { installHooks } from './git/hooks.js';
-import { exportMappingsJson } from './db/mappings.js';
+import { exportMappingsJson, listAllMappings } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
+import { autoLink } from './discovery/auto-linker.js';
 import { upsertDocSection } from './db/docs.js';
 import { createMapping } from './db/mappings.js';
+import { listSymbols } from './db/symbols.js';
 import { docSectionId, contentHash } from './utils/hash.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCREL_VERSION } from './version.js';
@@ -373,6 +375,18 @@ program
             newDocSections: newDocs,
             newMappings,
             failedFiles: docReport.failedFiles,
+          }
+        }, null, 2));
+
+        // Run auto-linker to create zero-annotation symbol↔doc mappings
+        const allSymbols = listSymbols(db);
+        const linkResult = autoLink(db, allSymbols, sections);
+        console.log(JSON.stringify({
+          autoLink: {
+            totalMatched: linkResult.totalMatched,
+            highConfidence: linkResult.highConfidence,
+            mediumConfidence: linkResult.mediumConfidence,
+            lowConfidence: linkResult.lowConfidence,
           }
         }, null, 2));
       }
