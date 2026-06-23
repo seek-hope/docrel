@@ -221,14 +221,19 @@ function upsertMcpJson(projectRoot: string): boolean {
 
 // ── Per-agent integration ────────────────────────────────────────────
 
-function integrateClaudeCode(projectRoot: string, dryRun: boolean): IntegrationResult {
+function integrateClaudeCode(
+  projectRoot: string,
+  dryRun: boolean,
+  agentKind: AgentKind = 'claude-code',
+  rulesFileName: string = 'CLAUDE.md',
+): IntegrationResult {
   const files: string[] = [];
   const CLAUDE_SECTION_MARKER = '## DocRel — Code-Documentation Sync';
 
-  // Prefer project-root CLAUDE.md; fall back to .claude/CLAUDE.md
-  const rootClaude = path.join(projectRoot, 'CLAUDE.md');
-  const dotClaude = path.join(projectRoot, '.claude', 'CLAUDE.md');
-  const rulesPath = fs.existsSync(rootClaude) ? rootClaude : dotClaude;
+  // Prefer project-root rules file; fall back to .claude/<rulesFile>
+  const rootRules = path.join(projectRoot, rulesFileName);
+  const dotRules = path.join(projectRoot, '.claude', rulesFileName);
+  const rulesPath = fs.existsSync(rootRules) ? rootRules : dotRules;
 
   if (!dryRun) {
     const added = appendToRulesFile(rulesPath, CLAUDE_DOCREL_SECTION, CLAUDE_SECTION_MARKER);
@@ -251,12 +256,13 @@ function integrateClaudeCode(projectRoot: string, dryRun: boolean): IntegrationR
     if (!hasDocrel) files.push(mcpPath);
   }
 
+  const agentName = agentKind === 'codex' ? 'Codex' : 'Claude Code';
   return {
-    agent: 'claude-code',
+    agent: agentKind,
     filesCreated: files,
     summary: files.length > 0
-      ? `Claude Code integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
-      : 'Claude Code integration already configured.',
+      ? `${agentName} integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
+      : `${agentName} integration already configured.`,
   };
 }
 
@@ -294,7 +300,7 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
   };
 }
 
-function integrateOhMyPi(projectRoot: string, dryRun: boolean): IntegrationResult {
+function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentKind = 'oh-my-pi'): IntegrationResult {
   const files: string[] = [];
   const SECTION_MARKER = '# DocRel — Code-Documentation Sync';
   const rulesPath = path.join(projectRoot, '.pi', 'docrel.md');
@@ -308,12 +314,13 @@ function integrateOhMyPi(projectRoot: string, dryRun: boolean): IntegrationResul
     if (!existing.includes(SECTION_MARKER)) files.push(rulesPath);
   }
 
+  const agentName = agentKind === 'hermes' ? 'Hermes' : 'Oh My Pi';
   return {
-    agent: 'oh-my-pi',
+    agent: agentKind,
     filesCreated: files,
     summary: files.length > 0
-      ? `Oh My Pi integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
-      : 'Oh My Pi integration already configured.',
+      ? `${agentName} integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
+      : `${agentName} integration already configured.`,
   };
 }
 
@@ -359,13 +366,13 @@ export async function integrate(
     case 'claude-code':
       return integrateClaudeCode(resolved, dryRun);
     case 'codex':
-      // Codex supports the same CLAUDE.md format and MCP config
-      return integrateClaudeCode(resolved, dryRun);
+      return integrateClaudeCode(resolved, dryRun, 'codex', 'CODEX.md');
     case 'opencode':
       return integrateOpenCode(resolved, dryRun);
     case 'oh-my-pi':
-    case 'hermes':
       return integrateOhMyPi(resolved, dryRun);
+    case 'hermes':
+      return integrateOhMyPi(resolved, dryRun, 'hermes');
     default:
       return integrateGeneric(resolved, dryRun);
   }

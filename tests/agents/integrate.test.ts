@@ -158,8 +158,8 @@ describe('integrate', () => {
 
   it('handles codex the same as claude-code', async () => {
     const result = await integrate(tmpDir, 'codex', false);
-    expect(result.agent).toBe('claude-code'); // codex maps to claude-code path
-    const claudePath = path.join(tmpDir, '.claude', 'CLAUDE.md');
-    expect(fs.existsSync(claudePath)).toBe(true);
+    expect(result.agent).toBe('codex'); // codex gets its own identity
+    const codexPath = path.join(tmpDir, '.claude', 'CODEX.md');
+    expect(fs.existsSync(codexPath)).toBe(true);
   });
 });
