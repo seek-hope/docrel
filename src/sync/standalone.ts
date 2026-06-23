@@ -99,7 +99,11 @@ export function findSectionContent(file: string, anchor: string, projectRoot?: s
     try {
       const real = fs.realpathSync(resolved);
       if (!real.startsWith(root + path.sep) && real !== root) return null;
-    } catch { /* file may not exist yet */ }
+    } catch (err: any) {
+      // Only swallow ENOENT / ENOTDIR (file may not exist yet).
+      // Surface real errors like EACCES, EIO, ENAMETOOLONG.
+      if (err?.code !== 'ENOENT' && err?.code !== 'ENOTDIR') throw err;
+    }
   }
 
   if (!fs.existsSync(resolved)) return null;

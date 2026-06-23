@@ -77,27 +77,26 @@ export class CodegraphClient {
 
     // Validate command: reject path-based commands from user config
     let cmd = this.command ?? 'codegraph';
-    if (cmd.includes('/') || cmd.includes('\\') || cmd.length > 256) {
-      throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or an absolute path to a known codegraph installation.`);
+    if (cmd.includes('\\') || cmd.length > 256) {
+      throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
     }
 
-    // When using the default unqualified 'codegraph' command, resolve it
-    // to prevent PATH hijacking via a trojan earlier in PATH.
-    if (!this.command) {
-      try {
-        const { execFileSync } = await import('node:child_process');
-        cmd = execFileSync('which', ['codegraph'], { encoding: 'utf-8' }).trim();
-        if (!cmd || cmd.includes('\n')) {
-          throw new Error('codegraph not found in PATH');
-        }
-        // Validate resolved path is in expected locations
-        const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
-        if (!allowedPrefixes.some((p) => cmd.startsWith(p))) {
-          throw new Error(`codegraph resolved to unexpected path: ${cmd}`);
-        }
-      } catch (err: any) {
-        throw new Error(`Cannot resolve codegraph binary: ${err.message}`);
+    // Always resolve and validate the binary path, whether it comes from
+    // the default 'codegraph' or from user config. Skipping validation
+    // for user-configured commands undermines the PATH hijacking defense.
+    try {
+      const { execFileSync } = await import('node:child_process');
+      cmd = execFileSync('which', [cmd], { encoding: 'utf-8' }).trim();
+      if (!cmd || cmd.includes('\n')) {
+        throw new Error(`${this.command ? this.command : 'codegraph'} not found in PATH`);
       }
+      // Validate resolved path is in expected locations
+      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
+      if (!allowedPrefixes.some((p) => cmd.startsWith(p))) {
+        throw new Error(`codegraph resolved to unexpected path: ${cmd}`);
+      }
+    } catch (err: any) {
+      throw new Error(`Cannot resolve codegraph binary: ${err.message}`);
     }
 
     const transport = new StdioClientTransport({
@@ -111,7 +110,12 @@ export class CodegraphClient {
     );
 
     try {
-      await client.connect(transport);
+      await Promise.race([
+        client.connect(transport),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`)), CONNECT_TIMEOUT_MS)
+        ),
+      ]);
       // If connect was aborted after completing, discard this client
       if (this.connectAborted) {
         try { await client.close(); } catch {}
@@ -167,10 +171,7 @@ export class CodegraphClient {
       arguments: { query, maxFiles },
     });
 
-    const content = (result.content as Array<{ type: string; text?: string }>)
-      .filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('\n');
+    const content = extractTextContent(result.content);
 
     return this.parseExploreOutput(content);
   }
@@ -183,10 +184,7 @@ export class CodegraphClient {
       arguments: { symbol, depth },
     });
 
-    const content = (result.content as Array<{ type: string; text?: string }>)
-      .filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('\n');
+    const content = extractTextContent(result.content);
 
     return this.parseImpactOutput(symbol, content);
   }
@@ -202,10 +200,7 @@ export class CodegraphClient {
       arguments: args,
     });
 
-    const content = (result.content as Array<{ type: string; text?: string }>)
-      .filter((c) => c.type === 'text')
-      .map((c) => c.text ?? '')
-      .join('\n');
+    const content = extractTextContent(result.content);
 
     return this.parseSearchOutput(content);
   }
@@ -282,6 +277,13 @@ export class CodegraphClient {
       }
     }
 
+    // If content was returned but parsing produced no symbols, codegraph may
+    // have changed its output format or returned an error message. Log a
+    // sample so operators can detect format mismatches.
+    if (content && symbols.length === 0 && files.length === 0) {
+      console.warn(`DocRel: explore parsing produced no results from ${content.length} chars. First 200:`, content.slice(0, 200));
+    }
+
     return { symbols, files };
   }
 
@@ -320,4 +322,20 @@ export class CodegraphClient {
 
     return { items };
   }
+}
+
+/** Safely extract text content from an MCP tool result. Validates that
+ *  content is an array before mapping, and logs a warning if content is
+ *  present but in an unexpected shape. */
+function extractTextContent(content: unknown): string {
+  if (!Array.isArray(content)) {
+    if (content) {
+      console.warn('DocRel: codegraph returned non-array content type:', typeof content);
+    }
+    return '';
+  }
+  return (content as Array<{ type: string; text?: string }>)
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('\n');
 }
