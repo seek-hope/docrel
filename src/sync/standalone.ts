@@ -65,7 +65,11 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   if (!sectionContent) return false;
   if (!sectionContent.includes(input.oldContent)) return false;
 
-  const updatedSection = sectionContent.replaceAll(input.oldContent, input.newContent);
+  // Use function-based replacement to avoid $ special-pattern injection.
+  // String.replaceAll interprets $&, $', $`, $$, and $n as special patterns,
+  // which would silently corrupt replacement text containing these sequences
+  // (common in shell commands, env vars, or code examples).
+  const updatedSection = sectionContent.replaceAll(input.oldContent, () => input.newContent);
   content = content.replace(sectionContent, updatedSection);
 
   // Atomic write: use project-local temp directory with restrictive permissions

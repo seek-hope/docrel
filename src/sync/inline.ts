@@ -51,13 +51,16 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     ? countOccurrences(content, input.oldDocstring) : -1;
 
   if (sigCount === 1) {
-    content = content.replace(input.oldSignature, input.newSignature);
+    // Use function-based replacement to avoid $ special-pattern injection.
+    // String.replace interprets $&, $', $`, $$, and $n as special patterns,
+    // which would silently corrupt replacement text containing these sequences.
+    content = content.replace(input.oldSignature, () => input.newSignature);
     replaced = true;
   }
   // If count is 0 or >1, skip to avoid replacing wrong text
 
   if (docCount === 1) {
-    content = content.replace(input.oldDocstring, input.newDocstring);
+    content = content.replace(input.oldDocstring, () => input.newDocstring);
     replaced = true;
   }
 
