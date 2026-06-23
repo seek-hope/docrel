@@ -164,12 +164,7 @@ export async function syncSymbol(
 
 const MAX_LINES = 100_000;
 
-/**
- * Escape a string for use in a regular expression.
- */
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+import { escapeRegex } from '../utils/fs.js';
 
 /**
  * Extract the current function/class/const signature from the source file.

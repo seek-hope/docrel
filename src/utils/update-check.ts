@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
+const FETCH_TIMEOUT_MS = 5000;
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 interface CacheEntry {
@@ -46,7 +47,7 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
     const response = await fetch('https://registry.npmjs.org/docrel/latest', {
       signal: controller.signal,

@@ -2,6 +2,9 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+const CONNECT_TIMEOUT_MS = 5000;
+
+
 export interface ExploreResult {
   symbols: Array<{
     name: string;
@@ -101,7 +104,7 @@ export class CodegraphClient {
     }
   }
 
-  async isAvailable(timeoutMs = 5000): Promise<boolean> {
+  async isAvailable(timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
     try {
       await Promise.race([
         this.connect(),

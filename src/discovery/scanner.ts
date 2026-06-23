@@ -5,6 +5,23 @@ import type { DocRelConfig } from '../utils/config.js';
 import { upsertSymbol } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
 
+/** File extension → language name mapping (module-level, created once). */
+const LANG_MAP: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby',
+  cs: 'csharp', cpp: 'cpp', c: 'c', swift: 'swift', kt: 'kotlin',
+};
+
+/** Codegraph symbol kind → canonical DocRel kind mapping (module-level). */
+const KIND_MAP: Record<string, ReturnType<typeof mapKind>> = {
+  function: 'function', method: 'function', func: 'function',
+  class: 'class', struct: 'class',
+  module: 'module', namespace: 'module',
+  api_endpoint: 'api_endpoint', endpoint: 'api_endpoint', route: 'api_endpoint',
+  type: 'type', interface: 'interface',
+  variable: 'variable', const: 'variable', let: 'variable',
+};
+
 export interface ScanReport {
   totalSymbols: number;
   newSymbols: number;
@@ -94,24 +111,11 @@ function detectLanguage(file: string): string {
   const ext = parts.pop()?.toLowerCase();
   if (!ext) return 'unknown';
 
-  const langMap: Record<string, string> = {
-    ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-    py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby',
-    cs: 'csharp', cpp: 'cpp', c: 'c', swift: 'swift', kt: 'kotlin',
-  };
-  return langMap[ext] ?? ext;
+  return LANG_MAP[ext] ?? ext;
 }
 
 function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' {
-  const kindMap: Record<string, ReturnType<typeof mapKind>> = {
-    function: 'function', method: 'function', func: 'function',
-    class: 'class', struct: 'class',
-    module: 'module', namespace: 'module',
-    api_endpoint: 'api_endpoint', endpoint: 'api_endpoint', route: 'api_endpoint',
-    type: 'type', interface: 'interface',
-    variable: 'variable', const: 'variable', let: 'variable',
-  };
-  const mapped = kindMap[kind.toLowerCase()];
+  const mapped = KIND_MAP[kind.toLowerCase()];
   if (!mapped) {
     console.warn(`DocRel: Unknown symbol kind '${kind}' — treating as 'function'`);
     return 'function';

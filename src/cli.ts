@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getDb } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
@@ -11,6 +14,10 @@ import { syncSymbol } from './sync/engine.js';
 import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { installHooks } from './git/hooks.js';
+import { exportMappingsJson } from './db/mappings.js';
+import { scanProject } from './discovery/scanner.js';
+import { checkForUpdates, isNewer } from './utils/update-check.js';
+import { DOCREL_VERSION } from './version.js';
 
 const program = new Command();
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
@@ -32,7 +39,7 @@ try {
 program
   .name('docrel')
   .description('Code-Documentation Relational Sync System')
-  .version('0.1.0');
+  .version(DOCREL_VERSION);
 
 program
   .command('init')
@@ -236,11 +243,6 @@ program
     console.log('DocRel hooks installed successfully.');
   });
 
-import { exportMappingsJson } from './db/mappings.js';
-import { scanProject } from './discovery/scanner.js';
-import fs from 'node:fs';
-import path from 'node:path';
-
 program
   .command('scan')
   .description('Scan the codebase via codegraph and discover all symbols')
@@ -278,8 +280,7 @@ program
   });
 
 // ── background update check (non-blocking, cached daily) ────
-import { checkForUpdates, isNewer } from './utils/update-check.js';
-const DOCREL_VERSION = '0.1.0';
+
 
 async function notifyIfOutdated(): Promise<void> {
   try {
@@ -296,7 +297,6 @@ program
   .command('update')
   .description('Update DocRel to the latest version via npm')
   .action(() => {
-    const { execSync } = require('node:child_process');
     try {
       console.log('Updating DocRel...');
       const output = execSync('npm install -g docrel@latest', { encoding: 'utf-8', timeout: 60_000 });

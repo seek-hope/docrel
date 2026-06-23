@@ -17,19 +17,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_SEARCH_LENGTH = 10_000; // Practical limit to prevent ReDoS from crafted regex input
 
 /** Resolve and validate that filePath is within projectRoot. Returns resolved path or null. */
-function validatePath(filePath: string, projectRoot: string): string | null {
-  const resolved = path.resolve(projectRoot, filePath);
-  const root = path.resolve(projectRoot);
-  if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
-  // Resolve symlinks to ensure the real path is also within project root
-  try {
-    const real = fs.realpathSync(resolved);
-    if (!real.startsWith(root + path.sep) && real !== root) return null;
-  } catch {
-    // File doesn't exist yet — trust the resolved path
-  }
-  return resolved;
-}
+import { validatePath, escapeRegex, escapeRegexGlobal } from '../utils/fs.js';
 
 export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): boolean {
   const resolved = validatePath(input.file, projectRoot);
@@ -91,15 +79,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 }
 
 function countOccurrences(content: string, search: string): number {
-  return (content.match(escapeRegexGlobal(search)) || []).length;
-}
-
-function escapeRegexGlobal(str: string): RegExp {
-  if (str.length > MAX_SEARCH_LENGTH) {
-    // If too large, return a regex that won't match anything
-    return /(?!)a^/;
-  }
-  return new RegExp(str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+  return (content.match(escapeRegexGlobal(search, MAX_SEARCH_LENGTH)) || []).length;
 }
 
 /**
@@ -158,7 +138,7 @@ export function extractDocstring(file: string, symbolName: string, projectRoot?:
  *   symbolName (    (method calls on same line, class methods)
  */
 function escapedSymRegex(symbolName: string): RegExp {
-  const n = escapeRegexChar(symbolName);
+  const n = escapeRegex(symbolName);
   // Match only definition patterns. The overly broad `\\b${n}\\s*\\(` alternation
   // was removed because it matches call sites like `login(username)` or
   // `return login(data);` which would extract the wrong docstring.
@@ -168,10 +148,6 @@ function escapedSymRegex(symbolName: string): RegExp {
     `|\\binterface\\s+${n}\\b` +
     `|\\btype\\s+${n}\\b`,
   );
-}
-
-function escapeRegexChar(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

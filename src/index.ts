@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { DOCREL_VERSION } from './version.js';
 import { getDb } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
@@ -32,7 +33,7 @@ try {
 
 const server = new McpServer({
   name: 'docrel',
-  version: '0.1.0',
+  version: DOCREL_VERSION,
 });
 
 // ── docrel_status ──────────────────────────────────────────────

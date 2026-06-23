@@ -8,7 +8,6 @@ function safeStringify(obj: unknown): string {
   }
 }
 
-
 export interface SymbolRow {
   id: string;
   name: string;
