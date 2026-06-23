@@ -38,7 +38,7 @@ export interface SearchResult {
 export class CodegraphClient {
   private client: Client | null = null;
   private connectPromise: Promise<void> | null = null;
-  private connectAborted = false;
+  private connectGeneration = 0;
   private livenessInProgress = false;
 
   constructor(private command?: string) {}
@@ -52,8 +52,10 @@ export class CodegraphClient {
       if (this.livenessInProgress) {
         // Another caller is already checking — wait for connectPromise
         if (this.connectPromise) return this.connectPromise;
-        await this.connect();
-        return;
+        // Create a shared deferred promise so concurrent callers await
+        // one doConnect result instead of recursing into connect().
+        this.connectPromise = this.doConnect();
+        return this.connectPromise;
       }
       this.livenessInProgress = true;
       try {
@@ -101,8 +103,10 @@ export class CodegraphClient {
   }
 
   private async doConnect(): Promise<void> {
-    // Reset the abort flag so a past timeout does not poison this attempt
-    this.connectAborted = false;
+    // Capture the generation this call belongs to. If a subsequent call
+    // increments connectGeneration before this call finishes, we discard
+    // the result to avoid installing a stale client.
+    const gen = this.connectGeneration;
 
     // Validate command: reject shell metacharacters, path separators, and
     // control characters before passing to which/execFileSync. While execFileSync
@@ -118,10 +122,13 @@ export class CodegraphClient {
     // for user-configured commands undermines the PATH hijacking defense.
     try {
       const { execFileSync } = await import('node:child_process');
-      cmd = execFileSync('which', [cmd], { encoding: 'utf-8' }).trim();
+      cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8' }).trim();
       if (!cmd || cmd.includes('\n')) {
         throw new Error(`${this.command ? this.command : 'codegraph'} not found in PATH`);
       }
+      // Resolve symlinks before prefix check to prevent symlink bypass
+      const fs = await import('node:fs');
+      cmd = fs.realpathSync(cmd);
       // Validate resolved path is in expected locations
       const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
       if (!allowedPrefixes.some((p) => cmd.startsWith(p))) {
@@ -142,20 +149,21 @@ export class CodegraphClient {
     );
 
     try {
-      // Attach a no-op catch to the losing promise so it does not become
-      // an unhandled rejection when the race is settled by the other side.
+      // Attach the catch handler BEFORE the Promise.race so that if
+      // client.connect rejects before setTimeout fires, the rejection
+      // is already caught and does not become an unhandled rejection.
       const connectPromise = client.connect(transport);
+      connectPromise.catch(() => {}); // prevent unhandled rejection
       await Promise.race([
         connectPromise,
         new Promise<never>((_, reject) =>
           setTimeout(() => {
-            connectPromise.catch(() => {});
             reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`));
           }, CONNECT_TIMEOUT_MS)
         ),
       ]);
-      // If connect was aborted after completing, discard this client
-      if (this.connectAborted) {
+      // If a newer generation started while we were connecting, discard
+      if (gen !== this.connectGeneration) {
         try { await client.close(); } catch {}
         return;
       }
@@ -167,9 +175,6 @@ export class CodegraphClient {
   }
 
   async isAvailable(timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
-    // Reset abort flag so a past timeout does not poison future attempts
-    this.connectAborted = false;
-
     let timer: NodeJS.Timeout | undefined;
     try {
       await Promise.race([
@@ -180,8 +185,8 @@ export class CodegraphClient {
       ]);
       return true;
     } catch {
-      // Mark any in-flight connection as aborted so doConnect discards it
-      this.connectAborted = true;
+      // Bump the generation so any in-flight doConnect discards its result
+      this.connectGeneration++;
       if (this.client) {
         this.client.close().catch(() => {});
         this.client = null;
