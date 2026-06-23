@@ -56,10 +56,19 @@ export async function postCommitHook(
     const log = await git.log({ maxCount: 1 });
     if (!log.latest) return;
 
-    // Check if the commit has a parent (fails on first commit)
-    const hasParent = await git.raw(['rev-parse', `${log.latest.hash}^`])
-      .then(() => true)
-      .catch(() => false);
+    // Check if the commit has a parent (fails on first commit).
+    // Differentiate 'unknown revision' (no parent) from real errors (e.g. corrupt repo, I/O error).
+    let hasParent = false;
+    try {
+      await git.raw(['rev-parse', `${log.latest.hash}^`]);
+      hasParent = true;
+    } catch (err: any) {
+      // Only ignore 'unknown revision or path' — surface real errors
+      if (err?.message && !/unknown revision|ambiguous argument/i.test(err.message)) {
+        console.error(`DocRel post-commit: cannot check parent commit: ${err.message}`);
+        return;
+      }
+    }
 
     if (!hasParent) return;
 
@@ -115,16 +124,28 @@ export function installHooks(projectRoot: string, force = false): void {
     throw new Error(`Failed to create hooks directory ${hooksDir}: ${err.message}`);
   }
 
-  // Resolve docrel binary path to prevent PATH hijacking
-  const docrelBin = path.resolve(process.argv[1]);
+  // Resolve docrel binary path — use process.execPath as fallback when
+  // process.argv[1] is undefined (e.g., bundled binary, MCP server, node -e).
+  const argv1 = process.argv[1];
+  let docrelBin: string;
+  if (!argv1 || argv1 === 'undefined') {
+    docrelBin = process.execPath;
+  } else {
+    docrelBin = path.resolve(argv1);
+  }
+  // Validate that the resolved binary exists and is executable
+  if (!fs.existsSync(docrelBin)) {
+    throw new Error(`DocRel binary not found at resolved path: ${docrelBin}. Install docrel globally or use --no-hooks.`);
+  }
 
   const preCommitPath = path.join(hooksDir, 'pre-commit');
   const postCommitPath = path.join(hooksDir, 'post-commit');
   const prePushPath = path.join(hooksDir, 'pre-push');
 
+  // Quote binary path to handle spaces and special characters safely
   const preCommitScript = `#!/bin/sh
 # DocRel pre-commit hook
-${docrelBin} check --strict
+"${docrelBin}" check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Documentation is stale. Run 'docrel sync' or use --no-verify to skip."
@@ -134,12 +155,12 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRel post-commit hook
-git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r ${docrelBin} impact --
+git diff --name-only HEAD~1..HEAD 2>/dev/null | xargs -r "${docrelBin}" impact --
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRel pre-push hook
-${docrelBin} check --strict
+"${docrelBin}" check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRel: Cannot push with stale documentation."
