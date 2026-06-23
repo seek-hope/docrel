@@ -48,6 +48,7 @@ export async function scanProject(
           id,
           name: sym.name,
           kind: mapKind(sym.kind),
+          project: codeDir,
           location: `${sym.file}:${sym.line}`,
           signature: sig,
         });
