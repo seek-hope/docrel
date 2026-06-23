@@ -121,8 +121,12 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
   // Containment check: ensure resolved path is within project root
   const root = path.resolve(projectRoot);
   if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+  // Declare `real` outside the try so it is accessible in the fd-based
+  // block below, where we open the canonical path instead of the lexical
+  // path (F11: TOCTOU gap between containment check and open).
+  let real: string;
   try {
-    const real = fs.realpathSync(resolved);
+    real = fs.realpathSync(resolved);
     if (!real.startsWith(root + path.sep) && real !== root) return null;
   } catch (err: any) {
     // Catch ALL errors from realpathSync to prevent information disclosure.
@@ -145,15 +149,27 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
   // + readFileSync on the same fd guarantees we operate on a single inode.
   let fd: number | undefined;
   try {
-    fd = fs.openSync(resolved, 'r');
+    // F11: Open the canonical `real` path (validated at lines 125-127) instead
+    // of the lexical `resolved` path. Between the two synchronous calls, a
+    // concurrent process could swap a symlink at `resolved` to point outside
+    // the project root, bypassing the containment check.
+    fd = fs.openSync(real, 'r');
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_FILE_SIZE) {
       return null;
     }
-    // Re-validate real path via the fd to prevent symlink races
-    const real = fs.realpathSync(resolved);
-    const root = path.resolve(projectRoot);
-    if (!real.startsWith(root + path.sep) && real !== root) return null;
+    // F3: Re-validate real path via the file descriptor instead of the
+    // filesystem path. This eliminates the TOCTOU gap where a local attacker
+    // could swap a symlink between openSync and realpathSync.
+    // Use /proc/self/fd on Linux; fall back to path-based validation on
+    // non-Linux platforms where /proc/self/fd is unavailable.
+    if (process.platform === 'linux') {
+      const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
+      if (!fdReal.startsWith(root + path.sep) && fdReal !== root) return null;
+    } else {
+      const fdReal = fs.realpathSync(real);
+      if (!fdReal.startsWith(root + path.sep) && fdReal !== root) return null;
+    }
     const content = fs.readFileSync(fd, 'utf-8');
     return findSectionContentFromString(content, anchor);
   } catch {
