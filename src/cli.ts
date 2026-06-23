@@ -64,7 +64,7 @@ program
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')
   .action(async (paths: string[]) => {
-    const impact = await docrelImpact(db, codegraph, paths);
+    const impact = await docrelImpact(db, paths);
     console.log(JSON.stringify(impact, null, 2));
   });
 
@@ -74,7 +74,7 @@ program
   .option('--symbol <id>', 'Symbol ID to sync')
   .action(async (opts) => {
     if (opts.symbol) {
-      const result = await syncSymbol(db, codegraph, config, opts.symbol);
+      const result = await syncSymbol(db, codegraph, config, opts.symbol, projectRoot);
       console.log(JSON.stringify(result, null, 2));
     }
   });

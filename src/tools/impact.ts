@@ -1,8 +1,6 @@
 // src/tools/impact.ts
 import type Database from 'better-sqlite3';
-import type { CodegraphClient } from '../codegraph/client.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
-import { getSymbol } from '../db/symbols.js';
 import { getDocSection } from '../db/docs.js';
 
 export interface ImpactReport {
@@ -25,7 +23,6 @@ export interface ImpactReport {
 
 export async function docrelImpact(
   db: Database.Database,
-  codegraph: CodegraphClient,
   changedFiles: string[],
 ): Promise<ImpactReport> {
   const affectedSymbols: ImpactReport['affectedSymbols'] = [];
@@ -35,43 +32,37 @@ export async function docrelImpact(
   const seenSymbolIds = new Set<string>();
 
   for (const file of changedFiles) {
-    // Find symbols in changed files
     try {
-      // Query DB once per file (outside the inner loop)
+      // Query DB for symbols in this file, then join through mappings to docs
       const allSymbols = db.prepare(
         'SELECT id, name, kind, location FROM symbols WHERE location LIKE ?',
       ).all(`${file}%`) as Array<{ id: string; name: string; kind: string; location: string }>;
 
-      const result = await codegraph.explore(`symbols in ${file}`, 20);
+      for (const dbSym of allSymbols) {
+        if (seenSymbolIds.has(dbSym.id)) continue;
+        seenSymbolIds.add(dbSym.id);
+        affectedSymbols.push(dbSym);
 
-      for (const sym of result.symbols) {
-        for (const dbSym of allSymbols) {
-          if (seenSymbolIds.has(dbSym.id)) continue;
-          seenSymbolIds.add(dbSym.id);
-          affectedSymbols.push(dbSym);
+        const mappings = getMappingsForSymbol(db, dbSym.id);
+        for (const mapping of mappings) {
+          if (seenDocIds.has(mapping.doc_id)) continue;
+          seenDocIds.add(mapping.doc_id);
 
-          // Find linked docs through mappings
-          const mappings = getMappingsForSymbol(db, dbSym.id);
-          for (const mapping of mappings) {
-            if (seenDocIds.has(mapping.doc_id)) continue;
-            seenDocIds.add(mapping.doc_id);
-
-            const doc = getDocSection(db, mapping.doc_id);
-            if (doc) {
-              affectedDocs.push({
-                id: doc.id,
-                file: doc.file,
-                anchor: doc.anchor,
-                doc_type: doc.doc_type,
-                status: doc.status,
-                relationship: mapping.rel_type,
-              });
-            }
+          const doc = getDocSection(db, mapping.doc_id);
+          if (doc) {
+            affectedDocs.push({
+              id: doc.id,
+              file: doc.file,
+              anchor: doc.anchor,
+              doc_type: doc.doc_type,
+              status: doc.status,
+              relationship: mapping.rel_type,
+            });
           }
         }
       }
     } catch {
-      // codegraph may not have indexed this file yet — skip
+      // Skip files that cause errors (e.g., unindexed)
     }
   }
 

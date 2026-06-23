@@ -3,7 +3,6 @@ import type Database from 'better-sqlite3';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { docrelCheck } from '../tools/check.js';
-import { docrelImpact } from '../tools/impact.js';
 import { scanProject } from '../discovery/scanner.js';
 import fs from 'node:fs';
 import path from 'node:path';

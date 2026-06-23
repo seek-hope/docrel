@@ -74,7 +74,7 @@ server.tool(
     paths: z.array(z.string()).describe('List of changed file paths'),
   },
   async ({ paths }) => {
-    const impact = await docrelImpact(db, codegraph, paths);
+    const impact = await docrelImpact(db, paths);
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
     };
@@ -89,7 +89,7 @@ server.tool(
     symbol_id: z.string().describe('Stable symbol ID to sync docs for'),
   },
   async ({ symbol_id }) => {
-    const result = await syncSymbol(db, codegraph, config, symbol_id);
+    const result = await syncSymbol(db, codegraph, config, symbol_id, projectRoot);
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     };

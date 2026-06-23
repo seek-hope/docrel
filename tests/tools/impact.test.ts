@@ -1,5 +1,5 @@
 // tests/tools/impact.test.ts
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeDb } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
@@ -7,24 +7,10 @@ import { upsertDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
 import { docrelImpact } from '../../src/tools/impact.js';
 import { docrelLink } from '../../src/tools/link.js';
-import { docrelDiff } from '../../src/tools/diff.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
-import type { CodegraphClient } from '../../src/codegraph/client.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-
-const mockCodegraph = {
-  explore: vi.fn().mockResolvedValue({
-    symbols: [{ name: 'login', kind: 'function', file: 'src/auth.ts', line: 42 }],
-    files: ['src/auth.ts'],
-  }),
-  impact: vi.fn().mockResolvedValue({ symbol: '', affected: [] }),
-  search: vi.fn().mockResolvedValue({ items: [] }),
-  connect: vi.fn().mockResolvedValue(undefined),
-  isAvailable: vi.fn().mockResolvedValue(true),
-  close: vi.fn().mockResolvedValue(undefined),
-} as unknown as CodegraphClient;
 
 describe('docrelImpact', () => {
   let tmpDir: string;
@@ -50,7 +36,7 @@ describe('docrelImpact', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'describes' });
 
-    const impact = await docrelImpact(db, mockCodegraph, ['src/auth.ts']);
+    const impact = await docrelImpact(db, ['src/auth.ts']);
     expect(impact.affectedDocs).toHaveLength(1);
     expect(impact.affectedDocs[0].file).toBe('docs/api.md');
   });

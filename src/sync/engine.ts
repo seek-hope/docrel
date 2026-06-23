@@ -7,7 +7,7 @@ import { getSymbol } from '../db/symbols.js';
 import { getDocSection, markDocStale, markDocSynced } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
-import { updateStandaloneDoc, findSectionContent } from './standalone.js';
+import { findSectionContent } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
 
 export interface SyncResult {
@@ -22,6 +22,7 @@ export async function syncSymbol(
   codegraph: CodegraphClient,
   config: DocRelConfig,
   symbolId: string,
+  projectRoot: string,
 ): Promise<SyncResult> {
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], errors: [] };
 
@@ -69,20 +70,12 @@ export async function syncSymbol(
 
         case 'standalone': {
           if (strategy === 'auto_update') {
+            // Agent already rewrote the doc before calling syncSymbol.
+            // Detect the new hash and record the sync.
             const sectionContent = findSectionContent(doc.file, doc.anchor);
             if (sectionContent) {
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
-                // Content was changed externally — write changes via updateStandaloneDoc.
-                // Use the first content line as a self-sync to exercise the update path.
-                const contentLines = sectionContent.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
-                const syncLine = contentLines.length > 0 ? contentLines[0] : sectionContent;
-                updateStandaloneDoc({
-                  file: doc.file,
-                  anchor: doc.anchor,
-                  oldContent: syncLine,
-                  newContent: syncLine,
-                });
                 db.prepare("UPDATE doc_sections SET content_hash = ?, updated_at = datetime('now') WHERE id = ?")
                   .run(newHash, doc.id);
                 markDocSynced(db, doc.id);
@@ -98,9 +91,9 @@ export async function syncSymbol(
 
         case 'generated': {
           if (strategy === 'auto_update') {
-            const generator = detectGenerator(doc.file, process.cwd());
+            const generator = detectGenerator(doc.file, projectRoot);
             if (generator) {
-              const genResult = updateGeneratedDoc({ file: doc.file, generator, projectRoot: process.cwd() });
+              const genResult = updateGeneratedDoc({ file: doc.file, generator, projectRoot });
               if (genResult.success) {
                 markDocSynced(db, doc.id);
                 result.docsUpdated.push(doc.file);
