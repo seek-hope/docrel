@@ -34,16 +34,47 @@ export interface SearchResult {
 
 export class CodegraphClient {
   private client: Client | null = null;
+  private connectPromise: Promise<void> | null = null;
+  private connectAborted = false;
 
   constructor(private command?: string) {}
 
   async connect(): Promise<void> {
     if (this.client) return;
+    if (this.connectPromise) return this.connectPromise;
 
+    this.connectPromise = this.doConnect();
+    try {
+      await this.connectPromise;
+    } finally {
+      this.connectPromise = null;
+    }
+  }
+
+  private async doConnect(): Promise<void> {
     // Validate command: reject path-based commands from user config
-    const cmd = this.command ?? 'codegraph';
+    let cmd = this.command ?? 'codegraph';
     if (cmd.includes('/') || cmd.includes('\\') || cmd.length > 256) {
       throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or an absolute path to a known codegraph installation.`);
+    }
+
+    // When using the default unqualified 'codegraph' command, resolve it
+    // to prevent PATH hijacking via a trojan earlier in PATH.
+    if (!this.command) {
+      try {
+        const { execFileSync } = await import('node:child_process');
+        cmd = execFileSync('which', ['codegraph'], { encoding: 'utf-8' }).trim();
+        if (!cmd || cmd.includes('\n')) {
+          throw new Error('codegraph not found in PATH');
+        }
+        // Validate resolved path is in expected locations
+        const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
+        if (!allowedPrefixes.some((p) => cmd.startsWith(p))) {
+          throw new Error(`codegraph resolved to unexpected path: ${cmd}`);
+        }
+      } catch (err: any) {
+        throw new Error(`Cannot resolve codegraph binary: ${err.message}`);
+      }
     }
 
     const transport = new StdioClientTransport({
@@ -58,6 +89,11 @@ export class CodegraphClient {
 
     try {
       await client.connect(transport);
+      // If connect was aborted after completing, discard this client
+      if (this.connectAborted) {
+        try { await client.close(); } catch {}
+        return;
+      }
       this.client = client;
     } catch (err) {
       try { await client.close(); } catch {}
@@ -66,22 +102,17 @@ export class CodegraphClient {
   }
 
   async isAvailable(timeoutMs = 5000): Promise<boolean> {
-    const controller = new AbortController();
     try {
       await Promise.race([
         this.connect(),
         new Promise<never>((_, reject) => {
-          const timer = setTimeout(() => {
-            controller.abort();
-            reject(new Error('timeout'));
-          }, timeoutMs);
-          // Clean up timer if connect resolves
-          controller.signal.addEventListener('abort', () => clearTimeout(timer));
+          setTimeout(() => reject(new Error('timeout')), timeoutMs);
         }),
       ]);
       return true;
     } catch {
-      // Clean up the client that may have connected after timeout
+      // Mark any in-flight connection as aborted so doConnect discards it
+      this.connectAborted = true;
       if (this.client) {
         this.client.close().catch(() => {});
         this.client = null;
@@ -177,9 +208,10 @@ export class CodegraphClient {
         currentLine = parseInt(lineNumMatch[1]);
       }
 
-      // Extract symbol definitions with their kind and name
+      // Extract symbol definitions with their kind and name.
+      // Matches: async function, export async function, export default function/class, etc.
       const symbolMatch = line.match(
-        /(?:function|class|interface|type|const|method|export\s+(?:function|class|interface|type|const))\s+(\w+)/
+        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method)\s+(\w+)/
       );
       if (symbolMatch && currentFile) {
         const kindMatch = line.match(
@@ -205,7 +237,7 @@ export class CodegraphClient {
 
     // Fallback: if no symbols were associated with files, extract any remaining
     if (symbols.length === 0) {
-      const symbolRegex = /(?:function|class|interface|type|const|method)\s+(\w+)/g;
+      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method)\s+(\w+)/g;
       let match: RegExpExecArray | null;
       while ((match = symbolRegex.exec(content)) !== null) {
         symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });
@@ -223,9 +255,12 @@ export class CodegraphClient {
 
     for (const line of lines) {
       // Parse lines like "symbol_name (kind) in file.ts:line"
-      const match = line.match(/(\w+)\s*\((\w+)\)\s*(?:in\s+)?(\S+):(\d+)/);
+      // Also try to capture relation type if codegraph provides it:
+      // "symbol_name (kind) [relation_type] in file.ts:line"
+      const match = line.match(/(\w+)\s*\((\w+)\)\s*(?:\[(\w+)\]\s*)?(?:in\s+)?(\S+):(\d+)/);
       if (match) {
-        affected.push({ name: match[1], kind: match[2], file: match[3], relation: 'depends_on' });
+        const relation = match[3] || 'depends_on';
+        affected.push({ name: match[1], kind: match[2], file: match[4], relation });
       }
     }
 
