@@ -193,16 +193,39 @@ server.tool(
 // ── docrel_link ────────────────────────────────────────────────
 server.tool(
   'docrel_link',
-  'Create or delete a mapping between a code symbol and a documentation section',
+  'Manage a mapping between a code symbol and a documentation section (create, update confidence, or delete)',
   {
-    action: z.enum(['create', 'delete']),
+    action: z.enum(['create', 'update', 'delete']),
     symbol_id: z.string(),
     doc_id: z.string(),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']),
+    confidence: z.number().min(0).max(1).optional().describe('Confidence 0.0-1.0. Required for update, optional for create (defaults to 1.0).'),
   },
-  async ({ action, symbol_id, doc_id, rel_type }) => {
+  async ({ action, symbol_id, doc_id, rel_type, confidence }) => {
     try {
-      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type });
+      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type, confidence });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_confirm ─────────────────────────────────────────────
+server.tool(
+  'docrel_confirm',
+  'Confirm a low-confidence mapping as correct — sets confidence to 1.0 (human/AI verified)',
+  {
+    symbol_id: z.string(),
+    doc_id: z.string(),
+    rel_type: z.enum(['describes', 'references', 'generates', 'contracts']).optional().default('describes'),
+  },
+  async ({ symbol_id, doc_id, rel_type }) => {
+    try {
+      const { docrelConfirm } = await import('./tools/link.js');
+      const result = docrelConfirm(db, symbol_id, doc_id, rel_type);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };

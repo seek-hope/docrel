@@ -14,7 +14,7 @@ import { docrelStatus } from './tools/status.js';
 import { docrelCheck } from './tools/check.js';
 import { docrelImpact } from './tools/impact.js';
 import { syncSymbol } from './sync/engine.js';
-import { docrelLink } from './tools/link.js';
+import { docrelLink, docrelConfirm } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { installHooks } from './git/hooks.js';
 import { exportMappingsJson, listAllMappings } from './db/mappings.js';
@@ -254,34 +254,55 @@ program
 
 program
   .command('link')
-  .description('Create or delete a symbol-doc mapping')
-  .argument('<action>', 'create or delete')
+  .description('Manage a symbol-doc mapping (create / update / delete)')
+  .argument('<action>', 'create, update, or delete')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
+  .option('--confidence <n>', 'Confidence 0.0-1.0 (required for update, optional for create)')
   .action((action, opts) => {
     try {
-      if (!opts.symbol) {
-        console.error('Error: --symbol <id> is required');
+      if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
+      if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
+      if (!['create', 'update', 'delete'].includes(action)) {
+        console.error(`Error: action must be 'create', 'update', or 'delete', got '${action}'`);
         exit(1);
       }
-      if (!opts.doc) {
-        console.error('Error: --doc <id> is required');
-        exit(1);
-      }
-      if (action !== 'create' && action !== 'delete') {
-        console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
+      const confidence = opts.confidence !== undefined ? parseFloat(opts.confidence) : undefined;
+      if (confidence !== undefined && (isNaN(confidence) || confidence < 0 || confidence > 1)) {
+        console.error('Error: --confidence must be between 0.0 and 1.0');
         exit(1);
       }
       const result = docrelLink(db, {
-        action: action as 'create' | 'delete',
+        action: action as 'create' | 'update' | 'delete',
         symbol_id: opts.symbol,
         doc_id: opts.doc,
         rel_type: opts.type,
+        confidence,
       });
       console.log(JSON.stringify(result, null, 2));
+      if (result.action === 'error') exit(1);
     } catch (err: any) {
       console.error('Link failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('confirm')
+  .description('Confirm a low-confidence mapping as correct (sets confidence to 1.0)')
+  .option('--symbol <id>', 'Symbol ID')
+  .option('--doc <id>', 'Document section ID')
+  .option('--type <type>', 'Relationship type', 'describes')
+  .action((opts) => {
+    try {
+      if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
+      if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
+      const result = docrelConfirm(db, opts.symbol, opts.doc, opts.type);
+      console.log(JSON.stringify(result, null, 2));
+      if (result.action === 'error') exit(1);
+    } catch (err: any) {
+      console.error('Confirm failed:', errMsg(err));
       exit(1);
     }
   });
