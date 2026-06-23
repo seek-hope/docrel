@@ -123,6 +123,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     console.warn('DocRel: updateInlineDoc — signature ambiguous, refusing partial update');
     return false;
   }
+  // If the signature was not found (sigCount === 0) and the caller expected
+  // a signature replacement (sigInputEmpty === false), refuse to return true
+  // even when the docstring was successfully replaced. Otherwise the doc is
+  // partially updated (new docstring, stale signature) but permanently marked
+  // as in_sync — future scans won't detect the stale signature.
+  if (replaced && sigCount === 0 && sigInputEmpty === false) {
+    console.warn('DocRel: updateInlineDoc — signature missing from source, refusing partial update');
+    return false;
+  }
 
   if (!replaced) {
     console.warn(`DocRel: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
@@ -503,13 +512,49 @@ export function stripCommentsAndStrings(line: string): string {
 export function generateUpdatedDocstring(
   symbolName: string,
   kind: string,
-  _oldSignature: string,
+  oldDocstring: string,
   newSignature: string,
 ): string {
-  // Generate a basic updated JSDoc/docstring based on the new signature
+  // Generate a basic updated JSDoc/docstring based on the new signature.
+  // Preserve user-written narrative content from the old docstring that falls
+  // outside the @param/@returns blocks — this prevents auto_update from
+  // silently destroying hand-written documentation (e.g., examples, notes).
   const params = extractParams(newSignature);
-  const lines = ['/**'];
-  lines.push(` * ${symbolName} — [auto-updated by DocRel]`);
+  const lines: string[] = [];
+  let inParamBlock = false;
+  let inReturnsBlock = false;
+
+  // Extract user-written narrative lines from the old docstring.
+  // Keep lines that are inside /** ... */ but NOT part of @param/@returns tags.
+  if (oldDocstring.trim()) {
+    const oldLines = oldDocstring.split('\n');
+    for (const line of oldLines) {
+      const trimmed = line.trim();
+      // Skip the opening /** and closing */
+      if (trimmed === '/**' || trimmed === '*/') continue;
+      // Detect @param and @returns blocks
+      if (/^\*\s*@param\b/.test(trimmed)) { inParamBlock = true; continue; }
+      if (/^\*\s*@returns?\b/.test(trimmed)) { inReturnsBlock = true; continue; }
+      if (/^\*\s*@\w+/.test(trimmed)) { inParamBlock = false; inReturnsBlock = false; continue; }
+      if (inParamBlock || inReturnsBlock) continue;
+      // Keep user-written narrative lines (including blank * lines between sections)
+      if (trimmed.startsWith('*') || trimmed === '') {
+        lines.push(line);
+      }
+    }
+  }
+
+  // If we have no narrative content from the old docstring, add a placeholder
+  if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) {
+    lines.length = 0;
+    lines.push('/**');
+    lines.push(` * ${symbolName} — [auto-updated by DocRel]`);
+  } else {
+    // Insert the opening /** before the preserved narrative
+    lines.unshift('/**');
+  }
+
+  // Append auto-generated @param entries
   for (const param of params) {
     lines.push(` * @param ${param.name} — ${param.type}`);
   }

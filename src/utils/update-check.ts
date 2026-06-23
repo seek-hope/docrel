@@ -83,6 +83,10 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
 
     if (!response.ok) return null;
 
+    // Validate Content-Type to defend against MITM serving crafted responses.
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) return null;
+
     const data = await response.json();
     if (typeof data?.version !== 'string' || data.version.length === 0) return null;
     const latest = data.version;

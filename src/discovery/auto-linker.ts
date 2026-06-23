@@ -160,8 +160,27 @@ export function autoLink(
     existingKeys.add(`${row.symbol_id}::${row.doc_id}::${row.rel_type}`);
   }
 
+  const MAX_COMPARISONS = 1_000_000;
+  const AUTO_LINK_TIMEOUT_MS = 30_000;
+  const startTime = Date.now();
+  let comparisons = 0;
+  let timedOut = false;
+
   for (const symbol of symbols) {
+    if (timedOut) break;
     for (const section of docSections) {
+      comparisons++;
+      if (comparisons > MAX_COMPARISONS) {
+        console.warn(`DocRel: autoLink exceeded ${MAX_COMPARISONS} comparisons — aborting. Remaining symbols/sections skipped.`);
+        timedOut = true;
+        break;
+      }
+      if (Date.now() - startTime > AUTO_LINK_TIMEOUT_MS) {
+        console.warn(`DocRel: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms — returning partial results.`);
+        timedOut = true;
+        break;
+      }
+
       const score = scorePair(symbol, section, minConfidence);
       if (!score.matched) continue;
 

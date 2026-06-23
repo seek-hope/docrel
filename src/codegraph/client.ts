@@ -183,7 +183,7 @@ export class CodegraphClient {
       // Use specific known paths rather than broad directory prefixes like
       // /usr/ which would match both /usr/bin and /usr/local/bin, allowing
       // a malicious binary placed in an earlier PATH entry to pass the check.
-      const allowedPrefixes = ['/usr/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+      const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
       // Also accept common user-level node_modules bin paths
       if (!allowedPrefixes.some((p) => cmd.startsWith(p)) &&
           !/\/(\.local\/share|\.npm|\.nvm)\//.test(cmd)) {
@@ -351,7 +351,12 @@ export class CodegraphClient {
 
     if (!content) return { symbols: [], files: [] };
 
-    const lines = content.split('\n');
+    const MAX_OUTPUT_LINES = 100_000;
+    let lines = content.split('\n');
+    if (lines.length > MAX_OUTPUT_LINES) {
+      console.warn(`DocRel: explore output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      lines = lines.slice(0, MAX_OUTPUT_LINES);
+    }
     for (const line of lines) {
       // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
       // Allow extensionless files (Makefile, Dockerfile, .gitignore, etc.)
@@ -420,8 +425,13 @@ export class CodegraphClient {
   private parseImpactOutput(symbol: string, content: string): ImpactResult {
     if (!content) return { symbol, affected: [] };
 
+    const MAX_OUTPUT_LINES = 100_000;
+    let lines = content.split('\n');
+    if (lines.length > MAX_OUTPUT_LINES) {
+      console.warn(`DocRel: impact output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      lines = lines.slice(0, MAX_OUTPUT_LINES);
+    }
     const affected: ImpactResult['affected'] = [];
-    const lines = content.split('\n');
 
     for (const line of lines) {
       // Parse lines like "symbol_name (kind) in file.ts:line"
@@ -440,8 +450,13 @@ export class CodegraphClient {
   private parseSearchOutput(content: string): SearchResult {
     if (!content) return { items: [] };
 
+    const MAX_OUTPUT_LINES = 100_000;
+    let lines = content.split('\n');
+    if (lines.length > MAX_OUTPUT_LINES) {
+      console.warn(`DocRel: search output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      lines = lines.slice(0, MAX_OUTPUT_LINES);
+    }
     const items: SearchResult['items'] = [];
-    const lines = content.split('\n');
 
     for (const line of lines) {
       const match = line.match(/(\w+)\s*\((\w+)\)\s*in\s+(\S+):(\d+)/);

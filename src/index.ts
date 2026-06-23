@@ -24,6 +24,9 @@ import { upsertDocSection } from './db/docs.js';
 import { createMapping } from './db/mappings.js';
 import { listSymbols } from './db/symbols.js';
 import { docSectionId, contentHash } from './utils/hash.js';
+import { detectAgent } from './agents/detector.js';
+import type { AgentKind } from './agents/detector.js';
+import { integrate } from './agents/integrate.js';
 
 const DOCREL_DEBUG = process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true';
 
@@ -288,6 +291,39 @@ server.tool(
   },
 );
 
+// ── docrel_integrate ───────────────────────────────────────────
+server.tool(
+  'docrel_integrate',
+  'Generate agent integration configs so DocRel is available in your coding agent (Claude Code, OpenCode, Oh My Pi, etc.)',
+  {
+    agent: z.enum(['claude-code', 'codex', 'opencode', 'oh-my-pi', 'hermes']).optional().describe('Agent to integrate with. If omitted, auto-detects the current agent.'),
+    dryRun: z.boolean().optional().default(false).describe('Preview what would be created without writing files'),
+  },
+  async ({ agent, dryRun }) => {
+    try {
+      const detected = detectAgent();
+      const agentKind: AgentKind | undefined = agent as AgentKind | undefined;
+      const targetAgent = agentKind ?? detected.kind;
+      const result = await integrate(projectRoot, targetAgent, dryRun ?? false);
+
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            detectedAgent: detected.name,
+            detectedKind: detected.kind,
+            integratedAs: result.agent,
+            filesCreated: result.filesCreated,
+            summary: result.summary,
+          }, null, 2),
+        }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
 // ── Start ──────────────────────────────────────────────────────
 // Track the highest severity exit code across concurrent shutdown calls.
 // If SIGINT (code 0) fires first and then uncaughtException (code 1) fires
@@ -343,5 +379,5 @@ main().catch((err) => {
   if (DOCREL_DEBUG && err instanceof Error && err.stack) {
     console.error('Fatal error (debug stack):', err.stack);
   }
-  process.exit(1);
+  shutdown(1).then(() => process.exit(1));
 });

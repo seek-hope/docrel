@@ -50,6 +50,7 @@ const DEFAULT_CONFIG: Omit<DocRelConfig, 'project'> = {
 };
 
 export function loadConfig(projectRoot: string): DocRelConfig {
+  if (!projectRoot) throw new Error('projectRoot is required — cannot load config without a project root');
   const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
   const project = path.basename(projectRoot) || 'unknown-project';
 

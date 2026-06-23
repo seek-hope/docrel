@@ -98,7 +98,7 @@ export async function syncSymbol(
               continue;
             }
             const newSig = symbol.raw_signature;
-            const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
+            const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, oldDocstring, newSig);
 
             // Extract current signature from the source to use as oldSignature.
             // If extraction fails (signature is null), skip the updateInlineDoc
@@ -159,10 +159,24 @@ export async function syncSymbol(
               } else if (doc.status === 'stale') {
                 // Content already reflects the code change — transition back
                 // to in_sync so the doc does not remain permanently stale.
-                if (markDocSynced(db, doc.id)) {
-                  result.docsChecked.push(doc.file);
-                } else {
-                  result.errors.push(`Failed to mark standalone doc ${doc.id} as synced — doc may have been deleted concurrently`);
+                // HOWEVER, only do this when the file's mtime is newer than
+                // doc.updated_at — if the agent encountered an error and made
+                // no changes, the content on disk may still be stale.
+                // updated_at reflects when the doc was last marked stale;
+                // a newer mtime means the file was genuinely rewritten.
+                let fileModified = false;
+                try {
+                  const st = fs.statSync(doc.file);
+                  // doc.updated_at is in ISO format from SQLite datetime('now')
+                  const docDate = new Date(doc.updated_at + 'Z').getTime();
+                  fileModified = st.mtimeMs > docDate;
+                } catch { /* stat failed — do not transition */ }
+                if (fileModified) {
+                  if (markDocSynced(db, doc.id)) {
+                    result.docsChecked.push(doc.file);
+                  } else {
+                    result.errors.push(`Failed to mark standalone doc ${doc.id} as synced — doc may have been deleted concurrently`);
+                  }
                 }
               }
             } else {
@@ -180,7 +194,10 @@ export async function syncSymbol(
               result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
             }
           } else if (strategy === 'prompt') {
-            result.errors.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy not yet implemented. Docs will not be auto-synced.`);
+            // 'prompt' is a documented strategy for manual review — treat as
+            // a warning rather than an error to avoid polluting sync results.
+            result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy requires manual review. Docs will not be auto-synced.`);
+            result.docsChecked.push(doc.file);
           }
           break;
         }
@@ -317,7 +334,7 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   );
   // Match method-like definitions: name( ... ) { or name( ... ) :
   // Use bracket-counting to handle nested parentheses in parameters
-  const methodRegex = new RegExp(`(?:async\\s+)?${escaped}\\s*\\(`);
+  const methodRegex = new RegExp(`(?:async\\s+)?\\b${escaped}\\s*\\(`);
 
   for (let i = 0; i < processedLines.length; i++) {
     const line = processedLines[i];

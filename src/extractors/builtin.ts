@@ -96,6 +96,11 @@ function makeTsRules(): RegexRule[] {
 function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string[] {
   const result: string[] = [];
   const absDir = path.resolve(projectRoot, dir);
+  // Containment check: ensure resolved path stays within projectRoot.
+  // Without this, config.yaml can specify code_dirs: ['../../../etc'] to
+  // recursively read arbitrary filesystem paths.
+  const root = path.resolve(projectRoot);
+  if (!absDir.startsWith(root + path.sep) && absDir !== root) return result;
   let stat: fs.Stats;
   try {
     stat = fs.statSync(absDir);

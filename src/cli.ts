@@ -314,17 +314,39 @@ program
   .option('--no-docs', 'Skip scanning documentation files')
   .action(async (opts) => {
     try {
-      const available = await extractor.isAvailable();
-      if (!available) {
-        console.error('No symbol extractor is available. Install codegraph or check code_dirs in .docrel/config.yaml');
-        exit(1);
+      // Pick extractor: try CodegraphExtractor, fall back to BuiltinExtractor
+      const codegraphExt = new CodegraphExtractor(codegraph);
+      const builtinExt = new BuiltinExtractor();
+      const codegraphAvailable = await codegraphExt.isAvailable();
+      const scanExtractor = codegraphAvailable ? codegraphExt : builtinExt;
+
+      if (codegraphAvailable) {
+        console.error('Using Codegraph extractor');
+      } else {
+        console.error('Codegraph not available — falling back to builtin regex extractor');
       }
-      console.log('Scanning codebase...');
-      const report = await scanProject(extractor, db, config);
-      console.log(JSON.stringify({ symbols: report }, null, 2));
+
+      // Scan symbols via extractor
+      console.error('Scanning codebase...');
+      const symbolReport = await scanProject(scanExtractor, db, config);
+
+      let docSectionReport: {
+        totalFiles: number;
+        totalSections: number;
+        newDocSections: number;
+        newMappings: number;
+        failedFiles: string[];
+      } | null = null;
+      let autoLinkReport: {
+        totalMatched: number;
+        highConfidence: number;
+        mediumConfidence: number;
+        lowConfidence: number;
+      } | null = null;
 
       if (opts.docs !== false) {
-        console.log('Scanning documentation...');
+        // Scan docs via scanDocs()
+        console.error('Scanning documentation...');
         const { sections, report: docReport } = await scanDocs(config.doc_dirs, projectRoot);
         let newDocs = 0;
         let newMappings = 0;
@@ -371,28 +393,25 @@ program
           }
         }
 
-        console.log(JSON.stringify({
-          docs: {
-            totalFiles: docReport.totalFiles,
-            totalSections: docReport.totalSections,
-            newDocSections: newDocs,
-            newMappings,
-            failedFiles: docReport.failedFiles,
-          }
-        }, null, 2));
+        docSectionReport = {
+          totalFiles: docReport.totalFiles,
+          totalSections: docReport.totalSections,
+          newDocSections: newDocs,
+          newMappings,
+          failedFiles: docReport.failedFiles,
+        };
 
-        // Run auto-linker to create zero-annotation symbol↔doc mappings
+        // Auto-link via autoLink() — creates zero-annotation symbol↔doc mappings
         const allSymbols = listSymbols(db);
-        const linkResult = autoLink(db, allSymbols, sections);
-        console.log(JSON.stringify({
-          autoLink: {
-            totalMatched: linkResult.totalMatched,
-            highConfidence: linkResult.highConfidence,
-            mediumConfidence: linkResult.mediumConfidence,
-            lowConfidence: linkResult.lowConfidence,
-          }
-        }, null, 2));
+        autoLinkReport = autoLink(db, allSymbols, sections);
       }
+
+      // Report full results as a single JSON object
+      console.log(JSON.stringify({
+        symbols: symbolReport,
+        docs: docSectionReport,
+        autoLink: autoLinkReport,
+      }, null, 2));
     } catch (err: any) {
       console.error('Scan failed:', errMsg(err));
       exit(1);

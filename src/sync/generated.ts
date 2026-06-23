@@ -28,6 +28,9 @@ const ALLOWED_BINARIES = new Set([
  *   2. Full-command prefix check: prevents option injection (e.g. `typedoc --evil-flag`).
  *      Currently redundant with the allowlist alone, but provides defense-in-depth
  *      when the allowlist is expanded in the future.
+ *   3. Flag-level validation: rejects typedoc's code-loading flags (--plugin, --options,
+ *      --tsconfig) which could be used for arbitrary code execution through a crafted
+ *      package.json.
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   if (!validateCommandSafety(cmd)) return null;
@@ -47,9 +50,6 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
 
   // Validate the full command starts with an allowed prefix to prevent
   // option injection attacks through package.json scripts.
-  // This is defense-in-depth: ALLOWED_BINARIES already rejects unknown binaries,
-  // but when the allowlist is expanded with scripts like `tsx scripts/generate-docs.ts`,
-  // the prefix check also validates the full command.
   const fullCmd = cmd.trim();
   const ALLOWED_PREFIXES: RegExp[] = [
     /^typedoc(?:\s|$)/,
@@ -57,6 +57,27 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
   ];
   if (!ALLOWED_PREFIXES.some((prefix) => prefix.test(fullCmd))) {
     return null;
+  }
+
+  // Reject typedoc code-loading flags that could execute arbitrary JS/TS.
+  // --plugin loads arbitrary modules; --options loads a config file that
+  // can specify plugins; --tsconfig can reference a crafted tsconfig.
+  // A malicious package.json could specify `typedoc --plugin ./evil.ts`
+  // which would run arbitrary code during documentation generation.
+  if (binary === 'typedoc') {
+    const genArgs = parts.slice(1);
+    for (const arg of genArgs) {
+      if (arg === '--plugin' || arg === '-p' ||
+          arg === '--options' || arg === '--tsconfig') {
+        console.error('DocRel: typedoc generator command rejected — contains code-loading flag:', arg);
+        return null;
+      }
+      if (/^--plugin=/.test(arg) || /^-p=/.test(arg) ||
+          /^--options=/.test(arg) || /^--tsconfig=/.test(arg)) {
+        console.error('DocRel: typedoc generator command rejected — contains code-loading flag:', arg);
+        return null;
+      }
+    }
   }
 
   return { binary, args: parts.slice(1) };
@@ -77,10 +98,6 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       maxBuffer: 10 * 1024 * 1024, // 10 MB output limit
     });
     if (result.error) {
-      // Log the full/truncated output to stderr for diagnostics, but return
-      // only a minimal message to MCP clients. Generator output may contain
-      // absolute filesystem paths, internal configuration, or other sensitive
-      // data that should not be exposed in structured API responses.
       const fullOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
       const truncated = fullOutput ? fullOutput.slice(-500) : '';
       if (fullOutput) console.error('DocRel: generator error output (truncated):', truncated);
@@ -128,9 +145,21 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     }
   }
 
+  // Use a safe JSON parser with depth limit to prevent stack overflow
+  // from deeply nested package.json files within the 1MB size limit.
+  const MAX_JSON_DEPTH = 100;
   let pkg: any;
   try {
-    pkg = JSON.parse(raw);
+    let depth = 0;
+    pkg = JSON.parse(raw, (_key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        depth++;
+        if (depth > MAX_JSON_DEPTH) {
+          throw new Error(`JSON nesting depth exceeds ${MAX_JSON_DEPTH}`);
+        }
+      }
+      return value;
+    });
   } catch (err: any) {
     console.error(`Warning: Failed to parse ${pkgPath}: ${err.message}`);
     return null;

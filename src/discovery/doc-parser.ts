@@ -95,7 +95,12 @@ export class MarkdownParser implements DocParser {
   readonly extensions = ['.md', '.mdx'];
 
   parse(filePath: string, content: string): ParsedDocSection[] {
+    const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
+    if (lines.length > MAX_DOC_LINES) {
+      console.warn(`DocRel: MarkdownParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      return [];
+    }
     const sections: ParsedDocSection[] = [];
 
     // Find all heading positions
@@ -212,7 +217,12 @@ export class RstParser implements DocParser {
   readonly extensions = ['.rst'];
 
   parse(filePath: string, content: string): ParsedDocSection[] {
+    const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
+    if (lines.length > MAX_DOC_LINES) {
+      console.warn(`DocRel: RstParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      return [];
+    }
     const sections: ParsedDocSection[] = [];
 
     // Find heading positions: underlined headings (line followed by === --- ~~~ ^^^ etc.)
@@ -321,7 +331,12 @@ export class AsciidocParser implements DocParser {
   readonly extensions = ['.adoc', '.asciidoc'];
 
   parse(filePath: string, content: string): ParsedDocSection[] {
+    const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
+    if (lines.length > MAX_DOC_LINES) {
+      console.warn(`DocRel: AsciidocParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      return [];
+    }
     const sections: ParsedDocSection[] = [];
 
     // Find heading positions: == or === headings
@@ -551,11 +566,16 @@ function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
   return refs;
 }
 
+const MAX_PRE_LINES = 5000;
+
 function extractPreContent(lines: string[], startIdx: number): string[] {
   const content: string[] = [];
-  for (let i = startIdx + 1; i < lines.length; i++) {
+  for (let i = startIdx + 1; i < lines.length && content.length < MAX_PRE_LINES; i++) {
     if (/<\/pre>/i.test(lines[i])) break;
     content.push(lines[i]);
+  }
+  if (content.length >= MAX_PRE_LINES) {
+    console.warn(`DocRel: extractPreContent reached limit of ${MAX_PRE_LINES} lines — content may be truncated`);
   }
   return content;
 }

@@ -26,6 +26,15 @@ export async function scanDocs(
   for (const docDir of docDirs) {
     const absDir = path.resolve(projectRoot, docDir);
 
+    // Containment check: ensure resolved path stays within projectRoot.
+    // Without this, config.yaml can specify doc_dirs: ['../../../etc'] to
+    // walk arbitrary filesystem directories.
+    const root = path.resolve(projectRoot);
+    if (!absDir.startsWith(root + path.sep) && absDir !== root) {
+      failedFiles.push(docDir);
+      continue;
+    }
+
     // It might be a single file (e.g. README.md)
     let stat: fs.Stats;
     try {
@@ -66,16 +75,27 @@ export async function scanDocs(
   };
 }
 
+const MAX_DOC_FILE_SIZE = 10 * 1024 * 1024; // 10 MB, matches inline/standalone limits
+
 function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | null {
   const ext = path.extname(absPath).toLowerCase();
   const parser = getParser(ext);
   if (!parser) return null;
 
   let content: string;
+  let fd: number | undefined;
   try {
-    content = fs.readFileSync(absPath, 'utf-8');
+    fd = fs.openSync(absPath, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) return null;
+    if (stat.size > MAX_DOC_FILE_SIZE) return null;
+    content = fs.readFileSync(fd, 'utf-8');
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
 
   const relativePath = path.relative(projectRoot, absPath);

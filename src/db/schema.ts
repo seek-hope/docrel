@@ -52,7 +52,7 @@ export function runMigrations(db: Database.Database): void {
       CREATE TABLE IF NOT EXISTS changelog (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp     TEXT NOT NULL DEFAULT (datetime('now')),
-        symbol_id     TEXT NOT NULL,
+        symbol_id     TEXT NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
         change_type   TEXT NOT NULL CHECK(change_type IN ('signature_changed','moved','renamed','deleted','created')),
         old_sig       TEXT NOT NULL DEFAULT '',
         new_sig       TEXT NOT NULL DEFAULT '',

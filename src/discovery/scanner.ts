@@ -110,17 +110,22 @@ export async function scanProject(
               // If markSignatureChanged returned false (0 rows updated), another
               // connection may have deleted the symbol between our SELECT and the
               // UPDATE inside markSignatureChanged. The symbol WAS upserted above
-              // with the new signature — check if it still exists and insert the
-              // changelog entry directly to prevent silently losing the record.
-              const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
-              if (stillExists) {
+              // with the new signature — wrap the existence check and INSERT in a
+              // transaction to close the TOCTOU gap between the SELECT and INSERT.
+              const inserted = db.transaction(() => {
+                const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
+                if (!stillExists) {
+                  console.warn(`DocRel: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
+                  return false;
+                }
                 db.prepare(
                   "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig) VALUES (?, 'signature_changed', ?, ?)"
                 ).run(id, existing.signature, sig);
+                return true;
+              })();
+              if (inserted) {
                 updatedSymbols++;
                 console.warn(`DocRel: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
-              } else {
-                console.warn(`DocRel: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
               }
             }
           }

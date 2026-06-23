@@ -4,6 +4,9 @@ import path from 'node:path';
 
 /** Validate that `filePath` resolves inside `projectRoot` (prevents path traversal). */
 export function validatePath(filePath: string, projectRoot: string): string | null {
+  // Reject empty or undefined projectRoot — path.resolve(undefined, 'foo')
+  // produces '<cwd>/foo' which would bypass containment checks.
+  if (!projectRoot || projectRoot.trim() === '') return null;
   // Reject empty file paths to prevent returning the project root itself
   if (!filePath || filePath.trim() === '') return null;
 
