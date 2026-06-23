@@ -70,8 +70,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
   }
 
   try {
-    // Use -- separator to prevent option injection through package.json scripts
-    const result = spawnSync(split.binary, ['--', ...split.args], {
+    const result = spawnSync(split.binary, split.args, {
       cwd: input.projectRoot,
       encoding: 'utf-8',
       timeout: 60_000,

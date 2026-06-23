@@ -21,8 +21,10 @@ function validateCacheEntry(raw: unknown): CacheEntry | null {
 }
 
 function cachePath(): string {
-  // Use random filename to prevent symlink-based attacks on predictable paths
-  return path.join(os.tmpdir(), `docrel-update-check-${crypto.randomUUID()}.json`);
+  // Use deterministic cache path to avoid unbounded file accumulation in /tmp.
+  // The filename includes a hash of the package name to avoid collision.
+  const pkgHash = crypto.createHash('sha256').update('docrel').digest('hex').slice(0, 16);
+  return path.join(os.tmpdir(), `docrel-update-check-${pkgHash}.json`);
 }
 
 function readCache(): CacheEntry | null {
@@ -83,7 +85,8 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
 
     if (!response.ok) return null;
 
-    const data = await response.json() as { version: string };
+    const data = await response.json();
+    if (typeof data?.version !== 'string' || data.version.length === 0) return null;
     const latest = data.version;
 
     writeCache({ lastCheck: Date.now(), latestVersion: latest });
