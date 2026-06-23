@@ -77,7 +77,7 @@ export async function syncSymbol(
           // If the symbol's source file differs from the doc's registered file,
           // warn and use the symbol's actual location (which is what gets modified).
           if (loc.file !== doc.file) {
-            result.errors.push(`Inline doc for ${symbol.name}: registered file ${doc.file} differs from symbol location ${loc.file} — updating symbol location`);
+            result.errors.push(`Inline doc for ${symbol.name}: registered file ${relPath(doc.file, projectRoot)} differs from symbol location ${relPath(loc.file, projectRoot)} — file mismatch persists`);
           }
           if (strategy === 'auto_update') {
             const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot) ?? '';
@@ -91,9 +91,16 @@ export async function syncSymbol(
             const newSig = symbol.raw_signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, '', newSig);
 
-            // Extract current signature from the source to use as oldSignature
+            // Extract current signature from the source to use as oldSignature.
+            // If extraction fails (signature is null), skip the updateInlineDoc
+            // call entirely to avoid wasted I/O (file open, read, comment stripping,
+            // and occurrence counting with empty oldSignature).
             const extractResult = extractCurrentSignature(loc.file, symbol.name, projectRoot);
-            const oldSig = extractResult.signature ?? '';
+            if (extractResult.signature === null) {
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${extractResult.reason ?? 'could not extract current signature'}`);
+              continue;
+            }
+            const oldSig = extractResult.signature;
 
             const updated = updateInlineDoc({
               file: loc.file,
@@ -107,10 +114,8 @@ export async function syncSymbol(
             if (updated) {
               markDocSynced(db, doc.id);
               result.docsUpdated.push(loc.file);
-            } else if (!oldSig) {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${loc.file}: ${extractResult.reason ?? 'could not extract current signature'}`);
             } else {
-              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${loc.file}`);
+              result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}`);
             }
           } else {
             markDocStale(db, doc.id);
@@ -138,7 +143,7 @@ export async function syncSymbol(
                 }
               }
             } else {
-              result.errors.push(`Cannot find section '${doc.anchor}' in ${doc.file} — doc may have been restructured`);
+              result.errors.push(`Cannot find section '${doc.anchor}' in ${relPath(doc.file, projectRoot)} — doc may have been restructured`);
               markDocStale(db, doc.id);
               result.docsStaled.push(doc.file);
             }
@@ -146,7 +151,7 @@ export async function syncSymbol(
             markDocStale(db, doc.id);
             result.docsStaled.push(doc.file);
           } else if (strategy === 'prompt') {
-            result.errors.push(`Standalone doc ${doc.file}: 'prompt' strategy not yet implemented. Docs will not be auto-synced.`);
+            result.errors.push(`Standalone doc ${relPath(doc.file, projectRoot)}: 'prompt' strategy not yet implemented. Docs will not be auto-synced.`);
           }
           break;
         }
@@ -160,10 +165,10 @@ export async function syncSymbol(
                 markDocSynced(db, doc.id);
                 result.docsUpdated.push(doc.file);
               } else {
-                result.errors.push(`Failed to regenerate ${doc.file}: ${genResult.output}`);
+                result.errors.push(`Failed to regenerate ${relPath(doc.file, projectRoot)}: ${genResult.output}`);
               }
             } else {
-              result.errors.push(`No generator found for ${doc.file}. Marking as stale.`);
+              result.errors.push(`No generator found for ${relPath(doc.file, projectRoot)}. Marking as stale.`);
               markDocStale(db, doc.id);
               result.docsStaled.push(doc.file);
             }
@@ -201,6 +206,16 @@ export async function syncSymbol(
 const MAX_LINES = 100_000;
 
 import { escapeRegex, validatePath } from '../utils/fs.js';
+import path from 'node:path';
+
+/** Ensure a file path is relative to projectRoot in error messages.
+ *  DB-stored paths are already relative but this provides defense-in-depth
+ *  against accidentally storing or leaking absolute paths. */
+function relPath(p: string, root: string): string {
+  if (p.startsWith(root)) return path.relative(root, p);
+  // Already relative — ensure root-relative marker for clarity
+  return p.startsWith('.') ? p : `./${p}`;
+}
 
 interface ExtractResult {
   signature: string | null;
