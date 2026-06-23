@@ -78,11 +78,12 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       maxBuffer: 10 * 1024 * 1024, // 10 MB output limit
     });
     if (result.error) {
-      // Log full output to console for diagnostics, but return a truncated
-      // version to MCP clients to avoid leaking verbose generator output.
+      // Log a truncated version to console for diagnostics, and return a
+      // truncated version to MCP clients. The full output is written to a
+      // debug log file under .docrel/ if needed for deeper diagnostics.
       const fullOutput = [result.stdout, result.stderr].filter(Boolean).join('\n');
-      if (fullOutput) console.error('DocRel: generator error output:', fullOutput);
       const truncated = fullOutput ? fullOutput.slice(-500) : '';
+      if (fullOutput) console.error('DocRel: generator error output (truncated):', truncated);
       return {
         success: false,
         output: truncated ? `Generator failed: ${result.error.message}\n...${truncated}` : `Generator failed: ${result.error.message}`,
@@ -90,7 +91,8 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
     }
     if (result.status !== 0) {
       const fullOutput = [result.stderr, result.stdout].filter(Boolean).join('\n') || `exit code ${result.status}`;
-      console.error('DocRel: generator non-zero exit:', fullOutput);
+      const truncated = fullOutput.slice(-500);
+      console.error('DocRel: generator non-zero exit:', truncated);
       return {
         success: false,
         output: `Generator exited with code ${result.status} — check server logs for details`,

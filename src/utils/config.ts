@@ -57,6 +57,8 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     return { project, ...DEFAULT_CONFIG };
   }
 
+  const configRelPath = `.docrel/config.yaml`;
+
   let userConfig: Partial<DocRelConfig>;
 
   try {
@@ -64,12 +66,15 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     const parsed = parseYaml(raw);
     const result = userConfigSchema.safeParse(parsed);
     if (!result.success) {
-      console.error(`Warning: Invalid config in ${configPath}: ${result.error.message}. Using defaults.`);
+      console.error(`Warning: Invalid config in ${configRelPath}: ${result.error.message}. Using defaults.`);
       return { project, ...DEFAULT_CONFIG };
     }
     userConfig = result.data as Partial<DocRelConfig>;
   } catch (err: any) {
-    console.error(`Warning: Failed to load ${configPath}: ${err.message}. Using defaults.`);
+    // Sanitize the error message: only log the relative config path,
+    // not the absolute project root, to prevent information disclosure.
+    // Also avoid echoing raw err.message which may contain filesystem paths.
+    console.error(`Warning: Failed to load ${configRelPath}: YAML parse error. Using defaults.`);
     return { project, ...DEFAULT_CONFIG };
   }
 
