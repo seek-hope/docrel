@@ -48,10 +48,23 @@ export function docrelLink(
       return { action: 'deleted', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: 'Mapping deleted.' };
     }
   } catch (err: any) {
-    // Rewrite raw SQLite FK errors into actionable messages
-    const message = err.message.includes('FOREIGN KEY')
-      ? `Cannot ${params.action} mapping: the symbol or document section does not exist. Create them first with 'docrel scan' or manually.`
-      : err.message;
-    return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message };
+    // Check for SQLite constraint errors (SQLITE_CONSTRAINT = 19, includes FK, PK, UNIQUE, CHECK)
+    const isConstraint = err.code === 'SQLITE_CONSTRAINT' || err.errno === 19;
+    if (isConstraint) {
+      const symExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(params.symbol_id);
+      const docExists = db.prepare('SELECT 1 FROM doc_sections WHERE id = ?').get(params.doc_id);
+      let message = `Cannot ${params.action} mapping: `;
+      if (!symExists && !docExists) {
+        message += 'both symbol and document section do not exist.';
+      } else if (!symExists) {
+        message += `symbol "${params.symbol_id}" does not exist.`;
+      } else if (!docExists) {
+        message += `document section "${params.doc_id}" does not exist.`;
+      } else {
+        message += `constraint violation: ${err.message}`;
+      }
+      return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message };
+    }
+    return { action: 'error', symbol_id: params.symbol_id, doc_id: params.doc_id, rel_type: params.rel_type, message: err.message };
   }
 }
