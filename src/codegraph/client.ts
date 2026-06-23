@@ -56,6 +56,19 @@ export class CodegraphClient {
         clearTimeout(timeout);
         if (!result.isError) return;
       } catch {
+        // One retry before discarding the client — transient errors
+        // (protocol timeouts, network hiccups) shouldn't force a full reconnect.
+        try {
+          const controller2 = new AbortController();
+          const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
+          const result2 = await this.client.callTool(
+            { name: 'codegraph_status', arguments: {} },
+            undefined,
+            { signal: controller2.signal },
+          );
+          clearTimeout(timeout2);
+          if (!result2.isError) return;
+        } catch {}
         // Client died — close and reconnect below
         try { await this.client.close(); } catch {}
         this.client = null;
@@ -110,10 +123,16 @@ export class CodegraphClient {
     );
 
     try {
+      // Attach a no-op catch to the losing promise so it does not become
+      // an unhandled rejection when the race is settled by the other side.
+      const connectPromise = client.connect(transport);
       await Promise.race([
-        client.connect(transport),
+        connectPromise,
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`)), CONNECT_TIMEOUT_MS)
+          setTimeout(() => {
+            connectPromise.catch(() => {});
+            reject(new Error(`codegraph connect timed out after ${CONNECT_TIMEOUT_MS}ms`));
+          }, CONNECT_TIMEOUT_MS)
         ),
       ]);
       // If connect was aborted after completing, discard this client
@@ -243,12 +262,13 @@ export class CodegraphClient {
 
       // Extract symbol definitions with their kind and name.
       // Matches: async function, export async function, export default function/class, etc.
+      // Also supports Python (def), Rust (fn), Go (func), and C (struct).
       const symbolMatch = line.match(
-        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method)\s+(\w+)/
+        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+(\w+)/
       );
       if (symbolMatch && currentFile) {
         const kindMatch = line.match(
-          /\b(function|class|interface|type|const|method|enum)\b/
+          /\b(function|class|interface|type|const|method|enum|fn|def|func|struct)\b/
         );
         symbols.push({
           name: symbolMatch[1],
@@ -270,7 +290,7 @@ export class CodegraphClient {
 
     // Fallback: if no symbols were associated with files, extract any remaining
     if (symbols.length === 0) {
-      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method)\s+(\w+)/g;
+      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+(\w+)/g;
       let match: RegExpExecArray | null;
       while ((match = symbolRegex.exec(content)) !== null) {
         symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });

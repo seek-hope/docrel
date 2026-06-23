@@ -2,7 +2,7 @@
 import type Database from 'better-sqlite3';
 import type { CodegraphClient } from '../codegraph/client.js';
 import type { DocRelConfig } from '../utils/config.js';
-import { upsertSymbol } from '../db/symbols.js';
+import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
 
 /** File extension → language name mapping (module-level, created once). */
@@ -81,11 +81,15 @@ export async function scanProject(
             signature: sig,
             raw_signature: rawSig,
           });
+          // Record changelog entry so docrelDiff and the changelog table
+          // surface what changed between scans.
+          markSignatureChanged(db, id, existing.signature, sig, rawSig);
           updatedSymbols++;
         }
       }
     } catch (err: any) {
-      console.warn(`DocRel: Failed to scan directory '${codeDir}': ${err.message}`);
+      const safeName = codeDir.replace(/[\x00-\x1f\x7f]/g, '');
+      console.warn(`DocRel: Failed to scan directory '${safeName}': ${err.message}`);
     }
   }
 
