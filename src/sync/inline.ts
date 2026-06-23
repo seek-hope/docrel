@@ -41,23 +41,24 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
   let replaced = false;
 
-  // Only replace if the old text appears exactly once (avoid ambiguity)
-  // Trim to reject whitespace-only strings that pass truthiness
-  if (input.oldSignature.trim() && input.newSignature.trim()) {
-    const count = countOccurrences(content, input.oldSignature);
-    if (count === 1) {
-      content = content.replace(input.oldSignature, input.newSignature);
-      replaced = true;
-    }
-    // If count is 0 or >1, skip to avoid replacing wrong text
-  }
+  // Compute occurrence counts on the ORIGINAL content before any mutations.
+  // If the signature replacement modifies content in a way that happens to
+  // introduce the old docstring text, counting after mutation would inflate
+  // the docstring count and incorrectly skip the replacement.
+  const sigCount = (input.oldSignature?.trim() && input.newSignature?.trim())
+    ? countOccurrences(content, input.oldSignature) : -1;
+  const docCount = (input.oldDocstring?.trim() && input.newDocstring?.trim())
+    ? countOccurrences(content, input.oldDocstring) : -1;
 
-  if (input.oldDocstring.trim() && input.newDocstring.trim()) {
-    const count = countOccurrences(content, input.oldDocstring);
-    if (count === 1) {
-      content = content.replace(input.oldDocstring, input.newDocstring);
-      replaced = true;
-    }
+  if (sigCount === 1) {
+    content = content.replace(input.oldSignature, input.newSignature);
+    replaced = true;
+  }
+  // If count is 0 or >1, skip to avoid replacing wrong text
+
+  if (docCount === 1) {
+    content = content.replace(input.oldDocstring, input.newDocstring);
+    replaced = true;
   }
 
   if (!replaced) return false;
@@ -98,7 +99,14 @@ export function extractDocstring(file: string, symbolName: string, projectRoot?:
   }
   if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
 
-  const content = fs.readFileSync(resolved, 'utf-8');
+  let content = fs.readFileSync(resolved, 'utf-8');
+  // Strip all multi-line block comments (/* ... */) from the full content
+  // before per-line processing. The state machine in stripCommentsAndStrings
+  // does not track open block comments across lines, so a multi-line
+  // /* ... */ could cause a symbol name inside the comment to be falsely
+  // matched as a definition. Exclude JSDoc-style comments (/** ... */) which
+  // use a double-asterisk and are the very docstrings we aim to extract.
+  content = content.replace(/\/\*[^*][\s\S]*?\*\//g, '');
   const lines = content.split('\n');
 
   const symRegex = escapedSymRegex(symbolName);
