@@ -405,7 +405,7 @@ function stripAllBlockComments(content: string): string {
   return out.join('');
 }
 
-function stripCommentsAndStrings(line: string): string {
+export function stripCommentsAndStrings(line: string): string {
   // Safety: operates per-line only — each while loop is bounded by line.length.
   // Multi-line strings are not supported; input is always split by '\n' first.
   const out: string[] = [];

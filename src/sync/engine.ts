@@ -8,6 +8,7 @@ import { getSymbol } from '../db/symbols.js';
 import { getDocSection, markDocStale, markDocSynced, markDocSyncedWithHash } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
+import { stripCommentsAndStrings } from './inline.js';
 import { findSectionContent } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
 
@@ -76,7 +77,9 @@ export async function syncSymbol(
           }
           // If the symbol's source file differs from the doc's registered file,
           // warn and use the symbol's actual location (which is what gets modified).
-          if (loc.file !== doc.file) {
+          // Normalize both paths to avoid false mismatches from differing formats
+          // (e.g., src/foo.ts vs ./src/foo.ts or inconsistent slash direction).
+          if (path.normalize(loc.file) !== path.normalize(doc.file)) {
             result.errors.push(`Inline doc for ${symbol.name}: registered file ${relPath(doc.file, projectRoot)} differs from symbol location ${relPath(loc.file, projectRoot)} — file mismatch persists`);
           }
           if (strategy === 'auto_update') {
@@ -264,37 +267,67 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // Use bracket-counting to handle nested parentheses in parameters
   const methodRegex = new RegExp(`(?:async\\s+)?${escaped}\\s*\\(`);
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
-    if (keywordRegex.test(trimmed)) {
+    // Strip comments and strings before matching keywords to prevent
+    // false positives from symbol names appearing inside string literals
+    // (e.g., const x = 'function login(a: string): User;') or comments.
+    const codeOnly = stripCommentsAndStrings(trimmed);
+    if (keywordRegex.test(codeOnly)) {
       // For 'function' declarations: skip overload signatures that end with
       // ';' (e.g., `async function login(a: string): Promise<void>;`) to find
       // the actual implementation line instead.
       if (trimmed.includes('function')) {
         const parenIdx = trimmed.indexOf('(');
         if (parenIdx >= 0) {
-          const closeParen = findMatchingClose(trimmed, parenIdx);
+          let closeParen = findMatchingClose(trimmed, parenIdx);
+          // If closing paren is not on this line, read subsequent lines to
+          // build a multi-line signature (e.g., async function login(\n  user: string\n): Promise<User>) .
+          let multiLineSig = trimmed;
+          let lineIdx = i;
+          while (closeParen < 0 && lineIdx + 1 < lines.length) {
+            lineIdx++;
+            multiLineSig += '\n' + lines[lineIdx];
+            closeParen = findMatchingClose(multiLineSig, parenIdx);
+          }
           if (closeParen >= 0) {
-            const after = trimmed.slice(closeParen + 1).trimStart();
+            const after = multiLineSig.slice(closeParen + 1).trimStart();
             if (!after.startsWith('{') && !after.startsWith(':')) {
               continue; // no body follows — overload declaration, skip
             }
             if (after.endsWith(';')) {
               continue; // overload declaration ending with ; — skip
             }
+            return { signature: multiLineSig.trim() };
           }
         }
       }
       return { signature: trimmed };
     }
-    const mStart = methodRegex.exec(trimmed);
+    // Test method regex against codeOnly to avoid matching inside comments/strings.
+    // If it matches, run exec against the original trimmed to get the correct
+    // index position for the parenthesis tracking.
+    const mStart = methodRegex.exec(codeOnly);
     if (mStart) {
-      const parenStart = mStart.index + mStart[0].length - 1; // position of '('
-      const closing = findMatchingClose(trimmed, parenStart);
-      if (closing >= 0 && closing < trimmed.length - 1) {
-        const after = trimmed.slice(closing + 1).trimStart();
-        if (after.startsWith('{') || after.startsWith(':')) {
-          return { signature: trimmed };
+      // Re-run against the original trimmed to get correct positional info
+      const realStart = methodRegex.exec(trimmed);
+      if (realStart) {
+        const parenStart = realStart.index + realStart[0].length - 1; // position of '('
+        let closing = findMatchingClose(trimmed, parenStart);
+        // Build multi-line signature if closing paren is not on this line
+        let multiLineSig = trimmed;
+        let lineIdx = i;
+        while (closing < 0 && lineIdx + 1 < lines.length) {
+          lineIdx++;
+          multiLineSig += '\n' + lines[lineIdx];
+          closing = findMatchingClose(multiLineSig, parenStart);
+        }
+        if (closing >= 0 && closing < multiLineSig.length - 1) {
+          const after = multiLineSig.slice(closing + 1).trimStart();
+          if (after.startsWith('{') || after.startsWith(':')) {
+            return { signature: multiLineSig.trim() };
+          }
         }
       }
     }

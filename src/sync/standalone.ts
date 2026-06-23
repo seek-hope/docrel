@@ -125,6 +125,14 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
     // The error message contains absolute filesystem paths, and these errors
     // propagate through engine.ts into SyncResult.errors, which may be
     // serialized as JSON to CLI or MCP clients.
+    // However, distinguish legitimate access errors (EACCES, EIO, ELOOP,
+    // ENAMETOOLONG) from ENOENT and path-traversal — a file that exists
+    // and is within projectRoot but cannot be resolved should produce a
+    // diagnostic instead of silently returning null.
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'EACCES' || code === 'EIO' || code === 'ELOOP' || code === 'ENAMETOOLONG') {
+      console.warn(`DocRel: cannot resolve real path for ${path.relative(root, resolved)} — ${code}`);
+    }
     return null;
   }
 

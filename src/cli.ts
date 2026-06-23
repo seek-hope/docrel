@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getDb } from './db/connection.js';
+import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
@@ -19,6 +19,22 @@ import { scanProject } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCREL_VERSION } from './version.js';
 
+/** Safe error message: handles null, undefined, string, and non-Error throws. */
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e ?? 'unknown error');
+}
+
+/** Exit with database cleanup — ensures WAL checkpointing completes. */
+function exit(code: number): never {
+  try { closeAllDbs(); } catch { /* best effort */ }
+  process.exit(code);
+}
+
+// Register exit handler for uncaught exceptions so WAL is always flushed
+process.on('exit', () => {
+  try { closeAllDbs(); } catch { /* best effort */ }
+});
+
 const program = new Command();
 const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
 
@@ -32,8 +48,8 @@ try {
   runMigrations(db);
   codegraph = new CodegraphClient(config.codegraph?.command);
 } catch (err: any) {
-  console.error('DocRel initialization failed:', err.message);
-  process.exit(1);
+  console.error('DocRel initialization failed:', errMsg(err));
+  exit(1);
 }
 
 program
@@ -110,8 +126,8 @@ strategies:
       steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
       console.log(`\nNext: docrel status   — check documentation health`);
     } catch (err: any) {
-      console.error('Init failed:', err.message);
-      process.exit(1);
+      console.error('Init failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -133,8 +149,8 @@ program
         console.log(JSON.stringify(status, null, 2));
       }
     } catch (err: any) {
-      console.error('Status failed:', err.message);
-      process.exit(1);
+      console.error('Status failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -150,14 +166,14 @@ program
       if (opts.file) {
         filtered = report.staleDocs.filter((d) => d.file === opts.file);
       }
-      const passed = !opts.strict || filtered.length === 0;
+      const passed = report.passed && (!opts.strict || filtered.length === 0);
       console.log(JSON.stringify({ ...report, passed, staleDocs: filtered }, null, 2));
       if (opts.strict && filtered.length > 0) {
-        process.exit(1);
+        exit(1);
       }
     } catch (err: any) {
-      console.error('Check failed:', err.message);
-      process.exit(1);
+      console.error('Check failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -170,8 +186,8 @@ program
       const impact = docrelImpact(db, paths);
       console.log(JSON.stringify(impact, null, 2));
     } catch (err: any) {
-      console.error('Impact analysis failed:', err.message);
-      process.exit(1);
+      console.error('Impact analysis failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -183,13 +199,13 @@ program
     try {
       if (!opts.symbol) {
         console.error('Error: --symbol <id> is required');
-        process.exit(1);
+        exit(1);
       }
       const result = await syncSymbol(db, config, opts.symbol, projectRoot);
       console.log(JSON.stringify(result, null, 2));
     } catch (err: any) {
-      console.error('Sync failed:', err.message);
-      process.exit(1);
+      console.error('Sync failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -204,15 +220,15 @@ program
     try {
       if (!opts.symbol) {
         console.error('Error: --symbol <id> is required');
-        process.exit(1);
+        exit(1);
       }
       if (!opts.doc) {
         console.error('Error: --doc <id> is required');
-        process.exit(1);
+        exit(1);
       }
       if (action !== 'create' && action !== 'delete') {
         console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
-        process.exit(1);
+        exit(1);
       }
       const result = docrelLink(db, {
         action: action as 'create' | 'delete',
@@ -222,8 +238,8 @@ program
       });
       console.log(JSON.stringify(result, null, 2));
     } catch (err: any) {
-      console.error('Link failed:', err.message);
-      process.exit(1);
+      console.error('Link failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -236,12 +252,12 @@ program
       const diff = docrelDiff(db, symbolId);
       if (!diff) {
         console.error('Symbol not found');
-        process.exit(1);
+        exit(1);
       }
       console.log(JSON.stringify(diff, null, 2));
     } catch (err: any) {
-      console.error('Diff failed:', err.message);
-      process.exit(1);
+      console.error('Diff failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -253,8 +269,8 @@ program
       installHooks(projectRoot);
       console.log('DocRel hooks installed successfully.');
     } catch (err: any) {
-      console.error('Failed to install hooks:', err.message);
-      process.exit(1);
+      console.error('Failed to install hooks:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -266,14 +282,14 @@ program
       const available = await codegraph.isAvailable();
       if (!available) {
         console.error('Codegraph is not available. Start codegraph first, or set codegraph.command in .docrel/config.yaml');
-        process.exit(1);
+        exit(1);
       }
       console.log('Scanning codebase...');
       const report = await scanProject(codegraph, db, config);
       console.log(JSON.stringify(report, null, 2));
     } catch (err: any) {
-      console.error('Scan failed:', err.message);
-      process.exit(1);
+      console.error('Scan failed:', errMsg(err));
+      exit(1);
     }
   });
 
@@ -289,8 +305,8 @@ program
       fs.writeFileSync(outPath, JSON.stringify(mappings, null, 2), 'utf-8');
       console.log(`Exported ${mappings.length} mappings to ${outPath}`);
     } catch (err: any) {
-      console.error(`Failed to export mappings: ${err.message}`);
-      process.exit(1);
+      console.error(`Failed to export mappings: ${errMsg(err)}`);
+      exit(1);
     }
   });
 
@@ -322,7 +338,7 @@ program
       }
       if (!registry.startsWith('https://registry.npmjs.org/') && !registry.startsWith('https://registry.yarnpkg.com/')) {
         console.error(`Security warning: npm registry is set to ${registry}. Expected https://registry.npmjs.org/. Aborting update.`);
-        process.exit(1);
+        exit(1);
       }
 
       console.log('Updating DocRel...');
@@ -339,7 +355,7 @@ program
         console.error('Update failed: npm install returned an error. Run with DOCREL_DEBUG=1 for details.');
       }
       console.error('Try: npm install -g docrel@latest');
-      process.exit(1);
+      exit(1);
     }
   });
 

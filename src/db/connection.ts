@@ -91,8 +91,13 @@ export function getDb(projectRoot: string): Database.Database {
     try { if (fs.existsSync(walPath)) fs.chmodSync(walPath, 0o600); } catch { /* WAL may not exist yet */ }
     try { if (fs.existsSync(shmPath)) fs.chmodSync(shmPath, 0o600); } catch { /* SHM may not exist yet */ }
   } catch (err: any) {
-    // Use relative path to avoid exposing absolute filesystem paths in error messages
-    throw new Error(`Failed to initialize DocRel database in .docrel/: ${err.message}`);
+    // Sanitize the error message to avoid leaking the absolute filesystem
+    // path (which is present in EACCES,mkdirSync,and Database constructor
+    // errors) to MCP clients and CLI users.
+    const sanitized = err instanceof Error
+      ? err.message.replace(resolved, '<projectRoot>')
+      : String(err);
+    throw new Error(`Failed to initialize DocRel database in .docrel/: ${sanitized}`);
   }
 
   connections.set(resolved, db);

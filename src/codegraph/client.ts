@@ -170,11 +170,11 @@ export class CodegraphClient {
       { capabilities: {} },
     );
 
+    // Store the connect error so we can surface it if the connection
+    // fails (not just times out). Declared outside try so the catch
+    // block can access it when the timeout wins the race.
+    let connectErr: Error | null = null;
     try {
-      // Store the connect error so we can surface it if the connection
-      // fails (not just times out). The pre-attached catch prevents
-      // unhandled rejection when Promise.race resolves to the timeout.
-      let connectErr: Error | null = null;
       const connectPromise = client.connect(transport).catch((e) => {
         connectErr = e as Error;
       });
@@ -199,6 +199,11 @@ export class CodegraphClient {
       this.client = client;
     } catch (err) {
       try { await client.close(); } catch {}
+      // If the connect promise resolved with an error (connectErr is set),
+      // surface it instead of the timeout error that won the race.
+      // On a dual failure (timeout fires just as connect fails), the actual
+      // connection error is more useful for diagnosis than the generic timeout.
+      if (connectErr) throw connectErr;
       throw err;
     }
   }

@@ -29,8 +29,9 @@ const ALLOWED_BINARIES = new Set([
  *      when the allowlist is expanded in the future.
  */
 function splitCommand(cmd: string): { binary: string; args: string[] } | null {
-  // Reject commands with shell metacharacters
-  if (/[;&|`$()\n<>!]/.test(cmd)) return null;
+  // Reject commands with shell metacharacters, including \r (CR), \t (TAB),
+  // and \x00 (null byte) which would bypass the \s split downstream.
+  if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
   if (cmd.length > MAX_COMMAND_LENGTH) return null;
   const parts = cmd.trim().split(/\s+/);
   if (parts.length === 0) return null;
@@ -154,7 +155,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       console.warn(`DocRel: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
     }
     // Validate it's a safe command (no shell metacharacters)
-    if (/[;&|`$()\n<>!]/.test(cmd)) return null;
+    if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
     if (cmd.length > MAX_COMMAND_LENGTH) return null;
     return cmd;
   }
@@ -163,7 +164,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
     const cmd = scripts['docs:generate'];
     if (typeof cmd !== 'string') return null;
-    if (/[;&|`$()\n<>!]/.test(cmd)) return null;
+    if (/[;&|`$()\n\r\t\x00<>!]/.test(cmd)) return null;
     if (cmd.length > MAX_COMMAND_LENGTH) return null;
     return cmd;
   }
