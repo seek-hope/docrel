@@ -35,8 +35,10 @@ const userConfigSchema = z.object({
   }).optional(),
 });
 
-const DEFAULT_CONFIG: DocRelConfig = {
-  project: path.basename(process.cwd()),
+// NOTE: 'project' is intentionally NOT in DEFAULT_CONFIG — it is always
+// computed from projectRoot in loadConfig to avoid stale process.cwd() values
+// captured at module import time.
+const DEFAULT_CONFIG: Omit<DocRelConfig, 'project'> = {
   doc_dirs: ['docs', 'README.md'],
   code_dirs: ['src'],
   strategies: {
@@ -49,9 +51,10 @@ const DEFAULT_CONFIG: DocRelConfig = {
 
 export function loadConfig(projectRoot: string): DocRelConfig {
   const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
+  const project = path.basename(projectRoot);
 
   if (!fs.existsSync(configPath)) {
-    return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
+    return { project, ...DEFAULT_CONFIG };
   }
 
   let userConfig: Partial<DocRelConfig>;
@@ -62,15 +65,16 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     const result = userConfigSchema.safeParse(parsed);
     if (!result.success) {
       console.error(`Warning: Invalid config in ${configPath}: ${result.error.message}. Using defaults.`);
-      return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
+      return { project, ...DEFAULT_CONFIG };
     }
     userConfig = result.data as Partial<DocRelConfig>;
   } catch (err: any) {
     console.error(`Warning: Failed to load ${configPath}: ${err.message}. Using defaults.`);
-    return { ...DEFAULT_CONFIG, project: path.basename(projectRoot) };
+    return { project, ...DEFAULT_CONFIG };
   }
 
   return {
+    project: userConfig.project ?? project,
     ...DEFAULT_CONFIG,
     ...userConfig,
     strategies: { ...DEFAULT_CONFIG.strategies, ...userConfig.strategies },
