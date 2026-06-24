@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
-import { loadConfig } from './utils/config.js';
+import { loadConfig, validateConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
 import { CodegraphExtractor } from './extractors/codegraph.js';
 import { BuiltinExtractor } from './extractors/builtin.js';
@@ -442,8 +442,26 @@ program
   .command('scan')
   .description('Scan the codebase and discover all symbols and documentation sections')
   .option('--no-docs', 'Skip scanning documentation files')
+  .option('--dry-run', 'Preview what would be scanned without writing to the database')
   .action(async (opts) => {
     try {
+      // Pre-flight config validation
+      const configIssues = validateConfig(config, projectRoot);
+      const configErrors = configIssues.filter(i => i.severity === 'error');
+      if (configErrors.length > 0) {
+        for (const i of configErrors) {
+          console.error(`❌ ${i.field}: ${i.message}`);
+        }
+        console.error('Fix the errors above or run `docrel config validate` for details.');
+        exit(1);
+      }
+
+      if (opts.dryRun) {
+        console.error('[dry-run] Would scan code directories:', config.code_dirs.join(', '));
+        console.error('[dry-run] Would scan doc directories:', config.doc_dirs.join(', '));
+        console.error('[dry-run] Database writes are skipped.');
+      }
+
       // Pick extractor: try CodegraphExtractor, fall back to BuiltinExtractor
       const codegraphExt = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
       const builtinExt = new BuiltinExtractor();
@@ -458,7 +476,9 @@ program
 
       // Scan symbols via extractor
       console.error('Scanning codebase...');
-      const symbolReport = await scanProject(scanExtractor, db, config, projectRoot);
+      const symbolReport = opts.dryRun
+        ? { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs: [], scannedIds: [] }
+        : await scanProject(scanExtractor, db, config, projectRoot);
 
       let docSectionReport: {
         totalFiles: number;
@@ -684,6 +704,26 @@ configCommand
       console.error('Config failed:', errMsg(err));
       exit(1);
     }
+  });
+
+configCommand
+  .command('validate')
+  .description('Validate .docrel/config.yaml for common misconfigurations')
+  .action(() => {
+    const issues = validateConfig(config, projectRoot);
+    if (issues.length === 0) {
+      console.log('✅ Configuration is valid.');
+      return;
+    }
+    const errors = issues.filter(i => i.severity === 'error');
+    const warnings = issues.filter(i => i.severity === 'warning');
+    for (const i of errors) {
+      console.error(`❌ ${i.field}: ${i.message}`);
+    }
+    for (const i of warnings) {
+      console.warn(`⚠️  ${i.field}: ${i.message}`);
+    }
+    if (errors.length > 0) exit(1);
   });
 
 // Default action for `docrel config` (no subcommand) → show config

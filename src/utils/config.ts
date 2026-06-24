@@ -4,7 +4,12 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { escapeRegex } from './fs.js';
 
+/** Current config schema version. Increment on breaking changes. */
+export const CONFIG_SCHEMA_VERSION = 1;
+
 export interface DocRelConfig {
+  /** Config schema version for migration support. */
+  version: number;
   project: string;
   doc_dirs: string[];
   code_dirs: string[];
@@ -24,6 +29,7 @@ export interface DocRelConfig {
 }
 
 const userConfigSchema = z.object({
+  version: z.number().int().min(1).optional(),
   project: z.string().optional(),
   doc_dirs: z.array(z.string()).optional(),
   code_dirs: z.array(z.string()).optional(),
@@ -43,7 +49,7 @@ const userConfigSchema = z.object({
 // NOTE: 'project' is intentionally NOT in DEFAULT_CONFIG — it is always
 // computed from projectRoot in loadConfig to avoid stale process.cwd() values
 // captured at module import time.
-const DEFAULT_CONFIG: Omit<DocRelConfig, 'project'> = {
+const DEFAULT_CONFIG: Omit<DocRelConfig, 'project' | 'version'> = {
   doc_dirs: ['docs', 'README.md'],
   code_dirs: ['src'],
   strategies: {
@@ -60,7 +66,7 @@ export function loadConfig(projectRoot: string): DocRelConfig {
   const project = path.basename(projectRoot) || 'unknown-project';
 
   if (!fs.existsSync(configPath)) {
-    return { project, ...DEFAULT_CONFIG };
+    return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
   }
 
   const configRelPath = `.docrel/config.yaml`;
@@ -73,7 +79,7 @@ export function loadConfig(projectRoot: string): DocRelConfig {
     const result = userConfigSchema.safeParse(parsed);
     if (!result.success) {
       console.error(`Warning: Invalid config in ${configRelPath}: ${result.error.message}. Using defaults.`);
-      return { project, ...DEFAULT_CONFIG };
+      return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
     }
     userConfig = result.data as Partial<DocRelConfig>;
   } catch (err: any) {
@@ -85,14 +91,73 @@ export function loadConfig(projectRoot: string): DocRelConfig {
       .replace(new RegExp(escapeRegex(projectRoot), 'g'), '<projectRoot>')
       .replace(/\/(?:home|opt|var|etc|tmp)\/[^\s:,)]*/g, '<path>');
     console.error(`Warning: Failed to load ${configRelPath}: ${sanitizedMsg}. Using defaults.`);
-    return { project, ...DEFAULT_CONFIG };
+    return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
   }
 
   return {
-    project: userConfig.project ?? project,
     ...DEFAULT_CONFIG,
     ...userConfig,
+    project: userConfig.project ?? project,
+    version: userConfig.version ?? CONFIG_SCHEMA_VERSION,
     strategies: { ...DEFAULT_CONFIG.strategies, ...userConfig.strategies },
     codegraph: { ...DEFAULT_CONFIG.codegraph, ...userConfig.codegraph },
   };
+}
+
+export interface ConfigValidationIssue {
+  field: string;
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+/**
+ * Pre-flight config validation. Checks for common misconfigurations and
+ * returns actionable diagnostic messages. Call before scanning.
+ */
+export function validateConfig(config: DocRelConfig, projectRoot: string): ConfigValidationIssue[] {
+  const issues: ConfigValidationIssue[] = [];
+
+  // Version check — warn if config is from a future version
+  if (config.version > CONFIG_SCHEMA_VERSION) {
+    issues.push({
+      field: 'version',
+      severity: 'warning',
+      message: `Config schema version ${config.version} is newer than DocRel's supported version ${CONFIG_SCHEMA_VERSION}. Some features may not work. Consider upgrading DocRel.`,
+    });
+  }
+
+  // Code directories must exist
+  for (const dir of config.code_dirs) {
+    const absDir = path.resolve(projectRoot, dir);
+    if (!fs.existsSync(absDir)) {
+      issues.push({
+        field: `code_dirs.${dir}`,
+        severity: 'error',
+        message: `Code directory '${dir}' does not exist. Create it or update code_dirs in .docrel/config.yaml.`,
+      });
+    }
+  }
+
+  // Doc directories must exist
+  for (const dir of config.doc_dirs) {
+    const absPath = path.resolve(projectRoot, dir);
+    if (!fs.existsSync(absPath)) {
+      issues.push({
+        field: `doc_dirs.${dir}`,
+        severity: 'warning',
+        message: `Doc path '${dir}' does not exist. Create it or update doc_dirs in .docrel/config.yaml.`,
+      });
+    }
+  }
+
+  // At least one code directory should be configured
+  if (config.code_dirs.length === 0) {
+    issues.push({
+      field: 'code_dirs',
+      severity: 'error',
+      message: 'No code_dirs configured. Add at least one directory (e.g., src) to .docrel/config.yaml.',
+    });
+  }
+
+  return issues;
 }
