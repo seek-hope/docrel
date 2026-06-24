@@ -430,12 +430,18 @@ program
 program
   .command('watch')
   .description('Watch for file changes and auto-update mappings (for non-agent use)')
-  .action(async () => {
+  .option('--debounce <ms>', 'Debounce delay in milliseconds', '500')
+  .option('--daemon', 'Write a PID file to .docrel/watch.pid for process management')
+  .action(async (opts) => {
     const { startWatch } = await import('./tools/watch.js');
-    const cleanup = await startWatch(projectRoot, db, extractor, config);
+    const cleanup = await startWatch(projectRoot, db, extractor, config, {
+      debounceMs: parseInt(opts.debounce, 10) || 500,
+      daemon: opts.daemon ?? false,
+    });
     // Keep running until SIGINT
-    process.on('SIGINT', () => { cleanup(); process.exit(0); });
-    process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+    const shutdown = (code: number) => { cleanup(); process.exit(code); };
+    process.on('SIGINT', () => shutdown(0));
+    process.on('SIGTERM', () => shutdown(0));
   });
 
 program

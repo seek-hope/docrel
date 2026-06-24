@@ -13,6 +13,32 @@ import path from 'node:path';
 interface WatchOptions {
   /** Debounce delay in milliseconds (default 500ms) */
   debounceMs?: number;
+  /** Write a PID file for daemon management (default false) */
+  daemon?: boolean;
+}
+
+export interface WatchStatus {
+  running: boolean;
+  pid?: number;
+  pidFile?: string;
+  startedAt?: string;
+  watchPaths: string[];
+  lastEventAt?: string;
+  eventsProcessed: number;
+  errorsEncountered: number;
+  lastError?: string;
+}
+
+let watchStatus: WatchStatus = {
+  running: false,
+  watchPaths: [],
+  eventsProcessed: 0,
+  errorsEncountered: 0,
+};
+
+/** Get the current watch status for health checks and monitoring. */
+export function getWatchStatus(): WatchStatus {
+  return { ...watchStatus };
 }
 
 /**
@@ -50,6 +76,26 @@ export async function startWatch(
       return () => {};
     }
 
+    // Daemon mode: write PID file for process management
+    let pidFile: string | undefined;
+    if (opts.daemon) {
+      const pidDir = path.join(projectRoot, '.docrel');
+      try { fs.mkdirSync(pidDir, { recursive: true, mode: 0o700 }); } catch { /* ok */ }
+      pidFile = path.join(pidDir, 'watch.pid');
+      fs.writeFileSync(pidFile, String(process.pid), { flag: 'w', mode: 0o600 });
+    }
+
+    // Update global watch status
+    watchStatus = {
+      running: true,
+      pid: process.pid,
+      pidFile,
+      startedAt: new Date().toISOString(),
+      watchPaths,
+      eventsProcessed: 0,
+      errorsEncountered: 0,
+    };
+
     console.log(`Watching ${watchPaths.length} path(s): ${watchPaths.join(', ')}`);
 
     const watcher = chokidar.watch(watchPaths, {
@@ -58,6 +104,17 @@ export async function startWatch(
       ignoreInitial: true,
     });
 
+    /** Group watch events by the nearest watch-path parent directory for
+     *  finer-grained debouncing. A change in src/auth/ and a change in
+     *  src/api/ should NOT cancel each other's debounce timer. */
+    function groupKey(filePath: string): string {
+      const rel = path.relative(projectRoot, filePath);
+      const inCode = config.code_dirs.some(d => rel.startsWith(d));
+      // Find the top-level directory within the project root
+      const topDir = rel.split(path.sep)[0] || rel;
+      return `${inCode ? 'code' : 'docs'}/${topDir}`;
+    }
+
     const handleChange = (eventType: string, filePath: string) => {
       const rel = path.relative(projectRoot, filePath);
 
@@ -65,37 +122,51 @@ export async function startWatch(
       if (isIgnored(rel, projectRoot)) return;
 
       const inCode = config.code_dirs.some(d => rel.startsWith(d));
+      const key = groupKey(filePath);
 
-      // Debounce: group rapid changes
-      const key = inCode ? 'code' : 'docs';
+      // Debounce by directory group — events in different groups don't cancel each other
       if (debounceTimers.has(key)) {
         clearTimeout(debounceTimers.get(key)!);
       }
 
       debounceTimers.set(key, setTimeout(async () => {
         debounceTimers.delete(key);
+        watchStatus.eventsProcessed++;
+        watchStatus.lastEventAt = new Date().toISOString();
         const now = new Date().toLocaleTimeString();
 
         try {
           if (inCode) {
-            console.log(`[${now}] Code change: ${rel} — re-scanning symbols...`);
-            const report = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
+            console.log(`[${now}] Code change (${key}): ${rel} — re-scanning symbols...`);
+            await scanProject(extractor, db, config, projectRoot, false /* incremental */);
             // Auto-link against existing docs
             const symbols = listSymbols(db);
             const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
             ingestDocSections(db, docs);
             const linkResult = autoLink(db, symbols, docs);
-            console.log(`[${now}] Re-scanned: ${report.newSymbols} new symbols, ${linkResult.totalMatched} new mappings`);
+            console.log(`[${now}] Done: ${linkResult.totalMatched} new mappings`);
           } else {
-            console.log(`[${now}] Doc change: ${rel} — re-scanning docs...`);
+            console.log(`[${now}] Doc change (${key}): ${rel} — re-scanning docs...`);
             const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
             ingestDocSections(db, docs);
             const symbols = listSymbols(db);
             const linkResult = autoLink(db, symbols, docs);
-            console.log(`[${now}] Re-scanned: ${docs.length} doc sections, ${linkResult.totalMatched} new mappings`);
+            console.log(`[${now}] Done: ${linkResult.totalMatched} new mappings`);
           }
         } catch (err: any) {
-          console.error(`[${now}] Watch error: ${err.message}`);
+          watchStatus.errorsEncountered++;
+          watchStatus.lastError = err instanceof Error ? err.message : String(err);
+          console.error(`[${now}] Watch error (${key}): ${err instanceof Error ? err.message : err}`);
+
+          // Write a recovery marker so `docrel status` can surface the failure
+          try {
+            const markerDir = path.join(projectRoot, '.docrel');
+            fs.mkdirSync(markerDir, { recursive: true });
+            fs.writeFileSync(path.join(markerDir, 'watch-failed'), JSON.stringify({
+              at: new Date().toISOString(),
+              error: err instanceof Error ? err.message : String(err),
+            }));
+          } catch { /* best-effort marker */ }
         }
       }, debounceMs));
     };
@@ -103,11 +174,15 @@ export async function startWatch(
     watcher.on('add', (p: string) => handleChange('add', p));
     watcher.on('change', (p: string) => handleChange('change', p));
     watcher.on('unlink', (p: string) => {
+      watchStatus.eventsProcessed++;
+      watchStatus.lastEventAt = new Date().toISOString();
       const now = new Date().toLocaleTimeString();
       console.log(`[${now}] File removed: ${path.relative(projectRoot, p)}`);
     });
 
     watcher.on("error", (err: any) => {
+      watchStatus.errorsEncountered++;
+      watchStatus.lastError = err instanceof Error ? err.message : String(err);
       console.error(`Watch error: ${err.message}`);
     });
 
@@ -116,9 +191,16 @@ export async function startWatch(
     return () => {
       watcher.close();
       for (const t of debounceTimers.values()) clearTimeout(t);
+      // Remove PID file on clean shutdown
+      if (pidFile) {
+        try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
+      }
+      watchStatus.running = false;
       console.log('DocRel watch stopped.');
     };
   } catch (err: any) {
+    watchStatus.running = false;
+    watchStatus.lastError = err instanceof Error ? err.message : String(err);
     if (err?.code === 'ERR_MODULE_NOT_FOUND' || err?.code === 'MODULE_NOT_FOUND') {
       console.error('chokidar is not installed. Run: npm install -g chokidar');
     } else {

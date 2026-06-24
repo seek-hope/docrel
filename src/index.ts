@@ -488,6 +488,23 @@ server.tool(
   },
 );
 
+// ── docrel_watch_status ──────────────────────────────────────
+server.tool(
+  'docrel_watch_status',
+  'Get the current status of the file watcher (running, events, errors)',
+  async () => {
+    try {
+      const { getWatchStatus } = await import('./tools/watch.js');
+      const status = getWatchStatus();
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
 // ── docrel_health ─────────────────────────────────────────────
 server.tool(
   'docrel_health',
