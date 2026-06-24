@@ -187,9 +187,30 @@ export class MarkdownParser implements DocParser {
     }
     const sections: ParsedDocSection[] = [];
 
-    // Find all heading positions
+    // Find all heading positions, skipping headings inside fenced code blocks.
+    // Uses the same code-fence tracking technique as findSectionContentFromString
+    // in standalone.ts to prevent # lines inside ``` blocks from creating spurious
+    // doc sections (e.g., "# This is a comment" inside a code example).
+    const fenceOpenRegex = /^(```+|~~~+)\s*$/;
     const headings: { level: number; line: number; text: string }[] = [];
+    let inCodeBlock = false;
+    let fenceToken = '';
     for (let i = 0; i < lines.length; i++) {
+      if (!inCodeBlock) {
+        const fenceMatch = lines[i].match(fenceOpenRegex);
+        if (fenceMatch) {
+          inCodeBlock = true;
+          fenceToken = fenceMatch[1];
+          continue;
+        }
+      } else {
+        const fenceMatch = lines[i].match(fenceOpenRegex);
+        if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+          inCodeBlock = false;
+          fenceToken = '';
+        }
+        continue;
+      }
       const m = lines[i].match(/^(#{1,6})\s+(.+)/);
       if (m) {
         headings.push({ level: m[1].length, line: i, text: m[2].trim() });

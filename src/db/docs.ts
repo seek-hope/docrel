@@ -39,7 +39,7 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
       anchor = excluded.anchor,
       content_hash = excluded.content_hash,
       doc_type = excluded.doc_type,
-      status = excluded.status,
+      status = CASE WHEN doc_sections.status = 'stale' THEN 'stale' ELSE excluded.status END,
       updated_at = datetime('now')
     RETURNING *
   `).get(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync') as DocSectionRow | undefined;

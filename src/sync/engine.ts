@@ -236,11 +236,16 @@ export async function syncSymbol(
                 if (resolvedPath) {
                   try {
                     const st = fs.statSync(resolvedPath);
-                    // doc.updated_at uses space-separated format from SQLite
-                    // datetime('now'). Replace space with 'T' for valid
-                    // ISO 8601 per ECMAScript spec (Date.parse requires T).
-                    const docDate = new Date(doc.updated_at.replace(' ', 'T') + 'Z').getTime();
-                    fileModified = st.mtimeMs > docDate;
+                    // Use new Date() directly — the JS Date constructor handles
+                    // both space-separated (SQLite datetime('now')) and T-separated
+                    // ISO 8601 formats, with and without timezone offsets.
+                    // Guard against NaN (empty string, malformed date) — when the
+                    // timestamp is unparseable, conservatively skip the transition
+                    // rather than incorrectly marking a stale doc as in-sync.
+                    const docMs = new Date(doc.updated_at).getTime();
+                    if (!isNaN(docMs)) {
+                      fileModified = st.mtimeMs > docMs;
+                    }
                   } catch (err: any) {
                     const code = (err as NodeJS.ErrnoException)?.code;
                     if (code !== 'ENOENT') {

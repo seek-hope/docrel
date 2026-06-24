@@ -99,7 +99,7 @@ export async function postCommitHook(
     const diff = await git.diff([`${log.latest.hash}^`, log.latest.hash]);
 
     // Re-scan affected symbols and mark docs as stale where needed
-    await scanProject(extractor, db, config);
+    await scanProject(extractor, db, config, projectRoot);
   } catch (err: any) {
     // Log a prominent warning with actionable next steps. If the scan fails
     // (e.g., codegraph not running), the commit succeeds but docs are not

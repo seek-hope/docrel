@@ -26,10 +26,11 @@ export interface ImpactReport {
 }
 
 function escapeLike(str: string): string {
-  // Escape backslashes FIRST so they don't become unintended escape characters
-  // in the LIKE pattern with ESCAPE '\'. For example, a Windows path like
-  // 'src\bar.ts' would match 'srcbar.ts' without proper escaping.
-  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  // Escape % and _ FIRST, then escape backslashes. Reversing the order
+  // (backslash before %) causes the inserted escape backslash to be
+  // re-processed as an escape character: '\' + '%' → '\\' + '\%' →
+  // '\\\\%' which matches two backslashes (not one) in the data.
+  return str.replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/\\/g, '\\\\');
 }
 
 export function docrelImpact(

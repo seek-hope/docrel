@@ -389,15 +389,34 @@ function readSourceSnippet(symbolName: string, projectRoot: string): string {
     const srcDir = path.join(projectRoot, 'src');
     if (!fs.existsSync(srcDir)) return `(no src/ directory found)`;
 
-    const walkDir = (dir: string): string | null => {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const walkDir = (dir: string, depth = 0): string | null => {
+      // Cap recursion depth to prevent stack overflow from deeply nested or
+      // circular directory structures (e.g., symlink loops resolved by isDirectory()).
+      if (depth > 20) return null;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return null;
+      }
       for (const e of entries) {
         const full = path.join(dir, e.name);
         if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
-          const found = walkDir(full);
+          // Verify symlink containment for directories before recursing.
+          // isDirectory() on a Dirent follows symlinks — a symlink at
+          // src/secrets -> /etc would have isDirectory()=true and would
+          // be recursed into without this check.
+          let realDir: string;
+          try { realDir = fs.realpathSync(full); } catch { continue; }
+          if (!realDir.startsWith(projectRoot + path.sep) && realDir !== projectRoot) continue;
+          const found = walkDir(realDir, depth + 1);
           if (found) return found;
         } else if (e.isFile() && /\.(ts|js|py|rs|go|java)$/.test(e.name)) {
-          const content = fs.readFileSync(full, 'utf-8');
+          // Verify symlink containment for individual files.
+          let realFile: string;
+          try { realFile = fs.realpathSync(full); } catch { continue; }
+          if (!realFile.startsWith(projectRoot + path.sep) && realFile !== projectRoot) continue;
+          const content = fs.readFileSync(realFile, 'utf-8');
           if (content.includes(symbolName)) {
             // Extract surrounding lines
             const lines = content.split('\n');

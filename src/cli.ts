@@ -138,7 +138,7 @@ strategies:
       if (opts.scan) {
         const available = await extractor.isAvailable();
         if (available) {
-          const report = await scanProject(extractor, db, config);
+          const report = await scanProject(extractor, db, config, projectRoot);
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
         } else {
           steps.push('Skipped scan: no extractor available (run \'docrel scan\' later)');
@@ -434,7 +434,7 @@ program
 
       // Scan symbols via extractor
       console.error('Scanning codebase...');
-      const symbolReport = await scanProject(scanExtractor, db, config);
+      const symbolReport = await scanProject(scanExtractor, db, config, projectRoot);
 
       let docSectionReport: {
         totalFiles: number;
@@ -791,7 +791,7 @@ program
       }
 
       console.error('Scanning codebase for GC...');
-      const scanReport = await scanProject(gcExtractor, db, config);
+      const scanReport = await scanProject(gcExtractor, db, config, projectRoot);
 
       console.error('Running garbage collection...');
       const gcReport = docrelGc(db, scanReport, opts.dryRun ?? false);

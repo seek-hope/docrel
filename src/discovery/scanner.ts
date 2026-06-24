@@ -56,6 +56,7 @@ export async function scanProject(
   extractor: SymbolExtractor,
   db: Database.Database,
   config: DocRelConfig,
+  projectRoot: string,
 ): Promise<ScanReport> {
   assertDbOpen(db);
   const failedDirs: string[] = [];
@@ -67,8 +68,6 @@ export async function scanProject(
   let newSymbols = 0;
   let updatedSymbols = 0;
   const scannedIds = new Set<string>();
-
-  const projectRoot = process.env.DOCREL_PROJECT_ROOT ?? process.cwd();
 
   for (const codeDir of config.code_dirs) {
     try {

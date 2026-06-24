@@ -81,7 +81,7 @@ export async function startWatch(
         try {
           if (inCode) {
             console.log(`[${now}] Code change: ${rel} — re-scanning symbols...`);
-            const report = await scanProject(extractor, db, config);
+            const report = await scanProject(extractor, db, config, projectRoot);
             // Auto-link against existing docs
             const symbols = listSymbols(db);
             const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
