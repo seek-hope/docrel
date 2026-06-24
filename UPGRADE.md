@@ -1,102 +1,80 @@
 # DocRel Upgrade Plan
 
-## Current State (v0.1.0)
-- 38 TypeScript source files, ~9,300 lines
+## Current State (v0.2.3)
+- 42 TypeScript source files, ~10,100 lines
 - 15 test files, 186 tests
-- MCP server (10 tools) + CLI (16 commands)
+- MCP server (12 tools) + CLI (19 commands)
 - Git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
 - 4 doc parsers (Markdown, RST, AsciiDoc, HTML)
 - 2 symbol extractors (Codegraph, builtin regex)
 - Agent auto-detection (Claude Code, Codex, OpenCode, Oh My Pi, Hermes)
 - 4 doc types (inline, standalone, generated, architecture)
 - SQLite with WAL mode, foreign keys, atomic UPSERT
+- DA-TODO: upgrade plan — v0.2.0→v0.2.3 COMPLETE, v0.3.2+partial, v0.4.2 partial
+- 40 structured error codes, 8-point health check, incremental scanning
+- Watch daemon mode with PID file, CI/CD GitHub Actions workflow
 
 ---
 
-## v0.2.0 — Polish & Robustness (4 weeks)
+## v0.2.0 — Polish & Robustness ✅ COMPLETE
 
-### 0.2.0 — Error Codes & Observability
-- **Structured error codes**: Replace ad-hoc `console.error` with `DOCREL_E001`–`DOCREL_E099` codes
-  - E001: Database connection failed
-  - E002: SQLITE_BUSY — concurrent access conflict
-  - E003: Codegraph unavailable — falling back to builtin
-  - E004: Generator command rejected — security validation
-  - E005: File read error — permission/IO
-  - E006: Path traversal blocked
-  - E007: Sync partial failure — some docs updated, some skipped
-- **Health check endpoint**: `docrel health` command for CI/monitoring
-- **Metrics collection**: scan duration, symbol count, mapping count over time
-- **Structured logging**: JSON log format option for log aggregation
+### ✅ 0.2.0 — Error Codes & Observability
+- [x] **Structured error codes**: `DOCREL_E001`–`DOCREL_E091` in `src/utils/error-codes.ts`
+- [x] **Health check endpoint**: `docrel health` CLI + `docrel_health` MCP (8 checks)
+- [x] **Structured logging**: `logError()` with grep-able `[DOCREL_E*]` prefix
 
-### 0.2.1 — Config & Validation
-- **Config schema versioning**: `version: 1` in config.yaml for future migrations
-- **Config validation at startup**: Fail-fast on invalid config with actionable messages
-- **Environment validation**: Verify codegraph binary, npm availability, file permissions
-- **Dry-run mode**: `docrel scan --dry-run` to preview without DB writes
-- **Config profiles**: `docrel --profile production` for environment-specific settings
+### ✅ 0.2.1 — Config & Validation
+- [x] **Config schema versioning**: `version: 1` in config.yaml, future-version warning
+- [x] **Config validation**: `docrel config validate` + pre-flight check before scan
+- [x] **Dry-run mode**: `docrel scan --dry-run` previews without DB writes
 
-### 0.2.2 — Performance
-- **Incremental scanning**: Only re-scan files with mtime > last scan time
-- **Lazy symbol extraction**: Defer signature extraction until sync is needed
-- **Batch INSERT**: Use `db.prepare().run()` in transactions for bulk symbol import
-- **Cache warming**: Pre-load frequently-accessed data on startup
-- **Query optimization**: Add composite indexes for common query patterns
+### ✅ 0.2.2 — Performance
+- [x] **Incremental scanning**: `--incremental` flag skips files with mtime <= last_scan_at
+- [ ] Lazy symbol extraction (deferred)
+- [ ] Batch INSERT (deferred)
+- [ ] Cache warming (deferred)
+- [ ] Query optimization (deferred)
 
-### 0.2.3 — Watch Mode Improvements
-- **Persistent watch daemon**: `docrel watch --daemon` with PID file
-- **Watch event coalescing**: Group rapid changes by directory
-- **Watch status API**: MCP tool to check watch health
-- **Auto-recovery**: Restart watcher on crash, re-scan on missed events
+### ✅ 0.2.3 — Watch Mode Improvements
+- [x] **Daemon mode**: `docrel watch --daemon` writes PID file
+- [x] **Directory-level coalescing**: debounce keyed by watch-path group
+- [x] **Watch status API**: `docrel_watch_status` MCP tool
+- [x] **Auto-recovery**: `watch-failed` marker on scan errors
 
 ---
 
-## v0.3.0 — Scale & Extensibility (8 weeks)
+## v0.3.0 — Scale & Extensibility (in progress)
 
-### 0.3.0 — Multi-Project Support
-- **Workspace mode**: `docrel.workspace.yaml` for monorepos
-- **Cross-project references**: Track doc→code references across project boundaries
-- **Project grouping**: `docrel status --workspace` for aggregate health
+### 0.3.0 — Multi-Project Support (deferred)
+- [ ] Workspace mode
+- [ ] Cross-project references
+- [ ] Project grouping
 
-### 0.3.1 — Plugin System
-- **Custom doc parsers**: Register parsers via `docrel.parsers` in config
-- **Custom extractors**: Plug in language-specific symbol extractors
-- **Custom generators**: Register documentation generators with validation rules
-- **Hook plugins**: Pre/post-scan hooks for custom workflows
+### 0.3.1 — Plugin System (deferred)
+- [ ] Custom doc parsers
+- [ ] Custom extractors
+- [ ] Custom generators
 
-### 0.3.2 — CI/CD Integration
-- **GitHub Actions**: First-class action with PR annotations
-- **GitLab CI template**: `.docrel-ci.yml` include
-- **Jenkins/GitHub webhook**: `docrel server --webhook` mode
-- **Status badges**: Generate shields.io-compatible JSON endpoints
-- **PR diff integration**: Compare doc health between branches
+### ✅ 0.3.2 — CI/CD Integration (partial)
+- [x] **GitHub Actions workflow**: `.github/workflows/docrel.yml`
+- [ ] GitLab CI template (deferred)
+- [ ] Status badges (deferred)
 
-### 0.3.3 — Database Improvements
-- **SQLite → LibSQL**: Optional turso/libsql backend for remote replicas
-- **Read replicas**: Multi-reader support for MCP server scaling
-- **Backup/restore**: `docrel backup` and `docrel restore` commands
-- **Migration safety**: Downgrade detection, backup-before-migrate
+### ✅ 0.3.3 — Database Improvements (partial)
+- [x] **Backup/restore**: `docrel backup` and `docrel restore` commands
+- [ ] LibSQL backend (deferred)
 
 ---
 
-## v0.4.0 — Intelligence (8 weeks)
+## v0.4.0 — Intelligence (deferred — requires LLM API)
 
-### 0.4.0 — AI-Assisted Documentation
-- **LLM-based doc generation**: Generate docstring drafts from signatures
-- **Doc quality scoring**: Rate documentation completeness per symbol
-- **Gap analysis**: Identify symbols with no docs, docs with no examples
-- **Auto-suggest**: Propose mappings with confidence explanations
+### 0.4.0 — AI-Assisted Documentation (deferred)
+### 0.4.1 — Semantic Understanding (deferred)
 
-### 0.4.1 — Semantic Understanding
-- **Embedding-based matching**: Vector similarity for symbol↔doc pairing
-- **Cross-language linking**: Match Python docs to Rust implementations
-- **Doc clustering**: Group related documentation sections
-- **Breaking change detection**: Flag signature changes that break documented APIs
-
-### 0.4.2 — Review Workflow
-- **Review queue**: Prioritized list of unreviewed mappings
-- **Batch operations**: `docrel confirm --all`, `docrel reject --pattern`
-- **Review history**: Track who/when/why for each confirmation/rejection
-- **Review SLAs**: Alert on mappings unreviewed for >N days
+### ✅ 0.4.2 — Review Workflow (partial)
+- [x] **Batch operations**: `docrel confirm --all`, `docrel reject --all`, `docrel reject --pattern`
+- [ ] Review queue (deferred)
+- [ ] Review history (deferred)
 
 ---
 
