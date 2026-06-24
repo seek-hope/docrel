@@ -26,11 +26,12 @@ export interface ImpactReport {
 }
 
 function escapeLike(str: string): string {
-  // Escape % and _ FIRST, then escape backslashes. Reversing the order
-  // (backslash before %) causes the inserted escape backslash to be
-  // re-processed as an escape character: '\' + '%' → '\\' + '\%' →
-  // '\\\\%' which matches two backslashes (not one) in the data.
-  return str.replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/\\/g, '\\\\');
+  // Escape the escape character FIRST so that backslashes inserted to
+  // escape wildcards are not themselves double-escaped. The previous
+  // order (wildcards before backslash) turned 'file_test.ts' into
+  // 'file\\_test.ts' — the doubled backslash consumes the escape,
+  // leaving '_' as a wildcard rather than a literal underscore.
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
 
 export function docrelayImpact(

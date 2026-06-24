@@ -74,8 +74,25 @@ async function createExtractor(cg: CodegraphClient, cfg: ReturnType<typeof loadC
   return new BuiltinExtractor();
 }
 
-async function ensureContext(): Promise<void> {
+/** Check if doc-relay has been initialized in this project. */
+function isProjectInitialized(): boolean {
+  return fs.existsSync(path.join(projectRoot, '.docrelay')) ||
+         fs.existsSync(path.join(projectRoot, '.git', 'docrelay.db'));
+}
+
+/** Guard: commands that need project state exit with clear guidance. */
+function requireProject(): void {
+  if (!isProjectInitialized()) {
+    console.error('Not initialized. Run `doc-relay init` first to set up DocRelay for this project.');
+    exit(1);
+  }
+}
+
+async function ensureContext(opts?: { allowUninitialized?: boolean }): Promise<void> {
   if (_ctxReady) return;
+  // Guard against running commands outside an initialized project,
+  // except for init (which creates the project) and config (read-only).
+  if (!opts?.allowUninitialized) requireProject();
   try {
     config = loadConfig(projectRoot);
     db = getDb(projectRoot);
@@ -102,7 +119,7 @@ program
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
     try {
-      await ensureContext();
+      await ensureContext({ allowUninitialized: true });
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
       const docrelayDir = path.join(projectRoot, '.docrelay');
@@ -830,6 +847,7 @@ configCommand
   .command('validate')
   .description('Validate .docrelay/config.yaml for common misconfigurations')
   .action(async () => {
+    await ensureContext();
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
       console.log('✅ Configuration is valid.');

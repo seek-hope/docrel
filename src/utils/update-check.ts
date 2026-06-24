@@ -83,7 +83,7 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch('https://registry.npmjs.org/docrelay/latest', {
+    const response = await fetch('https://registry.npmjs.org/doc-relay/latest', {
       signal: controller.signal,
       headers: { 'Accept': 'application/json' },
     });
