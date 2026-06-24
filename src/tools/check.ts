@@ -15,7 +15,7 @@ export interface CheckReport {
   error?: string;
 }
 
-export function docrelCheck(db: Database.Database, strict = false): CheckReport {
+export function docsyncCheck(db: Database.Database, strict = false): CheckReport {
   try {
     assertDbOpen(db);
     const staleRows = db.prepare(`
@@ -54,7 +54,7 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
 
     return { passed, staleDocs, summary };
   } catch (err: any) {
-    console.error('docrelCheck failed:', err);
+    console.error('docsyncCheck failed:', err);
     // Database errors always indicate the check could not run — the result
     // is not trustworthy regardless of strict mode. Return passed: false
     // with a sanitized error message to prevent information disclosure.
@@ -73,7 +73,7 @@ export function docrelCheck(db: Database.Database, strict = false): CheckReport 
 export function formatCheckMarkdown(report: CheckReport): string {
   const lines: string[] = [];
 
-  lines.push('## DocRel Check');
+  lines.push('## DocSync Check');
   lines.push('');
 
   if (report.error) {

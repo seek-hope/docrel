@@ -22,7 +22,7 @@ describe('doc_sections and mappings CRUD', () => {
   const docId = docSectionId('docs/api.md', 'authentication');
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);

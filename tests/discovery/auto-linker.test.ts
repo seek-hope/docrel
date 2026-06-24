@@ -16,7 +16,7 @@ describe('autoLink', () => {
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-autolink-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-autolink-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);

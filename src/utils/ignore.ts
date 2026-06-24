@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const IGNORE_FILE = '.docrelignore';
+const IGNORE_FILE = '.docsyncignore';
 
 interface CompiledPattern {
   regex: RegExp;
@@ -18,7 +18,7 @@ export function clearIgnoreCache(): void {
 }
 
 /**
- * Parse a .docrelignore file and return compiled regex patterns.
+ * Parse a .docsyncignore file and return compiled regex patterns.
  * Supports gitignore-style syntax:
  *   - `#` comments and blank lines
  *   - `*` matches anything except /
@@ -38,7 +38,7 @@ function compilePatterns(projectRoot: string): CompiledPattern[] {
     raw = fs.readFileSync(ignorePath, 'utf-8');
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`DocRel: cannot read .docrelignore:`, (err as NodeJS.ErrnoException)?.message ?? err);
+      console.warn(`DocSync: cannot read .docsyncignore:`, (err as NodeJS.ErrnoException)?.message ?? err);
     }
     cache = { projectRoot, patterns };
     return patterns;
@@ -132,7 +132,7 @@ function escapeRegexChar(ch: string): string {
 }
 
 /**
- * Check whether a file path is ignored by .docrelignore.
+ * Check whether a file path is ignored by .docsyncignore.
  * @param filePath - Relative path from project root
  * @param projectRoot - Absolute project root path
  */

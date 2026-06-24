@@ -4,18 +4,18 @@ import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
-import { docrelStatus } from '../../src/tools/status.js';
+import { docsyncStatus } from '../../src/tools/status.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-describe('docrelStatus', () => {
+describe('docsyncStatus', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);
@@ -27,7 +27,7 @@ describe('docrelStatus', () => {
   });
 
   it('reports zeroes for empty database', () => {
-    const status = docrelStatus(db);
+    const status = docsyncStatus(db);
     expect(status.totalSymbols).toBe(0);
     expect(status.linkedPercentage).toBe(0);
     expect(status.syncPercentage).toBe(0);
@@ -41,7 +41,7 @@ describe('docrelStatus', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'describes' });
 
-    const status = docrelStatus(db);
+    const status = docsyncStatus(db);
     expect(status.totalSymbols).toBe(1);
     expect(status.linkedSymbols).toBe(1);
     expect(status.linkedPercentage).toBe(100);

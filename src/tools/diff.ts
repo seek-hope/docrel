@@ -32,7 +32,7 @@ export interface DiffResult {
   report?: DiffReport;
 }
 
-export function docrelDiff(db: Database.Database, symbolId: string): DiffResult {
+export function docsyncDiff(db: Database.Database, symbolId: string): DiffResult {
   try {
     assertDbOpen(db);
     const symbol = getSymbol(db, symbolId);
@@ -59,7 +59,7 @@ export function docrelDiff(db: Database.Database, symbolId: string): DiffResult 
       },
     };
   } catch (err: any) {
-    console.error('docrelDiff failed:', err.message);
+    console.error('docsyncDiff failed:', err.message);
     return { found: false, reason: 'db_error', message: 'Database query error — check server logs for details' };
   }
 }
@@ -70,7 +70,7 @@ export function docrelDiff(db: Database.Database, symbolId: string): DiffResult 
 export function formatDiffMarkdown(report: DiffReport): string {
   const lines: string[] = [];
 
-  lines.push('## DocRel Diff');
+  lines.push('## DocSync Diff');
   lines.push('');
 
   // Symbol header

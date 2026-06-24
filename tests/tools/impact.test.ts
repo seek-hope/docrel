@@ -5,19 +5,19 @@ import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
-import { docrelImpact, formatImpactMarkdown } from '../../src/tools/impact.js';
-import { docrelLink } from '../../src/tools/link.js';
+import { docsyncImpact, formatImpactMarkdown } from '../../src/tools/impact.js';
+import { docsyncLink } from '../../src/tools/link.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-describe('docrelImpact', () => {
+describe('docsyncImpact', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);
@@ -36,18 +36,18 @@ describe('docrelImpact', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'describes' });
 
-    const impact = await docrelImpact(db, ['src/auth.ts']);
+    const impact = await docsyncImpact(db, ['src/auth.ts']);
     expect(impact.affectedDocs).toHaveLength(1);
     expect(impact.affectedDocs[0].file).toBe('docs/api.md');
   });
 });
 
-describe('docrelLink', () => {
+describe('docsyncLink', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);
@@ -64,7 +64,7 @@ describe('docrelLink', () => {
     upsertSymbol(db, { id: symId, name: 'login', kind: 'function' });
     upsertDocSection(db, { id: docId, file: 'docs/api.md', doc_type: 'standalone' });
 
-    const result = docrelLink(db, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
+    const result = docsyncLink(db, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
     expect(result.action).toBe('created');
 
     const mappings = db.prepare('SELECT * FROM mappings').all();
@@ -81,7 +81,7 @@ describe('formatImpactMarkdown', () => {
       errors: [],
     };
     const md = formatImpactMarkdown(report);
-    expect(md).toContain('## DocRel Impact Analysis');
+    expect(md).toContain('## DocSync Impact Analysis');
     expect(md).toContain('### Changed Files (1)');
     expect(md).toContain('`src/auth.ts`');
   });

@@ -11,7 +11,7 @@ const closedConnections = new WeakSet<Database.Database>();
  *  "Database is closed" message. */
 export function assertDbOpen(db: Database.Database): void {
   if (closedConnections.has(db)) {
-    throw new Error('DocRel database connection has been closed. Re-initialize with getDb().');
+    throw new Error('DocSync database connection has been closed. Re-initialize with getDb().');
   }
 }
 
@@ -21,9 +21,9 @@ export function getDb(projectRoot: string): Database.Database {
   if (existing) return existing;
 
   const gitDir = path.join(resolved, '.git');
-  // Default to .docrel/ instead of .git/ to avoid creating a fake .git directory
+  // Default to .docsync/ instead of .git/ to avoid creating a fake .git directory
   // when no git repo exists (git init would fail).
-  let dbDir = path.join(resolved, '.docrel');
+  let dbDir = path.join(resolved, '.docsync');
 
   // Use fd-based verification to eliminate the TOCTOU window between the
   // stat check and the subsequent mkdir/DB creation. Open .git first, then
@@ -55,30 +55,30 @@ export function getDb(projectRoot: string): Database.Database {
               // Derive the main .git directory from the worktree path
               dbDir = dbDir.slice(0, worktreesIdx) + path.sep + '.git';
             } else {
-              dbDir = path.join(resolved, '.docrel');
+              dbDir = path.join(resolved, '.docsync');
             }
           }
         } else {
-          dbDir = path.join(resolved, '.docrel');
+          dbDir = path.join(resolved, '.docsync');
         }
       } else {
-        dbDir = path.join(resolved, '.docrel');
+        dbDir = path.join(resolved, '.docsync');
       }
     }
   } catch (err: any) {
     // F4: Distinguish EACCES/EPERM from ENOENT. If .git exists but is
-    // inaccessible, log a prominent warning and fall back to .docrel instead
-    // of silently creating a second, empty database in .docrel/ while the
-    // real data sits orphaned in .git/docrel.db.
+    // inaccessible, log a prominent warning and fall back to .docsync instead
+    // of silently creating a second, empty database in .docsync/ while the
+    // real data sits orphaned in .git/docsync.db.
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'EACCES' || code === 'EPERM') {
       if (fs.existsSync(gitDir)) {
-        console.warn(`DocRel: .git directory exists but is inaccessible (${code}) — falling back to .docrel/. Check directory permissions.`);
+        console.warn(`DocSync: .git directory exists but is inaccessible (${code}) — falling back to .docsync/. Check directory permissions.`);
       }
     }
     // openSync or fstat failed (e.g. EACCES, or directory open not supported)
-    // — fall back to .docrel
-    dbDir = path.join(resolved, '.docrel');
+    // — fall back to .docsync
+    dbDir = path.join(resolved, '.docsync');
   } finally {
     if (gitFd !== undefined) {
       try { fs.closeSync(gitFd); } catch { /* best effort */ }
@@ -86,7 +86,7 @@ export function getDb(projectRoot: string): Database.Database {
   }
 
   let db: Database.Database | undefined;
-  const dbPath = path.join(dbDir, 'docrel.db');
+  const dbPath = path.join(dbDir, 'docsync.db');
 
   try {
     fs.mkdirSync(dbDir, { recursive: true, mode: 0o700 });
@@ -112,7 +112,7 @@ export function getDb(projectRoot: string): Database.Database {
     const sanitized = err instanceof Error
       ? err.message.replace(new RegExp(escapeRegex(resolved), 'g'), '<projectRoot>')
       : String(err);
-    throw new Error(`Failed to initialize DocRel database in .docrel/: ${sanitized}`);
+    throw new Error(`Failed to initialize DocSync database in .docsync/: ${sanitized}`);
   }
 
   connections.set(resolved, db);

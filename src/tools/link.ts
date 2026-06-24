@@ -11,7 +11,7 @@ export interface LinkResult {
   review_status?: string; message: string;
 }
 
-export function docrelLink(
+export function docsyncLink(
   db: Database.Database,
   p: { action: 'create' | 'delete'; symbol_id: string; doc_id: string; rel_type: string; review_status?: ReviewStatus },
 ): LinkResult {
@@ -40,7 +40,7 @@ export function docrelLink(
         else m+='constraint violation.';
         return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:m };
       } catch (innerErr: any) {
-        console.warn('DocRel: diagnostic query during constraint handling failed:', innerErr instanceof Error ? innerErr.message : innerErr);
+        console.warn('DocSync: diagnostic query during constraint handling failed:', innerErr instanceof Error ? innerErr.message : innerErr);
         return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:`Constraint violation (diagnostic failed: ${(innerErr as any)?.code ?? 'unknown'})` };
       }
     }
@@ -48,13 +48,13 @@ export function docrelLink(
   }
 }
 
-export function docrelConfirm(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+export function docsyncConfirm(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
   const row = setReviewStatus(db, sid, did, rt, 'confirmed');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'confirmed', message:'Mapping confirmed.' };
 }
 
-export function docrelReject(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+export function docsyncReject(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
   const row = setReviewStatus(db, sid, did, rt, 'rejected');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'rejected', message:'Mapping rejected.' };

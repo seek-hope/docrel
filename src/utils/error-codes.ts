@@ -1,5 +1,5 @@
 /**
- * Structured error codes for DocRel operations.
+ * Structured error codes for DocSync operations.
  *
  * Every user-facing error should carry a code so operators can grep logs,
  * configure alerting thresholds, and diagnose issues without reading source.
@@ -19,73 +19,73 @@
 
 export const ErrorCode = {
   // ── Database ─────────────────────────────────────────────────
-  DB_CONNECTION_FAILED:    'DOCREL_E001',
-  DB_CLOSED:               'DOCREL_E002',
-  DB_BUSY:                 'DOCREL_E003',
-  DB_CORRUPT:              'DOCREL_E004',
-  DB_MIGRATION_FAILED:     'DOCREL_E005',
-  DB_QUERY_FAILED:         'DOCREL_E006',
+  DB_CONNECTION_FAILED:    'DOCSYNC_E001',
+  DB_CLOSED:               'DOCSYNC_E002',
+  DB_BUSY:                 'DOCSYNC_E003',
+  DB_CORRUPT:              'DOCSYNC_E004',
+  DB_MIGRATION_FAILED:     'DOCSYNC_E005',
+  DB_QUERY_FAILED:         'DOCSYNC_E006',
 
   // ── Filesystem ───────────────────────────────────────────────
-  FS_READ_FAILED:          'DOCREL_E010',
-  FS_WRITE_FAILED:         'DOCREL_E011',
-  FS_PERMISSION_DENIED:    'DOCREL_E012',
-  FS_PATH_TRAVERSAL:       'DOCREL_E013',
-  FS_FILE_TOO_LARGE:       'DOCREL_E014',
-  FS_SYMLINK_BYPASS:       'DOCREL_E015',
-  FS_ATOMIC_WRITE_FAILED:  'DOCREL_E016',
+  FS_READ_FAILED:          'DOCSYNC_E010',
+  FS_WRITE_FAILED:         'DOCSYNC_E011',
+  FS_PERMISSION_DENIED:    'DOCSYNC_E012',
+  FS_PATH_TRAVERSAL:       'DOCSYNC_E013',
+  FS_FILE_TOO_LARGE:       'DOCSYNC_E014',
+  FS_SYMLINK_BYPASS:       'DOCSYNC_E015',
+  FS_ATOMIC_WRITE_FAILED:  'DOCSYNC_E016',
 
   // ── Codegraph / extraction ──────────────────────────────────
-  CG_UNAVAILABLE:          'DOCREL_E020',
-  CG_TIMEOUT:              'DOCREL_E021',
-  CG_INVALID_RESPONSE:     'DOCREL_E022',
-  CG_BINARY_REJECTED:      'DOCREL_E023',
-  EXTRACTOR_FAILED:        'DOCREL_E024',
-  SYMBOL_MALFORMED:        'DOCREL_E025',
+  CG_UNAVAILABLE:          'DOCSYNC_E020',
+  CG_TIMEOUT:              'DOCSYNC_E021',
+  CG_INVALID_RESPONSE:     'DOCSYNC_E022',
+  CG_BINARY_REJECTED:      'DOCSYNC_E023',
+  EXTRACTOR_FAILED:        'DOCSYNC_E024',
+  SYMBOL_MALFORMED:        'DOCSYNC_E025',
 
   // ── Doc generators ──────────────────────────────────────────
-  GEN_COMMAND_REJECTED:    'DOCREL_E030',
-  GEN_EXECUTION_FAILED:    'DOCREL_E031',
-  GEN_TIMEOUT:             'DOCREL_E032',
-  GEN_NO_GENERATOR_FOUND:  'DOCREL_E033',
+  GEN_COMMAND_REJECTED:    'DOCSYNC_E030',
+  GEN_EXECUTION_FAILED:    'DOCSYNC_E031',
+  GEN_TIMEOUT:             'DOCSYNC_E032',
+  GEN_NO_GENERATOR_FOUND:  'DOCSYNC_E033',
 
   // ── Sync engine ─────────────────────────────────────────────
-  SYNC_INLINE_FAILED:      'DOCREL_E040',
-  SYNC_STANDALONE_FAILED:  'DOCREL_E041',
-  SYNC_GENERATED_FAILED:   'DOCREL_E042',
-  SYNC_DOCSTRING_MISSING:  'DOCREL_E043',
-  SYNC_SIGNATURE_AMBIGUOUS:'DOCREL_E044',
-  SYNC_PARTIAL:            'DOCREL_E045',
+  SYNC_INLINE_FAILED:      'DOCSYNC_E040',
+  SYNC_STANDALONE_FAILED:  'DOCSYNC_E041',
+  SYNC_GENERATED_FAILED:   'DOCSYNC_E042',
+  SYNC_DOCSTRING_MISSING:  'DOCSYNC_E043',
+  SYNC_SIGNATURE_AMBIGUOUS:'DOCSYNC_E044',
+  SYNC_PARTIAL:            'DOCSYNC_E045',
 
   // ── Git hooks ───────────────────────────────────────────────
-  HOOK_INSTALL_FAILED:     'DOCREL_E050',
-  HOOK_PRE_COMMIT_BLOCKED: 'DOCREL_E051',
-  HOOK_POST_COMMIT_FAILED: 'DOCREL_E052',
-  HOOK_PRE_PUSH_BLOCKED:   'DOCREL_E053',
+  HOOK_INSTALL_FAILED:     'DOCSYNC_E050',
+  HOOK_PRE_COMMIT_BLOCKED: 'DOCSYNC_E051',
+  HOOK_POST_COMMIT_FAILED: 'DOCSYNC_E052',
+  HOOK_PRE_PUSH_BLOCKED:   'DOCSYNC_E053',
 
   // ── Input validation ────────────────────────────────────────
-  VALIDATION_INVALID_INPUT: 'DOCREL_E060',
-  VALIDATION_TOO_MANY:      'DOCREL_E061',
-  VALIDATION_PATH_TOO_LONG: 'DOCREL_E062',
+  VALIDATION_INVALID_INPUT: 'DOCSYNC_E060',
+  VALIDATION_TOO_MANY:      'DOCSYNC_E061',
+  VALIDATION_PATH_TOO_LONG: 'DOCSYNC_E062',
 
   // ── MCP / CLI boundary ──────────────────────────────────────
-  MCP_TOOL_ERROR:           'DOCREL_E070',
-  CLI_COMMAND_FAILED:       'DOCREL_E071',
-  INIT_FAILED:              'DOCREL_E072',
+  MCP_TOOL_ERROR:           'DOCSYNC_E070',
+  CLI_COMMAND_FAILED:       'DOCSYNC_E071',
+  INIT_FAILED:              'DOCSYNC_E072',
 
   // ── Configuration ───────────────────────────────────────────
-  CONFIG_INVALID:           'DOCREL_E080',
-  CONFIG_MISSING:           'DOCREL_E081',
-  CONFIG_PARSE_FAILED:      'DOCREL_E082',
+  CONFIG_INVALID:           'DOCSYNC_E080',
+  CONFIG_MISSING:           'DOCSYNC_E081',
+  CONFIG_PARSE_FAILED:      'DOCSYNC_E082',
 
   // ── Internal ────────────────────────────────────────────────
-  INTERNAL_UNEXPECTED:      'DOCREL_E090',
-  INTERNAL_SHUTDOWN_FAILED: 'DOCREL_E091',
+  INTERNAL_UNEXPECTED:      'DOCSYNC_E090',
+  INTERNAL_SHUTDOWN_FAILED: 'DOCSYNC_E091',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
-export interface DocRelError {
+export interface DocSyncError {
   code: ErrorCode;
   message: string;
   detail?: string;
@@ -93,27 +93,27 @@ export interface DocRelError {
 }
 
 /**
- * Create a structured DocRel error.
- * @param code — one of the DOCREL_E* codes above
+ * Create a structured DocSync error.
+ * @param code — one of the DOCSYNC_E* codes above
  * @param message — human-readable summary (safe for MCP/CLI clients)
  * @param detail — optional internal detail (logged, not returned to clients)
  * @param recoverable — whether the operation can be retried
  */
-export function docrelError(
+export function docsyncError(
   code: ErrorCode,
   message: string,
   detail?: string,
   recoverable = false,
-): DocRelError {
+): DocSyncError {
   return { code, message, detail, recoverable };
 }
 
 /** Map of error codes to one-line descriptions for health dashboards. */
 export const ERROR_CODE_DESCRIPTIONS: Record<ErrorCode, string> = {
-  [ErrorCode.DB_CONNECTION_FAILED]:     'Database connection failed — check .docrel/ permissions',
+  [ErrorCode.DB_CONNECTION_FAILED]:     'Database connection failed — check .docsync/ permissions',
   [ErrorCode.DB_CLOSED]:                'Database connection was closed — re-initialize',
   [ErrorCode.DB_BUSY]:                  'Database is locked by another process — retry',
-  [ErrorCode.DB_CORRUPT]:               'Database may be corrupted — run docrel reset',
+  [ErrorCode.DB_CORRUPT]:               'Database may be corrupted — run docsync reset',
   [ErrorCode.DB_MIGRATION_FAILED]:      'Schema migration failed — database may be in an inconsistent state',
   [ErrorCode.DB_QUERY_FAILED]:          'Database query failed — check server logs',
   [ErrorCode.FS_READ_FAILED]:           'File read failed — check permissions and disk health',
@@ -148,9 +148,9 @@ export const ERROR_CODE_DESCRIPTIONS: Record<ErrorCode, string> = {
   [ErrorCode.VALIDATION_PATH_TOO_LONG]: 'Path exceeds maximum length',
   [ErrorCode.MCP_TOOL_ERROR]:           'MCP tool returned an error — check server logs',
   [ErrorCode.CLI_COMMAND_FAILED]:       'CLI command failed — check output above',
-  [ErrorCode.INIT_FAILED]:              'DocRel initialization failed — check configuration',
-  [ErrorCode.CONFIG_INVALID]:           'Configuration is invalid — check .docrel/config.yaml',
-  [ErrorCode.CONFIG_MISSING]:           'Configuration file not found — run docrel init',
+  [ErrorCode.INIT_FAILED]:              'DocSync initialization failed — check configuration',
+  [ErrorCode.CONFIG_INVALID]:           'Configuration is invalid — check .docsync/config.yaml',
+  [ErrorCode.CONFIG_MISSING]:           'Configuration file not found — run docsync init',
   [ErrorCode.CONFIG_PARSE_FAILED]:      'Configuration file could not be parsed — check YAML syntax',
   [ErrorCode.INTERNAL_UNEXPECTED]:      'Unexpected internal error — check server logs',
   [ErrorCode.INTERNAL_SHUTDOWN_FAILED]: 'Shutdown failed — WAL may not have checkpointed',
@@ -160,7 +160,7 @@ export const ERROR_CODE_DESCRIPTIONS: Record<ErrorCode, string> = {
  * Log a structured error to stderr. Prefixes the error code for grep-ability.
  * Detail is always logged; only code + message are returned to clients.
  */
-export function logError(err: DocRelError): void {
+export function logError(err: DocSyncError): void {
   const detailPart = err.detail ? ` (${err.detail})` : '';
   const recoverableTag = err.recoverable ? ' [recoverable]' : '';
   console.error(`[${err.code}]${recoverableTag} ${err.message}${detailPart}`);

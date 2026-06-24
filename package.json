@@ -1,11 +1,11 @@
 {
-  "name": "docrel",
+  "name": "docsync",
   "version": "0.1.0",
   "description": "Code-Documentation Relational Sync System",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "docrel": "./dist/cli.js"
+    "docsync": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

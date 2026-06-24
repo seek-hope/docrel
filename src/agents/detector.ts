@@ -59,7 +59,7 @@ const AGENT_REGISTRY: Array<{
     envVars: ['PI_SESSION', 'OH_MY_PI'],
     mcp: false,
     hooks: false,
-    rulesFile: '.pi/docrel.md',
+    rulesFile: '.pi/docsync.md',
   },
   {
     kind: 'hermes',

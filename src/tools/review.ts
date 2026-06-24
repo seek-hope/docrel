@@ -193,10 +193,10 @@ function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
   `).all() as UnreviewedMapping[];
 }
 
-export function docrelReview(db: Database.Database, projectRoot: string): ReviewReport {
+export function docsyncReview(db: Database.Database, projectRoot: string): ReviewReport {
   // F19: Wrap the body in try/catch to handle DB errors, corrupted state,
   // and I/O exceptions from findImplied — matching the defensive pattern
-  // used in docrelStatus, docrelCheck, and other tool functions.
+  // used in docsyncStatus, docsyncCheck, and other tool functions.
   try {
     assertDbOpen(db);
     const unlinkedSymbols = findUnlinked(db);
@@ -226,7 +226,7 @@ export function docrelReview(db: Database.Database, projectRoot: string): Review
     };
   } catch (err: any) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('DocRel: docrelReview failed:', msg);
+    console.error('DocSync: docsyncReview failed:', msg);
     return {
       unlinkedSymbols: [],
       orphanedSections: [],
@@ -250,7 +250,7 @@ export function formatReview(report: ReviewReport): string {
   const lines: string[] = [];
   const { summary } = report;
 
-  lines.push('## DocRel Review');
+  lines.push('## DocSync Review');
   lines.push('');
   lines.push(`Symbols: ${summary.linkedSymbols}/${summary.totalSymbols} linked, ${summary.unlinkedCount} unlinked`);
   lines.push('');
@@ -330,7 +330,7 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
   const lines: string[] = [];
   const w = 70; // column width
 
-  lines.push('## DocRel Review — Detailed');
+  lines.push('## DocSync Review — Detailed');
   lines.push('');
 
   if (report.unreviewedMappings.length > 0) {
@@ -363,7 +363,7 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
 
       lines.push(`\`\`\`${'─'.repeat(w)}┴${'─'.repeat(w)}\`\`\``);
       lines.push('');
-      lines.push(`→ \`docrel confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docrel reject --symbol ${m.symbolId} --doc ${m.docId}\``);
+      lines.push(`→ \`docsync confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docsync reject --symbol ${m.symbolId} --doc ${m.docId}\``);
       lines.push('');
     }
   }

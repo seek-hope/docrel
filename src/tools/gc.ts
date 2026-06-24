@@ -23,7 +23,7 @@ const STALE_MARKER = '__stale__';
  *
  * Pass `dryRun: true` to preview without making changes.
  */
-export function docrelGc(
+export function docsyncGc(
   db: Database.Database,
   scanReport: ScanReport,
   dryRun: boolean = false,
@@ -83,7 +83,7 @@ export function docrelGc(
         }
       })();
     } catch (err: any) {
-      console.error('DocRel: GC transaction failed:', err instanceof Error ? err.message : err);
+      console.error('DocSync: GC transaction failed:', err instanceof Error ? err.message : err);
       // Return partial counts — the transaction is atomic, so on failure
       // no changes were committed. Report zero mutations.
       return { symbolsRemoved: 0, symbolsMarkedStale: 0, dryRun: false };

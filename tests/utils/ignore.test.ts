@@ -9,37 +9,37 @@ describe('isIgnored', () => {
 
   beforeEach(() => {
     clearIgnoreCache();
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-ignore-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-ignore-test-'));
   });
 
-  it('returns false when no .docrelignore exists', () => {
+  it('returns false when no .docsyncignore exists', () => {
     expect(isIgnored('src/index.ts', tmpDir)).toBe(false);
     expect(isIgnored('vendor/dep.js', tmpDir)).toBe(false);
   });
 
   it('ignores files matching a simple pattern with *', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), '*.log\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), '*.log\n');
     expect(isIgnored('error.log', tmpDir)).toBe(true);
     expect(isIgnored('debug.log', tmpDir)).toBe(true);
     expect(isIgnored('src/index.ts', tmpDir)).toBe(false);
   });
 
   it('ignores files matching ** patterns', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), '**/*.pb.go\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), '**/*.pb.go\n');
     expect(isIgnored('src/generated/types.pb.go', tmpDir)).toBe(true);
     expect(isIgnored('types.pb.go', tmpDir)).toBe(true);
     expect(isIgnored('src/types.go', tmpDir)).toBe(false);
   });
 
   it('ignores directories ending in /', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), 'vendor/\nnode_modules/\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), 'vendor/\nnode_modules/\n');
     expect(isIgnored('vendor/dep.js', tmpDir)).toBe(true);
     expect(isIgnored('node_modules/package/index.js', tmpDir)).toBe(true);
     expect(isIgnored('src/vendor.ts', tmpDir)).toBe(false);
   });
 
   it('supports # comments and blank lines', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), [
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), [
       '# Auto-generated code',
       'src/generated/',
       '',
@@ -53,7 +53,7 @@ describe('isIgnored', () => {
   });
 
   it('supports ! negation patterns', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), [
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), [
       'src/generated/',
       '!src/generated/types.ts',
     ].join('\n'));
@@ -62,21 +62,21 @@ describe('isIgnored', () => {
   });
 
   it('supports anchored patterns with leading /', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), '/build/\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), '/build/\n');
     expect(isIgnored('build/output.js', tmpDir)).toBe(true);
     // Unanchored match — any directory named build
     expect(isIgnored('src/build/output.js', tmpDir)).toBe(false);
   });
 
   it('supports **/ pattern for matching any directory depth', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), '**/__pycache__/\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), '**/__pycache__/\n');
     expect(isIgnored('src/__pycache__/module.pyc', tmpDir)).toBe(true);
     expect(isIgnored('src/sub/deep/__pycache__/mod.pyc', tmpDir)).toBe(true);
     expect(isIgnored('src/main.py', tmpDir)).toBe(false);
   });
 
   it('supports test fixture patterns from the example', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), [
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), [
       '# Auto-generated code',
       'src/generated/',
       '**/*.pb.go',
@@ -109,7 +109,7 @@ describe('isIgnored', () => {
   });
 
   it('normalizes Windows-style backslash paths to forward slashes', () => {
-    fs.writeFileSync(path.join(tmpDir, '.docrelignore'), 'src/generated/\n');
+    fs.writeFileSync(path.join(tmpDir, '.docsyncignore'), 'src/generated/\n');
     // Backslash paths are normalized to forward slashes before matching
     expect(isIgnored('src\\generated\\types.ts', tmpDir)).toBe(true);
   });

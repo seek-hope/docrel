@@ -33,7 +33,7 @@ function escapeLike(str: string): string {
   return str.replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/\\/g, '\\\\');
 }
 
-export function docrelImpact(
+export function docsyncImpact(
   db: Database.Database,
   changedFiles: string[],
   projectRoot?: string,
@@ -151,7 +151,7 @@ export function docrelImpact(
 export function formatImpactMarkdown(report: ImpactReport): string {
   const lines: string[] = [];
 
-  lines.push('## DocRel Impact Analysis');
+  lines.push('## DocSync Impact Analysis');
   lines.push('');
 
   // Changed files

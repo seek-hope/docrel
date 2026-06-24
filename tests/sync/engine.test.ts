@@ -6,12 +6,12 @@ import { upsertDocSection, getDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
 import { syncSymbol } from '../../src/sync/engine.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
-import type { DocRelConfig } from '../../src/utils/config.js';
+import type { DocSyncConfig } from '../../src/utils/config.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-const testConfig: DocRelConfig = {
+const testConfig: DocSyncConfig = {
   project: 'test',
   doc_dirs: ['docs'],
   code_dirs: ['src'],
@@ -30,7 +30,7 @@ describe('syncSymbol', () => {
   const docId = docSectionId('docs/api.md', 'authentication');
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrel-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);

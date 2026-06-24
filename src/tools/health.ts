@@ -1,12 +1,12 @@
 /**
- * docrel_health — comprehensive system health check.
+ * docsync_health — comprehensive system health check.
  * Checks database connectivity, codegraph availability, filesystem access,
  * and reports any detected error conditions with structured error codes.
  */
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ErrorCode, logError, docrelError } from '../utils/error-codes.js';
+import { ErrorCode, logError, docsyncError } from '../utils/error-codes.js';
 
 export interface HealthReport {
   healthy: boolean;
@@ -31,7 +31,7 @@ interface HealthCheckFn {
 
 const CODEGRAPH_HEALTH_TIMEOUT_MS = 5000;
 
-export async function docrelHealth(
+export async function docsyncHealth(
   db: Database.Database,
   projectRoot: string,
   checkCodegraph: () => Promise<boolean>,
@@ -69,23 +69,23 @@ export async function docrelHealth(
     }
   });
 
-  // 2. DocRel config existence
+  // 2. DocSync config existence
   await run('config', async () => {
-    const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
+    const configPath = path.join(projectRoot, '.docsync', 'config.yaml');
     if (fs.existsSync(configPath)) {
-      return { name: 'config', status: 'ok', message: '.docrel/config.yaml found' };
+      return { name: 'config', status: 'ok', message: '.docsync/config.yaml found' };
     }
-    return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docrel/config.yaml not found — run docrel init' };
+    return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docsync/config.yaml not found — run docsync init' };
   });
 
-  // 3. .docrel/ directory writable
-  await run('docrel_dir_writable', async () => {
-    const docrelDir = path.join(projectRoot, '.docrel');
+  // 3. .docsync/ directory writable
+  await run('docsync_dir_writable', async () => {
+    const docsyncDir = path.join(projectRoot, '.docsync');
     try {
-      fs.accessSync(docrelDir, fs.constants.W_OK);
-      return { name: 'docrel_dir_writable', status: 'ok', message: '.docrel/ is writable' };
+      fs.accessSync(docsyncDir, fs.constants.W_OK);
+      return { name: 'docsync_dir_writable', status: 'ok', message: '.docsync/ is writable' };
     } catch {
-      return { name: 'docrel_dir_writable', status: 'failed', code: ErrorCode.FS_PERMISSION_DENIED, message: '.docrel/ is not writable — check directory permissions' };
+      return { name: 'docsync_dir_writable', status: 'failed', code: ErrorCode.FS_PERMISSION_DENIED, message: '.docsync/ is not writable — check directory permissions' };
     }
   });
 
@@ -116,7 +116,7 @@ export async function docrelHealth(
     if (count > 0) {
       return { name: 'symbols', status: 'ok', message: `${count} symbols tracked` };
     }
-    return { name: 'symbols', status: 'degraded', message: 'No symbols tracked — run docrel scan' };
+    return { name: 'symbols', status: 'degraded', message: 'No symbols tracked — run docsync scan' };
   });
 
   // 6. Doc section count
@@ -125,7 +125,7 @@ export async function docrelHealth(
     if (count > 0) {
       return { name: 'docs', status: 'ok', message: `${count} doc sections tracked` };
     }
-    return { name: 'docs', status: 'degraded', message: 'No doc sections tracked — run docrel scan' };
+    return { name: 'docs', status: 'degraded', message: 'No doc sections tracked — run docsync scan' };
   });
 
   // 7. Stale doc ratio
@@ -135,7 +135,7 @@ export async function docrelHealth(
     const stale = (db.prepare("SELECT COUNT(*) AS c FROM doc_sections WHERE status = 'stale'").get() as { c: number }).c;
     const ratio = stale / total;
     if (ratio === 0) return { name: 'stale_docs', status: 'ok', message: 'All docs in sync' };
-    if (ratio < 0.1) return { name: 'stale_docs', status: 'degraded', message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — run docrel sync` };
+    if (ratio < 0.1) return { name: 'stale_docs', status: 'degraded', message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — run docsync sync` };
     return { name: 'stale_docs', status: 'failed', code: ErrorCode.SYNC_PARTIAL, message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — documentation is significantly out of date` };
   });
 
@@ -150,7 +150,7 @@ export async function docrelHealth(
         return { name: 'last_scan', status: 'degraded', message: `Last scan ${hours}h ago — consider re-scanning` };
       }
     }
-    return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run docrel scan' };
+    return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run docsync scan' };
   });
 
   // Aggregate results and log failures
@@ -161,7 +161,7 @@ export async function docrelHealth(
   for (const c of failed) {
     errors.push({ code: c.code ?? ErrorCode.INTERNAL_UNEXPECTED, message: c.message });
     // Log structured errors so monitoring/alerting systems can scan for them.
-    logError(docrelError(
+    logError(docsyncError(
       (c.code as ErrorCode) ?? ErrorCode.INTERNAL_UNEXPECTED,
       c.message,
       `health check: ${c.name}`,

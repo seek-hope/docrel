@@ -41,7 +41,7 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
     'function', 'class', 'module', 'api_endpoint', 'type', 'interface', 'variable', 'unknown',
   ]);
   if (!input.kind || !ALLOWED_KINDS.has(input.kind)) {
-    if (input.kind) console.warn(`DocRel: upsertSymbol received unknown kind '${input.kind}' — defaulting to 'unknown'`);
+    if (input.kind) console.warn(`DocSync: upsertSymbol received unknown kind '${input.kind}' — defaulting to 'unknown'`);
     input.kind = 'unknown';
   }
   // Use UPSERT with RETURNING to atomically insert/update and read back
@@ -124,7 +124,7 @@ export function markSignatureChanged(
 
   // Only insert changelog if the symbol actually exists — avoids orphans
   if (info.changes === 0) {
-    console.warn(`DocRel: markSignatureChanged called for non-existent symbol: ${id}`);
+    console.warn(`DocSync: markSignatureChanged called for non-existent symbol: ${id}`);
     return false;
   }
 

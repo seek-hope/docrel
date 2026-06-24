@@ -1,4 +1,4 @@
-# DocRel Upgrade Plan
+# DocSync Upgrade Plan
 
 ## Current State (v0.2.3)
 - 42 TypeScript source files, ~10,100 lines
@@ -19,14 +19,14 @@
 ## v0.2.0 — Polish & Robustness ✅ COMPLETE
 
 ### ✅ 0.2.0 — Error Codes & Observability
-- [x] **Structured error codes**: `DOCREL_E001`–`DOCREL_E091` in `src/utils/error-codes.ts`
-- [x] **Health check endpoint**: `docrel health` CLI + `docrel_health` MCP (8 checks)
-- [x] **Structured logging**: `logError()` with grep-able `[DOCREL_E*]` prefix
+- [x] **Structured error codes**: `DOCSYNC_E001`–`DOCSYNC_E091` in `src/utils/error-codes.ts`
+- [x] **Health check endpoint**: `docsync health` CLI + `docsync_health` MCP (8 checks)
+- [x] **Structured logging**: `logError()` with grep-able `[DOCSYNC_E*]` prefix
 
 ### ✅ 0.2.1 — Config & Validation
 - [x] **Config schema versioning**: `version: 1` in config.yaml, future-version warning
-- [x] **Config validation**: `docrel config validate` + pre-flight check before scan
-- [x] **Dry-run mode**: `docrel scan --dry-run` previews without DB writes
+- [x] **Config validation**: `docsync config validate` + pre-flight check before scan
+- [x] **Dry-run mode**: `docsync scan --dry-run` previews without DB writes
 
 ### ✅ 0.2.2 — Performance
 - [x] **Incremental scanning**: `--incremental` flag skips files with mtime <= last_scan_at
@@ -36,9 +36,9 @@
 - [ ] Query optimization (deferred)
 
 ### ✅ 0.2.3 — Watch Mode Improvements
-- [x] **Daemon mode**: `docrel watch --daemon` writes PID file
+- [x] **Daemon mode**: `docsync watch --daemon` writes PID file
 - [x] **Directory-level coalescing**: debounce keyed by watch-path group
-- [x] **Watch status API**: `docrel_watch_status` MCP tool
+- [x] **Watch status API**: `docsync_watch_status` MCP tool
 - [x] **Auto-recovery**: `watch-failed` marker on scan errors
 
 ---
@@ -56,12 +56,12 @@
 - [ ] Custom generators
 
 ### ✅ 0.3.2 — CI/CD Integration (partial)
-- [x] **GitHub Actions workflow**: `.github/workflows/docrel.yml`
+- [x] **GitHub Actions workflow**: `.github/workflows/docsync.yml`
 - [ ] GitLab CI template (deferred)
 - [ ] Status badges (deferred)
 
 ### ✅ 0.3.3 — Database Improvements (partial)
-- [x] **Backup/restore**: `docrel backup` and `docrel restore` commands
+- [x] **Backup/restore**: `docsync backup` and `docsync restore` commands
 - [ ] LibSQL backend (deferred)
 
 ---
@@ -72,7 +72,7 @@
 ### 0.4.1 — Semantic Understanding (deferred)
 
 ### ✅ 0.4.2 — Review Workflow (partial)
-- [x] **Batch operations**: `docrel confirm --all`, `docrel reject --all`, `docrel reject --pattern`
+- [x] **Batch operations**: `docsync confirm --all`, `docsync reject --all`, `docsync reject --pattern`
 - [ ] Review queue (deferred)
 - [ ] Review history (deferred)
 
@@ -95,8 +95,8 @@
 
 ### 1.0.2 — API & SDK
 - **REST API**: HTTP endpoints for all MCP tools
-- **JavaScript SDK**: `@seek-hope/docrel-client` npm package
-- **Python SDK**: `docrel-client` pip package
+- **JavaScript SDK**: `@seek-hope/docsync-client` npm package
+- **Python SDK**: `docsync-client` pip package
 - **WebSocket events**: Real-time scan/sync/review notifications
 
 ### 1.0.3 — Enterprise
@@ -127,7 +127,7 @@ v0.1.0 (current)          v0.3.0 (extensible)       v1.0.0 (platform)
 
 ### From v0.1.0 → v0.2.0
 - No breaking changes
-- `docrel upgrade` command to validate config compatibility
+- `docsync upgrade` command to validate config compatibility
 - Database schema: v4 → v5 (add `error_codes` metadata table)
 
 ### From v0.2.0 → v0.3.0

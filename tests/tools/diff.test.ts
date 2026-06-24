@@ -10,7 +10,7 @@ describe('formatDiffMarkdown', () => {
       affectedDocs: [],
     };
     const md = formatDiffMarkdown(report);
-    expect(md).toContain('## DocRel Diff');
+    expect(md).toContain('## DocSync Diff');
     expect(md).toContain('### Symbol: `login`');
     expect(md).toContain('**Signature:** `function login(): void`');
   });

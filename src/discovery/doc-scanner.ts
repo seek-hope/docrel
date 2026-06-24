@@ -125,7 +125,7 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
     // Log non-ENOENT errors so operators are aware of permission issues
     // (EACCES) or I/O errors (EIO) rather than silently skipping files.
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`DocRel: parseFile failed for ${absPath}:`, (err as NodeJS.ErrnoException)?.message ?? err);
+      console.warn(`DocSync: parseFile failed for ${absPath}:`, (err as NodeJS.ErrnoException)?.message ?? err);
     }
     return null;
   } finally {
@@ -138,7 +138,7 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
   return parser.parse(relativePath, content);
 }
 
-/** Collect all doc files recursively. Skips hidden dirs, common non-doc dirs, and .docrelignore patterns. */
+/** Collect all doc files recursively. Skips hidden dirs, common non-doc dirs, and .docsyncignore patterns. */
 function collectDocFiles(dir: string, projectRoot: string): string[] {
   const result: string[] = [];
   const supportedExts = new Set([
@@ -152,7 +152,7 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
     } catch (err: any) {
-      console.warn(`DocRel: cannot read directory ${path.relative(projectRoot, current)}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocSync: cannot read directory ${path.relative(projectRoot, current)}:`, err instanceof Error ? err.message : err);
       continue;
     }
     for (const entry of entries) {
@@ -164,7 +164,7 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
             entry.name === 'dist' || entry.name === 'build' || entry.name === '.git') {
           continue;
         }
-        // Skip directories matching .docrelignore patterns
+        // Skip directories matching .docsyncignore patterns
         if (isIgnored(relPath, projectRoot)) continue;
         stack.push(fullPath);
       } else if (entry.isFile()) {

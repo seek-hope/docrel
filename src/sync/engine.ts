@@ -2,7 +2,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
-import type { DocRelConfig } from '../utils/config.js';
+import type { DocSyncConfig } from '../utils/config.js';
 import { getMappingsForSymbol, getMappingsForDoc } from '../db/mappings.js';
 import type { DocSectionRow } from '../db/docs.js';
 import type { CodegraphClient } from '../codegraph/client.js';
@@ -77,8 +77,8 @@ async function getCurrentSignature(
       // codegraph query failed — fall through to regex.
       // Log at debug level so operators can detect when codegraph is unavailable
       // without spamming production logs on every sync call.
-      if (process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true') {
-        console.debug('DocRel: codegraph getSymbolSignature failed, falling back to regex:', err instanceof Error ? err.message : err);
+      if (process.env.DOCSYNC_DEBUG === '1' || process.env.DOCSYNC_DEBUG === 'true') {
+        console.debug('DocSync: codegraph getSymbolSignature failed, falling back to regex:', err instanceof Error ? err.message : err);
       }
     }
   }
@@ -94,7 +94,7 @@ async function getCurrentSignature(
 
 export async function syncSymbol(
   db: Database.Database,
-  config: DocRelConfig,
+  config: DocSyncConfig,
   symbolId: string,
   projectRoot: string,
   codegraph?: CodegraphClient,
@@ -120,7 +120,7 @@ export async function syncSymbol(
 
       const strategy = config.strategies[doc.doc_type];
       if (!strategy) {
-        console.warn(`DocRel: No strategy configured for doc_type '${doc.doc_type}' — marking doc ${doc.id} as stale`);
+        console.warn(`DocSync: No strategy configured for doc_type '${doc.doc_type}' — marking doc ${doc.id} as stale`);
         if (markDocStale(db, doc.id)) {
           result.docsStaled.push(doc.file);
         } else {
@@ -249,7 +249,7 @@ export async function syncSymbol(
                   } catch (err: any) {
                     const code = (err as NodeJS.ErrnoException)?.code;
                     if (code !== 'ENOENT') {
-                      console.warn(`DocRel: cannot stat ${relPath(doc.file, projectRoot)} for mtime check: ${code}`);
+                      console.warn(`DocSync: cannot stat ${relPath(doc.file, projectRoot)} for mtime check: ${code}`);
                     }
                   }
                 }
@@ -346,12 +346,12 @@ export async function syncSymbol(
       const msg = err instanceof Error ? err.message : String(err);
       // Sanitize absolute paths from the error message before logging
       const sanitized = msg.replace(/\/[^\s:,)]{20,}/g, '...');
-      console.error(`DocRel: Error syncing doc ${mapping.doc_id}:`, sanitized);
+      console.error(`DocSync: Error syncing doc ${mapping.doc_id}:`, sanitized);
       result.errors.push(`Error syncing doc ${mapping.doc_id}: internal error — check server logs`);
     }
   }
   } catch (err: any) {
-    console.error(`DocRel: Catastrophic sync error for ${symbolId}:`, err);
+    console.error(`DocSync: Catastrophic sync error for ${symbolId}:`, err);
     result.errors.push(`Catastrophic sync error: internal error — check server logs`);
   }
 
@@ -361,7 +361,7 @@ export async function syncSymbol(
 export async function syncAllStale(
   db: Database.Database,
   codegraph: CodegraphClient,
-  config: DocRelConfig,
+  config: DocSyncConfig,
   projectRoot: string,
 ): Promise<{ synced: SyncResult[]; totalStale: number }> {
   const staleDocs = db.prepare("SELECT * FROM doc_sections WHERE status = 'stale'").all() as DocSectionRow[];

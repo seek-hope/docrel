@@ -2,7 +2,7 @@
  * Agent integration — config generation for each supported agent.
  *
  * Generates rules-file sections, MCP server configuration, and shell wrappers
- * so that DocRel is automatically available in the user's coding agent.
+ * so that DocSync is automatically available in the user's coding agent.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,58 +15,58 @@ export interface IntegrationResult {
 }
 
 // ── MCP server entry for .mcp.json ───────────────────────────────────
-const DOCREL_MCP_ENTRY = {
-  docrel: {
+const DOCSYNC_MCP_ENTRY = {
+  docsync: {
     command: 'npx',
-    args: ['docrel'],
+    args: ['docsync'],
   },
 };
 
 // ── CLAUDE.md section ────────────────────────────────────────────────
-const CLAUDE_DOCREL_SECTION = `
+const CLAUDE_DOCSYNC_SECTION = `
 
-## DocRel — Code-Documentation Sync
+## DocSync — Code-Documentation Sync
 
-DocRel tracks code symbols and their linked documentation, keeping everything
+DocSync tracks code symbols and their linked documentation, keeping everything
 in sync as the codebase evolves.
 
 ### SessionStart
-Run \`docrel status\` at the beginning of each session to see current
+Run \`docsync status\` at the beginning of each session to see current
 documentation health (symbols tracked, docs linked, stale docs).
 
 ### PostToolUse
 After using Edit or Write tools, consider whether the change affects
-documentation. Run \`docrel impact <changed-file>\` to see which doc sections
+documentation. Run \`docsync impact <changed-file>\` to see which doc sections
 reference the modified code.
 
 ### Available MCP Tools
 | Tool | Purpose |
 |------|---------|
-| \`docrel_status\` | Overall health dashboard (symbols, docs, sync %) |
-| \`docrel_check\` | Find stale documentation sections |
-| \`docrel_impact\` | Show docs affected by changed files |
-| \`docrel_sync\` | Sync docs for a specific symbol |
-| \`docrel_link\` | Create or delete symbol-to-doc mappings |
-| \`docrel_diff\` | Show change history for a symbol |
-| \`docrel_scan\` | Rescan codebase and re-link docs |
+| \`docsync_status\` | Overall health dashboard (symbols, docs, sync %) |
+| \`docsync_check\` | Find stale documentation sections |
+| \`docsync_impact\` | Show docs affected by changed files |
+| \`docsync_sync\` | Sync docs for a specific symbol |
+| \`docsync_link\` | Create or delete symbol-to-doc mappings |
+| \`docsync_diff\` | Show change history for a symbol |
+| \`docsync_scan\` | Rescan codebase and re-link docs |
 
 ### CLI Quick Reference
 \`\`\`
-docrel status              # Health dashboard
-docrel check               # Find stale docs
-docrel check --strict      # Exit 1 if any stale docs
-docrel impact src/foo.ts   # What docs are affected?
-docrel sync --symbol <id>  # Sync docs for a symbol
-docrel scan                # Rescan codebase
+docsync status              # Health dashboard
+docsync check               # Find stale docs
+docsync check --strict      # Exit 1 if any stale docs
+docsync impact src/foo.ts   # What docs are affected?
+docsync sync --symbol <id>  # Sync docs for a symbol
+docsync scan                # Rescan codebase
 \`\`\`
 `;
 
 // ── OPENCODE.md section ──────────────────────────────────────────────
-const OPENCODE_DOCREL_SECTION = `
+const OPENCODE_DOCSYNC_SECTION = `
 
-## DocRel — Code-Documentation Sync
+## DocSync — Code-Documentation Sync
 
-DocRel tracks code symbols and their linked documentation. Add it as an MCP
+DocSync tracks code symbols and their linked documentation. Add it as an MCP
 server to get documentation health tools in your OpenCode session.
 
 ### MCP Configuration
@@ -74,9 +74,9 @@ Add this to your \`.mcp.json\`:
 \`\`\`json
 {
   "mcpServers": {
-    "docrel": {
+    "docsync": {
       "command": "npx",
-      "args": ["docrel"]
+      "args": ["docsync"]
     }
   }
 }
@@ -84,42 +84,42 @@ Add this to your \`.mcp.json\`:
 
 ### CLI Quick Reference
 \`\`\`
-docrel status              # Health dashboard
-docrel check               # Find stale docs
-docrel check --strict      # Exit 1 if any stale docs
-docrel impact src/foo.ts   # What docs are affected?
-docrel sync --symbol <id>  # Sync docs for a symbol
-docrel scan                # Rescan codebase
+docsync status              # Health dashboard
+docsync check               # Find stale docs
+docsync check --strict      # Exit 1 if any stale docs
+docsync impact src/foo.ts   # What docs are affected?
+docsync sync --symbol <id>  # Sync docs for a symbol
+docsync scan                # Rescan codebase
 \`\`\`
 `;
 
 // ── Oh My Pi section ─────────────────────────────────────────────────
-const PI_DOCREL_SECTION = `# DocRel — Code-Documentation Sync
+const PI_DOCSYNC_SECTION = `# DocSync — Code-Documentation Sync
 
-DocRel keeps your code symbols and documentation in sync.
+DocSync keeps your code symbols and documentation in sync.
 
 ## Shell Alias (recommended)
 Add this to your shell profile (~/.zshrc or ~/.bashrc):
 
 \`\`\`sh
-alias docrel='npx docrel'
+alias docsync='npx docsync'
 \`\`\`
 
 ## Commands
 | Command | Purpose |
 |---------|---------|
-| \`docrel status\` | Health dashboard |
-| \`docrel check\` | Find stale docs |
-| \`docrel check --strict\` | Exit 1 if any stale |
-| \`docrel impact <file>\` | Docs affected by change |
-| \`docrel sync --symbol <id>\` | Sync docs for symbol |
-| \`docrel scan\` | Rescan codebase |
+| \`docsync status\` | Health dashboard |
+| \`docsync check\` | Find stale docs |
+| \`docsync check --strict\` | Exit 1 if any stale |
+| \`docsync impact <file>\` | Docs affected by change |
+| \`docsync sync --symbol <id>\` | Sync docs for symbol |
+| \`docsync scan\` | Rescan codebase |
 `;
 
 // ── Generic instructions (unknown agent) ─────────────────────────────
-const GENERIC_INSTRUCTIONS = `# DocRel Agent Integration
+const GENERIC_INSTRUCTIONS = `# DocSync Agent Integration
 
-DocRel is a code-documentation relational sync system. It tracks symbols
+DocSync is a code-documentation relational sync system. It tracks symbols
 (function, classes, etc.) and their linked documentation, keeping them in
 sync as the codebase changes.
 
@@ -130,9 +130,9 @@ Add this to your MCP configuration:
 \`\`\`json
 {
   "mcpServers": {
-    "docrel": {
+    "docsync": {
       "command": "npx",
-      "args": ["docrel"]
+      "args": ["docsync"]
     }
   }
 }
@@ -140,33 +140,33 @@ Add this to your MCP configuration:
 
 ### 2. Shell Alias
 \`\`\`sh
-alias docrel='npx docrel'
+alias docsync='npx docsync'
 \`\`\`
 
 ### 3. Recommended Workflow
-- At session start, run \`docrel status\` to see documentation health
-- After code changes, run \`docrel impact <file>\` to check affected docs
-- Run \`docrel check --strict\` before committing to catch stale docs
+- At session start, run \`docsync status\` to see documentation health
+- After code changes, run \`docsync impact <file>\` to check affected docs
+- Run \`docsync check --strict\` before committing to catch stale docs
 
 ## Available Tools
 | Tool | Purpose |
 |------|---------|
-| \`docrel_status\` | Health dashboard |
-| \`docrel_check\` | Find stale docs |
-| \`docrel_impact\` | Docs affected by changed files |
-| \`docrel_sync\` | Sync docs for a symbol |
-| \`docrel_link\` | Map symbols to docs |
-| \`docrel_diff\` | Change history for a symbol |
-| \`docrel_scan\` | Rescan codebase |
+| \`docsync_status\` | Health dashboard |
+| \`docsync_check\` | Find stale docs |
+| \`docsync_impact\` | Docs affected by changed files |
+| \`docsync_sync\` | Sync docs for a symbol |
+| \`docsync_link\` | Map symbols to docs |
+| \`docsync_diff\` | Change history for a symbol |
+| \`docsync_scan\` | Rescan codebase |
 
 ## CLI Commands
 \`\`\`
-docrel status              # Health dashboard
-docrel check               # Find stale docs
-docrel check --strict      # Exit 1 if stale (good for CI)
-docrel impact src/foo.ts   # Impact analysis
-docrel sync --symbol <id>  # Sync docs
-docrel scan                # Rescan
+docsync status              # Health dashboard
+docsync check               # Find stale docs
+docsync check --strict      # Exit 1 if stale (good for CI)
+docsync impact src/foo.ts   # Impact analysis
+docsync sync --symbol <id>  # Sync docs
+docsync scan                # Rescan
 \`\`\`
 `;
 
@@ -210,7 +210,7 @@ function upsertMcpJson(projectRoot: string): boolean {
       mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
     } catch (err: any) {
       if (fs.existsSync(mcpPath)) {
-        console.warn(`DocRel: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
+        console.warn(`DocSync: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
       }
       mcpConfig = {};
     }
@@ -222,9 +222,9 @@ function upsertMcpJson(projectRoot: string): boolean {
     mcpConfig.mcpServers = {};
   }
 
-  if (mcpConfig.mcpServers.docrel) return false; // already present
+  if (mcpConfig.mcpServers.docsync) return false; // already present
 
-  mcpConfig.mcpServers.docrel = DOCREL_MCP_ENTRY.docrel;
+  mcpConfig.mcpServers.docsync = DOCSYNC_MCP_ENTRY.docsync;
   fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n', 'utf-8');
   return true;
 }
@@ -238,7 +238,7 @@ function integrateClaudeCode(
   rulesFileName: string = 'CLAUDE.md',
 ): IntegrationResult {
   const files: string[] = [];
-  const CLAUDE_SECTION_MARKER = '## DocRel — Code-Documentation Sync';
+  const CLAUDE_SECTION_MARKER = '## DocSync — Code-Documentation Sync';
 
   // Prefer project-root rules file; fall back to .claude/<rulesFile>
   const rootRules = path.join(projectRoot, rulesFileName);
@@ -246,7 +246,7 @@ function integrateClaudeCode(
   const rulesPath = fs.existsSync(rootRules) ? rootRules : dotRules;
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, CLAUDE_DOCREL_SECTION, CLAUDE_SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, CLAUDE_DOCSYNC_SECTION, CLAUDE_SECTION_MARKER);
     if (added) files.push(rulesPath);
 
     const mcpAdded = upsertMcpJson(projectRoot);
@@ -261,7 +261,7 @@ function integrateClaudeCode(
     let hasDocrel = false;
     try {
       const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docrel);
+      hasDocrel = !!(m.mcpServers?.docsync);
     } catch { /* missing or invalid */ }
     if (!hasDocrel) files.push(mcpPath);
   }
@@ -278,11 +278,11 @@ function integrateClaudeCode(
 
 function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationResult {
   const files: string[] = [];
-  const SECTION_MARKER = '## DocRel — Code-Documentation Sync';
+  const SECTION_MARKER = '## DocSync — Code-Documentation Sync';
   const rulesPath = path.join(projectRoot, 'OPENCODE.md');
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, OPENCODE_DOCREL_SECTION, SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, OPENCODE_DOCSYNC_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
 
     const mcpAdded = upsertMcpJson(projectRoot);
@@ -296,7 +296,7 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
     let hasDocrel = false;
     try {
       const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docrel);
+      hasDocrel = !!(m.mcpServers?.docsync);
     } catch { /* missing or invalid */ }
     if (!hasDocrel) files.push(mcpPath);
   }
@@ -312,11 +312,11 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
 
 function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentKind = 'oh-my-pi'): IntegrationResult {
   const files: string[] = [];
-  const SECTION_MARKER = '# DocRel — Code-Documentation Sync';
-  const rulesPath = path.join(projectRoot, '.pi', 'docrel.md');
+  const SECTION_MARKER = '# DocSync — Code-Documentation Sync';
+  const rulesPath = path.join(projectRoot, '.pi', 'docsync.md');
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, PI_DOCREL_SECTION, SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, PI_DOCSYNC_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
   } else {
     let existing = '';
@@ -336,7 +336,7 @@ function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentK
 
 function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResult {
   const files: string[] = [];
-  const outPath = path.join(projectRoot, '.docrel', 'agent-instructions.md');
+  const outPath = path.join(projectRoot, '.docsync', 'agent-instructions.md');
 
   if (!dryRun) {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -360,7 +360,7 @@ function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResu
 // ── Main entry point ─────────────────────────────────────────────────
 
 /**
- * Generate agent-specific config files so DocRel integrates with the user's
+ * Generate agent-specific config files so DocSync integrates with the user's
  * coding agent. Pass `agent` to force a specific kind, or omit it to
  * auto-detect. Pass `dryRun: true` to preview without writing files.
  */

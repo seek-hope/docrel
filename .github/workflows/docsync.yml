@@ -1,4 +1,4 @@
-name: DocRel
+name: DocSync
 
 on:
   push:
@@ -19,27 +19,27 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install DocRel
-        run: npm install -g docrel
+      - name: Install DocSync
+        run: npm install -g docsync
 
-      - name: Initialize DocRel
-        run: docrel init --no-hooks
+      - name: Initialize DocSync
+        run: docsync init --no-hooks
 
       - name: Scan codebase
-        run: docrel scan
+        run: docsync scan
 
       - name: Check documentation health
-        run: docrel check --strict --format ci
+        run: docsync check --strict --format ci
 
       - name: Impact analysis (changed files)
         run: |
           CHANGED=$(git diff --name-only HEAD~1..HEAD)
           if [ -n "$CHANGED" ]; then
-            echo "$CHANGED" | xargs docrel impact --format ci
+            echo "$CHANGED" | xargs docsync impact --format ci
           fi
 
       - name: Health dashboard
-        run: docrel health --format ci
+        run: docsync health --format ci
 
       - name: Review summary
-        run: docrel review --format markdown >> $GITHUB_STEP_SUMMARY
+        run: docsync review --format markdown >> $GITHUB_STEP_SUMMARY
