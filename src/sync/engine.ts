@@ -73,8 +73,13 @@ async function getCurrentSignature(
       if (sig) {
         return { signature: sig, source: 'codegraph_query' };
       }
-    } catch {
-      // codegraph query failed — fall through to regex
+    } catch (err: any) {
+      // codegraph query failed — fall through to regex.
+      // Log at debug level so operators can detect when codegraph is unavailable
+      // without spamming production logs on every sync call.
+      if (process.env.DOCREL_DEBUG === '1' || process.env.DOCREL_DEBUG === 'true') {
+        console.debug('DocRel: codegraph getSymbolSignature failed, falling back to regex:', err instanceof Error ? err.message : err);
+      }
     }
   }
 
@@ -236,7 +241,12 @@ export async function syncSymbol(
                     // ISO 8601 per ECMAScript spec (Date.parse requires T).
                     const docDate = new Date(doc.updated_at.replace(' ', 'T') + 'Z').getTime();
                     fileModified = st.mtimeMs > docDate;
-                  } catch { /* stat failed — do not transition */ }
+                  } catch (err: any) {
+                    const code = (err as NodeJS.ErrnoException)?.code;
+                    if (code !== 'ENOENT') {
+                      console.warn(`DocRel: cannot stat ${relPath(doc.file, projectRoot)} for mtime check: ${code}`);
+                    }
+                  }
                 }
                 if (fileModified) {
                   if (markDocSynced(db, doc.id)) {

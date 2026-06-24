@@ -18,7 +18,7 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
   const row = db.prepare(`
     INSERT INTO mappings (symbol_id, doc_id, rel_type, review_status)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET review_status = excluded.review_status
+    ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET review_status = CASE WHEN review_status = 'auto' THEN excluded.review_status ELSE review_status END
     RETURNING *
   `).get(input.symbol_id, input.doc_id, input.rel_type, status) as MappingRow | undefined;
   if (!row) throw new Error("Mapping was not found after insert");

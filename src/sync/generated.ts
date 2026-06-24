@@ -38,9 +38,14 @@ const ALLOWED_SCRIPTS = new Set([
 
 /** Return the `npm run <script>` command to use when a matching allowed script
  *  is found in package.json scripts. Returns null if no match or if safety
- *  checks fail. */
-function resolveNpmScript(scripts: Record<string, string>): string | null {
-  for (const scriptName of ALLOWED_SCRIPTS) {
+ *  checks fail.
+ *
+ *  @param preferredScripts — checked first before the default ALLOWED_SCRIPTS
+ *  order. Use this to ensure type-specific scripts win over generic ones
+ *  (e.g., `generate:openapi` for OpenAPI specs, `docs:generate` for TypeDoc). */
+function resolveNpmScript(scripts: Record<string, string>, preferredScripts?: string[]): string | null {
+  const order = preferredScripts ? [...preferredScripts, ...ALLOWED_SCRIPTS] : ALLOWED_SCRIPTS;
+  for (const scriptName of order) {
     if (typeof scripts[scriptName] === 'string') {
       // The script value is not validated beyond being a non-empty string —
       // npm handles the actual execution, and the script is already defined
@@ -180,6 +185,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
     }
     return { success: true, output: result.stdout };
   } catch (err: any) {
+    console.error('DocRel: updateGeneratedDoc spawn failed:', err instanceof Error ? err.message : err);
     return { success: false, output: err.message };
   }
 }
@@ -252,8 +258,8 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
       const firstBytes = buf.toString('utf-8', 0, bytesRead);
       if (/^(openapi|swagger):\s*["']?\d/i.test(firstBytes)) {
-        // Content confirms this is an OpenAPI spec — try allowed scripts first
-        const npmCmd = resolveNpmScript(scripts);
+        // Content confirms this is an OpenAPI spec — try type-specific scripts first
+        const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
         if (npmCmd) return npmCmd;
         const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
         if (typeof cmd === 'string' && validateCommandSafety(cmd)) return cmd;
@@ -266,8 +272,8 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     }
   }
   if (isOpenApiFile) {
-    // Prefer npm run over direct binary invocation when the script is allowed
-    const npmCmd = resolveNpmScript(scripts);
+    // Prefer type-specific OpenAPI scripts over generic ones
+    const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
     if (npmCmd) return npmCmd;
     // Fall back to direct command for backwards compatibility
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
@@ -282,8 +288,8 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
 
   if ((file.endsWith('.md') && file.includes('typedoc')) || (file.endsWith('.md') && scripts['docs:generate'] &&
       (file.includes('/docs/api/') || file.includes('/docs/generated/') || file.includes('/typedoc/') || file.includes('/reference/')))) {
-    // Prefer npm run when the script is allowed
-    const npmCmd = resolveNpmScript(scripts);
+    // Prefer TypeDoc-specific scripts over generic ones
+    const npmCmd = resolveNpmScript(scripts, ['docs:generate', 'generate:docs', 'build:docs', 'docs:build']);
     if (npmCmd) return npmCmd;
     // Fall back to direct command for backwards compatibility
     const cmd = scripts['docs:generate'];

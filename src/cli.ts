@@ -14,7 +14,7 @@ import { docrelStatus } from './tools/status.js';
 import { docrelCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
 import { docrelImpact, formatImpactMarkdown } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
-import { docrelLink, docrelConfirm } from './tools/link.js';
+import { docrelLink, docrelConfirm, docrelReject } from './tools/link.js';
 import { docrelDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson, listAllMappings } from './db/mappings.js';
@@ -281,16 +281,16 @@ program
 
 program
   .command('link')
-  .description('Manage a symbol-doc mapping (create / update / delete)')
-  .argument('<action>', 'create, update, or delete')
+  .description('Manage a symbol-doc mapping (create or delete only; use confirm/reject to change review status)')
+  .argument('<action>', 'create or delete')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')  .action((action, opts) => {
     try {
       if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
       if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
-      if (!['create', 'update', 'delete'].includes(action)) {
-        console.error(`Error: action must be 'create', 'update', or 'delete', got '${action}'`);
+      if (!['create', 'delete'].includes(action)) {
+        console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
         exit(1);
       }const result = docrelLink(db, {
         action: action as 'create' | 'delete',
@@ -308,7 +308,7 @@ program
 
 program
   .command('confirm')
-  .description('Confirm a low-confidence mapping as correct (sets confidence to 1.0)')
+  .description('Confirm an auto-generated mapping as correct — sets review_status to confirmed')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
@@ -321,6 +321,25 @@ program
       if (result.action === 'error') exit(1);
     } catch (err: any) {
       console.error('Confirm failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('reject')
+  .description('Reject an auto-generated mapping as incorrect — sets review_status to rejected')
+  .option('--symbol <id>', 'Symbol ID')
+  .option('--doc <id>', 'Document section ID')
+  .option('--type <type>', 'Relationship type', 'describes')
+  .action((opts) => {
+    try {
+      if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
+      if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
+      const result = docrelReject(db, opts.symbol, opts.doc, opts.type);
+      console.log(JSON.stringify(result, null, 2));
+      if (result.action === 'error') exit(1);
+    } catch (err: any) {
+      console.error('Reject failed:', errMsg(err));
       exit(1);
     }
   });

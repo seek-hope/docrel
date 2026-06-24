@@ -959,8 +959,14 @@ function extractParams(signature: string): Array<{ name: string; type: string }>
   if (!paramsStr.trim()) return [];
 
   return splitParams(paramsStr).map((p) => {
-    const parts = p.trim().split(':');
-    return { name: parts[0]?.trim() ?? 'arg', type: parts[1]?.trim() ?? 'any' };
+    const trimmed = p.trim();
+    // Find the first ':' outside brackets and strings to split name from type.
+    // Using split(':') would break on colons inside complex types like
+    // `options: { foo: string; bar: number }` or defaults like `name: string = "a:b"`.
+    const colonIdx = findOuterColon(trimmed);
+    const name = colonIdx >= 0 ? trimmed.slice(0, colonIdx).trim() : trimmed;
+    const type = colonIdx >= 0 ? trimmed.slice(colonIdx + 1).trim() : 'any';
+    return { name: name || 'arg', type: type || 'any' };
   }).filter((p) => p.name.length > 0);
 }
 
@@ -1007,6 +1013,30 @@ function extractReturnType(signature: string): string | null {
   }
   const trimmed = result.trim();
   return trimmed || null;
+}
+
+/** Find the first colon that is outside brackets, braces, parens, and string
+ *  literals. Used to split parameter name from type annotation without
+ *  breaking on colons inside complex types or default values. */
+function findOuterColon(str: string): number {
+  let depth = 0;
+  let inString: string | null = null;
+  let nestDepth = 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (inString) {
+      if (ch === '\\') { i++; continue; }
+      if (inString === '`' && ch === '$' && str[i + 1] === '{') { nestDepth++; continue; }
+      if (inString === '`' && ch === '}' && nestDepth > 0) { nestDepth--; continue; }
+      if (ch === inString && nestDepth === 0) inString = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+    if (ch === '<' || ch === '(' || ch === '{' || ch === '[') { depth++; continue; }
+    if (ch === '>' || ch === ')' || ch === '}' || ch === ']') { depth--; continue; }
+    if (ch === ':' && depth === 0) return i;
+  }
+  return -1;
 }
 
 /** Split comma-separated params, respecting nested angle brackets, parentheses,

@@ -32,7 +32,12 @@ function detectLanguage(file: string): string {
 }
 
 function mapKind(kind: string): ExtractedSymbol['kind'] {
-  return CODEGRAPH_KIND_MAP[kind.toLowerCase()] ?? 'function';
+  const mapped = CODEGRAPH_KIND_MAP[kind.toLowerCase()];
+  if (!mapped) {
+    console.warn(`DocRel: CodegraphExtractor received unknown symbol kind '${kind}' — defaulting to 'function'. Codegraph may have added new symbol types.`);
+    return 'function';
+  }
+  return mapped;
 }
 
 export class CodegraphExtractor implements SymbolExtractor {

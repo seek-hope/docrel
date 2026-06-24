@@ -242,8 +242,15 @@ function tryCreateMapping(
       counters.low++;
     }
     return true;
-  } catch {
-    // UNIQUE constraint or other DB error — skip
+  } catch (err: any) {
+    // UNIQUE constraint is expected when a mapping already exists — skip silently.
+    // For all other errors (SQLITE_CORRUPT, SQLITE_READONLY, SQLITE_FULL, SQLITE_IOERR),
+    // log a warning so operators can detect hardware or database failures.
+    if ((err as any)?.code?.startsWith('SQLITE_CONSTRAINT')) {
+      // expected — mapping already exists, skip
+    } else {
+      console.warn('DocRel: autoLink createMapping failed:', err instanceof Error ? err.message : err);
+    }
     return false;
   }
 }

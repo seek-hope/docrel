@@ -36,7 +36,10 @@ function compilePatterns(projectRoot: string): CompiledPattern[] {
   let raw: string;
   try {
     raw = fs.readFileSync(ignorePath, 'utf-8');
-  } catch {
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn(`DocRel: cannot read .docrelignore:`, (err as NodeJS.ErrnoException)?.message ?? err);
+    }
     cache = { projectRoot, patterns };
     return patterns;
   }

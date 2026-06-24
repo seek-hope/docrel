@@ -46,6 +46,16 @@ export async function preCommitHook(
 
     return { allowed: true, message: 'DocRel: all docs in sync.' };
   } catch (err: any) {
+    // Distinguish transient SQLITE_BUSY from permanent failures.
+    // If the database is locked by another process (e.g., concurrent scan),
+    // blocking the commit would be a denial-of-service. Allow commits on BUSY
+    // with a prominent warning so the developer can check manually.
+    const isBusy = (err as any)?.code === 'SQLITE_BUSY' ||
+      (typeof (err as any)?.message === 'string' && /\bdatabase.*locked\b/i.test((err as any).message));
+    if (isBusy) {
+      console.warn('DocRel: database locked — skipping pre-commit check. Run `docrel check` manually to verify documentation.');
+      return { allowed: true, message: 'DocRel: database locked — pre-commit check skipped. Run `docrel check` manually.' };
+    }
     console.error(`DocRel pre-commit hook error:`, err);
     return { allowed: false, message: 'DocRel: pre-commit check failed: internal error — check docrel logs for details.' };
   }

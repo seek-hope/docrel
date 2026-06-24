@@ -21,7 +21,10 @@ export function docSectionId(file: string, anchor: string): string {
     console.warn(`DocRel: docSectionId received null/undefined argument — skipping`);
     return '';
   }
-  const normalized = `${file.trim()}#${anchor.trim()}`;
+  // Encode '#' in both components so the '#' separator character is
+  // unambiguous. Without this, docSectionId('README.md#Section', '1') and
+  // docSectionId('README.md', 'Section#1') would produce the same hash.
+  const normalized = `${file.trim().replace(/#/g, '%23')}#${anchor.trim().replace(/#/g, '%23')}`;
   return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 

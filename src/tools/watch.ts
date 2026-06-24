@@ -136,8 +136,12 @@ export async function startWatch(
       for (const t of debounceTimers.values()) clearTimeout(t);
       console.log('DocRel watch stopped.');
     };
-  } catch {
-    console.error('chokidar is not installed. Run: npm install -g chokidar');
+  } catch (err: any) {
+    if (err?.code === 'ERR_MODULE_NOT_FOUND' || err?.code === 'MODULE_NOT_FOUND') {
+      console.error('chokidar is not installed. Run: npm install -g chokidar');
+    } else {
+      console.error('DocRel watch failed to start:', err instanceof Error ? err.message : err);
+    }
     return () => {};
   }
 }

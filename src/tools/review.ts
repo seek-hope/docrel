@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertDbOpen } from '../db/connection.js';
+import { escapeRegex } from '../utils/fs.js';
 
 export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
@@ -191,10 +192,6 @@ function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
     WHERE m.review_status = 'auto'
     ORDER BY s.name
   `).all() as UnreviewedMapping[];
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function docrelReview(db: Database.Database, projectRoot: string): ReviewReport {

@@ -37,6 +37,17 @@ export function docrelImpact(
   changedFiles: string[],
   projectRoot?: string,
 ): ImpactReport {
+  // Cap the input array to prevent DoS via MCP tool invocation with
+  // excessively large path lists (e.g., 100,000 entries would make
+  // 100,000 SQL queries + realpathSync calls).
+  if (changedFiles.length > 1000) {
+    return {
+      changedFiles,
+      affectedSymbols: [],
+      affectedDocs: [],
+      errors: [{ file: '', message: `Too many files: ${changedFiles.length} (max 1000). Check batches of up to 1000 files at a time.` }],
+    };
+  }
   try {
     assertDbOpen(db);
   } catch (err: any) {

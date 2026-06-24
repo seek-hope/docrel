@@ -71,6 +71,7 @@ try {
   extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
   console.error('Failed to initialize DocRel:', err.message);
+  try { closeAllDbs(); } catch {}
   process.exit(1);
 }
 
@@ -209,7 +210,7 @@ server.tool(
 // ── docrel_link ────────────────────────────────────────────────
 server.tool(
   'docrel_link',
-  'Manage a mapping between a code symbol and a documentation section (create, update confidence, or delete)',
+  'Manage a mapping between a code symbol and a documentation section (create, update review_status, or delete)',
   {
     action: z.enum(['create', 'delete']),
     symbol_id: z.string(),
@@ -242,6 +243,28 @@ server.tool(
     try {
       const { docrelConfirm } = await import('./tools/link.js');
       const result = docrelConfirm(db, symbol_id, doc_id, rel_type);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_reject ──────────────────────────────────────────────
+server.tool(
+  'docrel_reject',
+  'Reject an auto-generated mapping as incorrect — sets review_status to rejected',
+  {
+    symbol_id: z.string(),
+    doc_id: z.string(),
+    rel_type: z.enum(['describes', 'references', 'generates', 'contracts']).optional().default('describes'),
+  },
+  async ({ symbol_id, doc_id, rel_type }) => {
+    try {
+      const { docrelReject } = await import('./tools/link.js');
+      const result = docrelReject(db, symbol_id, doc_id, rel_type);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -524,8 +547,12 @@ async function shutdown(code: number = 0): Promise<void> {
   shuttingDown = true;
 
   console.error('DocRel MCP Server shutting down...');
-  try { await codegraph.close(); } catch {}
-  try { closeAllDbs(); } catch {}
+  try { await codegraph.close(); } catch (err: any) {
+    if (DOCREL_DEBUG) console.error('DocRel: codegraph.close() failed during shutdown:', err instanceof Error ? err.message : err);
+  }
+  try { closeAllDbs(); } catch (err: any) {
+    console.error('DocRel: closeAllDbs() failed during shutdown — WAL may not have checkpointed:', err instanceof Error ? err.message : err);
+  }
   // Use exitCode to let the event loop drain gracefully instead of
   // immediately terminating — gives async cleanup a chance to finish.
   // Exit code reflects the reason for shutdown: 0 for clean termination

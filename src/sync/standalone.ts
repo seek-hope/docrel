@@ -26,6 +26,7 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_FILE_SIZE) {
       fs.closeSync(fd);
+      fd = undefined;
       return null;
     }
     // Re-validate real path using the actual open file descriptor instead of
@@ -38,6 +39,7 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
       const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
       if (!fdReal.startsWith(root + path.sep) && fdReal !== root) {
         fs.closeSync(fd);
+        fd = undefined;
         return null;
       }
     }
@@ -233,7 +235,7 @@ export function findSectionContentFromString(content: string, anchor: string): s
       continue;
     }
 
-    const match = line.match(new RegExp(`^(#{1,6})\\s+${escapedAnchor}\\s*$`));
+    const match = line.match(new RegExp(`^\\s{0,3}(#{1,6})\\s+${escapedAnchor}\\s*$`));
     if (match) {
       startLine = i;
       startLevel = match[1].length;

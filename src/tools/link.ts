@@ -15,6 +15,8 @@ export function docrelLink(
   db: Database.Database,
   p: { action: 'create' | 'delete'; symbol_id: string; doc_id: string; rel_type: string; review_status?: ReviewStatus },
 ): LinkResult {
+  if (!p.symbol_id || !p.doc_id)
+    return { action:'error', symbol_id:p.symbol_id || '', doc_id:p.doc_id || '', rel_type:p.rel_type, message:'symbol_id and doc_id must not be empty' };
   if (!VALID_REL_TYPES.has(p.rel_type))
     return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:"Invalid rel_type. Must be one of: "+[...VALID_REL_TYPES].join(', ') };
   try {
