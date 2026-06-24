@@ -262,8 +262,90 @@ export class CodegraphClient {
     }
   }
 
+  /** Cache preflight result so it only runs once across multiple isAvailable() calls. */
+  private _preflightResult: string | null | undefined = undefined;
+
+  /** Cache the version string so preflight doesn't re-query it. */
+  private _cachedVersion: string | null = null;
+
+  /** Get codegraph's version string, with caching. */
+  private async getCodegraphVersion(cmd: string): Promise<string> {
+    if (this._cachedVersion) return this._cachedVersion;
+    try {
+      const { execFileSync } = await import('node:child_process');
+      const out = execFileSync(cmd, ['--version'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim();
+      const v = out.match(/(\d+\.\d+\.\d+)/);
+      this._cachedVersion = v ? v[1] : out;
+      return this._cachedVersion!;
+    } catch {
+      return 'unknown';
+    }
+  }
+
+  /** Quick pre-flight check: is codegraph installed and does it support the MCP subcommand?
+   *  Runs `codegraph --version` and `codegraph mcp --help` (or equivalent) without actually
+   *  connecting. Returns a diagnostic string on failure, null on success. */
+  async preflight(): Promise<string | null> {
+    if (this._preflightResult !== undefined) return this._preflightResult;
+    const cmd = this.command ?? 'codegraph';
+    const { execFileSync } = await import('node:child_process');
+
+    // 1. Check if the binary exists on PATH
+    try {
+      const whichOut = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 3000 }).trim();
+      if (!whichOut) return (this._preflightResult = `Codegraph binary '${cmd}' not found on PATH — install from https://github.com/codegraph-ai/CodeGraph`);
+    } catch {
+      return (this._preflightResult = `Codegraph binary '${cmd}' not found on PATH — doc-relay will use the built-in regex extractor instead.`);
+    }
+
+    // 2. Check if the binary actually works
+    try {
+      execFileSync(cmd, ['--version'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
+    } catch (err: any) {
+      const stderr = err.stderr || err.message || '';
+      return (this._preflightResult = `Codegraph binary '${cmd}' failed to run: ${stderr.slice(0, 200)}`);
+    }
+
+    // 3. Check if it supports the 'mcp' subcommand
+    // Run `codegraph --help`, then look for 'mcp' in the listed commands.
+    // We must use --help (not `codegraph mcp --help`) because some codegraph
+    // versions redirect unknown subcommands to the main help output instead
+    // of returning an error.
+    try {
+      const helpOut = execFileSync(cmd, ['--help'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
+      const hasMcp = /\bmcp\b/.test(helpOut) &&
+        (/\bCommands:/i.test(helpOut) || /\bmcp\b/i.test(helpOut.split('\n').filter(l => /^\s{2,}/.test(l)).join('\n')));
+      if (!hasMcp) {
+        const version = await this.getCodegraphVersion(cmd);
+        return (this._preflightResult = `Codegraph ${version} is installed but does not support the 'mcp' subcommand — update to the latest version for richer symbol data. Doc-relay will use its built-in regex extractor instead.`);
+      }
+    } catch (err: any) {
+      const stderr = (err.stderr || err.message || '').toString();
+      if (stderr.includes('unknown command') || stderr.includes('Unknown command') || stderr.includes('--help')) {
+        return (this._preflightResult = `Codegraph is installed but does not support the 'mcp' subcommand — update to the latest version for richer symbol data.`);
+      }
+    }
+
+    this._preflightResult = null;
+    return null; // All checks passed
+  }
+
   async isAvailable(timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
     let timer: NodeJS.Timeout | undefined;
+
+    // Run preflight — if codegraph isn't installed, skip the full connect attempt
+    // (which would produce confusing "unknown command 'mcp'" noise on stderr).
+    try {
+      const preflightIssue = await this.preflight();
+      if (preflightIssue) {
+        console.warn(`DocRelay: ${preflightIssue}`);
+        return false;
+      }
+    } catch {
+      // preflight itself failed — skip connect and fall back
+      return false;
+    }
+
     try {
       await Promise.race([
         this.connect(),
@@ -273,11 +355,7 @@ export class CodegraphClient {
       ]);
       return true;
     } catch (err) {
-      // Log the underlying error for diagnostics, then return false.
-      // The empty catch previously swallowed all connection errors,
-      // making it impossible to diagnose why codegraph was unavailable.
-      console.warn('DocRelay: codegraph isAvailable() failed:', err instanceof Error ? err.message : err);
-      // Bump the generation so any in-flight doConnect discards its result
+      console.warn('DocRelay: codegraph connection failed — falling back to built-in extractor:', err instanceof Error ? err.message : err);
       this.connectGeneration++;
       if (this.client) {
         this.client.close().catch(() => {});

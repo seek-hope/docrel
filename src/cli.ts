@@ -56,23 +56,30 @@ process.on('exit', () => {
 const program = new Command();
 const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
-let config: ReturnType<typeof loadConfig>;
-let db: ReturnType<typeof getDb>;
-let extractor: SymbolExtractor;
-let codegraph: CodegraphClient;
+// ── Lazy CLI context — init only when a command actually needs it ──
+// --help and --version skip config/DB/codegraph entirely.
 
-try {
-  config = loadConfig(projectRoot);
-  db = getDb(projectRoot);
-  runMigrations(db);
-  codegraph = new CodegraphClient(config.codegraph?.command);
-  const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
-  const builtinExtractor = new BuiltinExtractor();
-  // Try codegraph; fall back to builtin regex-based extraction
-  extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
-} catch (err: any) {
-  console.error('DocRelay initialization failed:', errMsg(err));
-  exit(1);
+let config!: ReturnType<typeof loadConfig>;
+let db!: ReturnType<typeof getDb>;
+let extractor!: SymbolExtractor;
+let codegraph!: CodegraphClient;
+let _ctxReady = false;
+
+async function ensureContext(): Promise<void> {
+  if (_ctxReady) return;
+  try {
+    config = loadConfig(projectRoot);
+    db = getDb(projectRoot);
+    runMigrations(db);
+    codegraph = new CodegraphClient(config.codegraph?.command);
+    const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
+    const builtinExtractor = new BuiltinExtractor();
+    extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
+    _ctxReady = true;
+  } catch (err: any) {
+    console.error('DocRelay initialization failed:', errMsg(err));
+    exit(1);
+  }
 }
 
 program
@@ -88,6 +95,7 @@ program
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
     try {
+      await ensureContext();
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
       const docrelayDir = path.join(projectRoot, '.docrelay');
@@ -160,6 +168,7 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'markdown')
   .action(async (opts) => {
     try {
+      await ensureContext();
       const { docrelayHealth } = await import('./tools/health.js');
       const report = await docrelayHealth(db, projectRoot, () => extractor.isAvailable(), DOCRELAY_VERSION);
       if (opts.format === 'json') {
@@ -185,8 +194,9 @@ program
   .command('status')
   .description('Show health dashboard')
   .option('--format <format>', 'Output format: json or markdown', 'json')
-  .action((opts) => {
+  .action(async (opts) => {
     try {
+      await ensureContext();
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const status = docrelayStatus(db);
       if (status.error) {
@@ -214,8 +224,9 @@ program
   .option('--strict', 'Exit with code 1 if any docs are stale', false)
   .option('--file <file>', 'Check only a specific file')
   .option('--format <format>', 'Output format: json, markdown, or ci', 'json')
-  .action((opts) => {
+  .action(async (opts) => {
     try {
+      await ensureContext();
       const report = docrelayCheck(db, opts.strict);
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count.
@@ -265,8 +276,9 @@ program
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')
   .option('--format <format>', 'Output format: json or markdown', 'json')
-  .action((paths: string[], opts) => {
+  .action(async (paths: string[], opts) => {
     try {
+      await ensureContext();
       const impact = docrelayImpact(db, paths);
       if (opts.format === 'markdown') {
         console.log(formatImpactMarkdown(impact));
@@ -286,6 +298,7 @@ program
   .option('--all-stale', 'Sync all stale documentation sections')
   .action(async (opts) => {
     try {
+      await ensureContext();
       if (opts.allStale) {
         const result = await syncAllStale(db, codegraph, config, projectRoot);
         console.log(JSON.stringify(result, null, 2));
@@ -309,8 +322,9 @@ program
   .argument('<action>', 'create or delete')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
-  .option('--type <type>', 'Relationship type', 'describes')  .action((action, opts) => {
+  .option('--type <type>', 'Relationship type', 'describes')  .action(async (action, opts) => {
     try {
+      await ensureContext();
       if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
       if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
       if (!['create', 'delete'].includes(action)) {
@@ -337,8 +351,9 @@ program
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
   .option('--all', 'Confirm ALL unreviewed (auto) mappings in bulk')
-  .action((opts) => {
+  .action(async (opts) => {
     try {
+      await ensureContext();
       if (opts.all) {
         const { findUnreviewed } = require('./tools/review.js');
         // Query unreviewed mappings directly
@@ -380,8 +395,9 @@ program
   .option('--type <type>', 'Relationship type', 'describes')
   .option('--all', 'Reject ALL unreviewed (auto) mappings in bulk')
   .option('--pattern <pattern>', 'Reject mappings where symbol name matches this substring')
-  .action((opts) => {
+  .action(async (opts) => {
     try {
+      await ensureContext();
       if (opts.all) {
         const unreviewed = db.prepare(`
           SELECT m.symbol_id, m.doc_id, m.rel_type
@@ -442,8 +458,9 @@ program
   .description('Show change history for a symbol')
   .argument('<symbol_id>', 'Symbol ID')
   .option('--format <format>', 'Output format: json or markdown', 'json')
-  .action((symbolId, opts) => {
+  .action(async (symbolId, opts) => {
     try {
+      await ensureContext();
       const diff = docrelayDiff(db, symbolId);
       if (!diff.found) {
         console.error(diff.message || 'Symbol not found');
@@ -463,8 +480,9 @@ program
 program
   .command('install-hooks')
   .description('Install DocRelay git hooks in .git/hooks/')
-  .action(() => {
+  .action(async () => {
     try {
+      await ensureContext();
       installHooks(projectRoot);
       console.log('DocRelay hooks installed successfully.');
     } catch (err: any) {
@@ -477,12 +495,14 @@ program
   .command('annotate-commit')
   .description('Annotate a commit message with DocRelay summary stats')
   .argument('<commit-msg-file>', 'Path to the commit message file')
-  .action((commitMsgFile: string) => {
+  .action(async (commitMsgFile: string) => {
     try {
+      await ensureContext();
       const summary = prepareCommitMsg(db);
       const fullPath = path.resolve(projectRoot, commitMsgFile);
       let existing = '';
       try {
+        await ensureContext();
         existing = fs.readFileSync(fullPath, 'utf-8');
       } catch {
         // File may not exist yet (e.g., git commit without -m); start fresh
@@ -521,6 +541,7 @@ program
   .option('--incremental', 'Only scan files modified since last scan (faster)')
   .action(async (opts) => {
     try {
+      await ensureContext();
       // Pre-flight config validation
       const configIssues = validateConfig(config, projectRoot);
       const configErrors = configIssues.filter(i => i.severity === 'error');
@@ -609,6 +630,7 @@ program
   .option('-S, --side-by-side', 'Show code↔doc blocks for unreviewed mappings')
   .action(async (opts) => {
     try {
+      await ensureContext();
       const { docrelayReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
       const report = docrelayReview(db, projectRoot);
       if (opts.json || opts.format === 'json') {
@@ -627,8 +649,9 @@ program
 program
   .command('export-mappings')
   .description('Export mappings to .docrelay/mappings.json (for CodeGraph integration)')
-  .action(() => {
+  .action(async () => {
     try {
+      await ensureContext();
       const mappings = exportMappingsJson(db);
       const docrelayDir = path.join(projectRoot, '.docrelay');
       fs.mkdirSync(docrelayDir, { recursive: true });
@@ -648,6 +671,7 @@ program
   .option('--dry-run', 'Preview what would be created without writing files')
   .action(async (opts) => {
     try {
+      await ensureContext();
       const detected = detectAgent();
       const agentKind: AgentKind | undefined = opts.agent as AgentKind | undefined;
 
@@ -702,12 +726,14 @@ async function notifyIfOutdated(): Promise<void> {
 program
   .command('update')
   .description('Update DocRelay to the latest version via npm')
-  .action(() => {
+  .action(async () => {
     try {
+      await ensureContext();
       // Resolve npm binary path with TOCTOU-safe validation matching the
       // pattern used in client.ts doConnect() and hooks.ts installHooks().
       let npmBin: string;
       try {
+        await ensureContext();
         const whichOutput = execFileSync('which', ['npm'], { encoding: 'utf-8' }).trim();
         if (!whichOutput) throw new Error('npm not found on PATH');
         const realBin = fs.realpathSync(whichOutput);
@@ -720,6 +746,7 @@ program
         }
         // Verify the binary actually works before executing
         try {
+          await ensureContext();
           execFileSync(realBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
         } catch {
           console.error(`Resolved npm binary at ${realBin} does not appear to work.`);
@@ -738,6 +765,7 @@ program
       // Validate npm registry before executing install
       let registry: string;
       try {
+        await ensureContext();
         registry = execFileSync(npmBin, ['config', 'get', 'registry'], { encoding: 'utf-8' }).trim();
       } catch {
         registry = 'https://registry.npmjs.org/';
@@ -772,8 +800,9 @@ const configCommand = program
 configCommand
   .command('show')
   .description('Show resolved config (defaults merged with user overrides) in YAML format')
-  .action(() => {
+  .action(async () => {
     try {
+      await ensureContext();
       const resolved = loadConfig(projectRoot);
       console.log(stringifyYaml(resolved));
     } catch (err: any) {
@@ -785,7 +814,7 @@ configCommand
 configCommand
   .command('validate')
   .description('Validate .docrelay/config.yaml for common misconfigurations')
-  .action(() => {
+  .action(async () => {
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
       console.log('✅ Configuration is valid.');
@@ -803,8 +832,9 @@ configCommand
   });
 
 // Default action for `docrelay config` (no subcommand) → show config
-configCommand.action(() => {
+configCommand.action(async () => {
   try {
+    await ensureContext();
     const resolved = loadConfig(projectRoot);
     console.log(stringifyYaml(resolved));
   } catch (err: any) {
@@ -819,6 +849,7 @@ program
   .option('--force', 'Skip confirmation prompt')
   .action(async (opts) => {
     try {
+      await ensureContext();
       if (!opts.force) {
         console.error('WARNING: This will delete the DocRelay database (.git/docrelay.db or .docrelay/docrelay.db).');
         console.error('All symbol mappings, changelog history, and scan metadata will be lost.');
@@ -852,8 +883,11 @@ program
       // Delete the database and companion files
       if (dbPath) {
         try { fs.unlinkSync(dbPath); } catch {}
+          await ensureContext();
         try { fs.unlinkSync(dbPath + '-wal'); } catch {}
+          await ensureContext();
         try { fs.unlinkSync(dbPath + '-shm'); } catch {}
+          await ensureContext();
         console.error(`Deleted database: ${dbPath.replace(projectRoot, '<projectRoot>')}`);
       }
 
@@ -877,6 +911,7 @@ program
     // The top-level extractor may have been initialized before codegraph was
     // available; re-create and re-check here for the gc action.
     try {
+      await ensureContext();
       const codegraphExt = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
       const builtinExt = new BuiltinExtractor();
       const codegraphAvailable = await codegraphExt.isAvailable();
@@ -909,8 +944,9 @@ program
   .command('backup')
   .description('Backup the DocRelay database to a timestamped file')
   .option('--output <path>', 'Output path (default: .docrelay/backup-<timestamp>.db)')
-  .action((opts) => {
+  .action(async (opts) => {
     try {
+      await ensureContext();
       const dbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
       if (!fs.existsSync(dbPath)) {
         // Check .git/docrelay.db as fallback
@@ -941,6 +977,7 @@ program
   .option('--force', 'Skip confirmation prompt')
   .action(async (backupPath, opts) => {
     try {
+      await ensureContext();
       const srcPath = path.resolve(projectRoot, backupPath);
       if (!fs.existsSync(srcPath)) {
         console.error(`Backup file not found: ${backupPath}`);
