@@ -9,11 +9,13 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "chmod 755 dist/cli.js",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ tests/",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -24,6 +26,9 @@
     "yaml": "^2.0.0",
     "zod": "^4.4.3"
   },
+  "files": [
+    "dist/"
+  ],
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
