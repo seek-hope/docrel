@@ -65,6 +65,15 @@ let extractor!: SymbolExtractor;
 let codegraph!: CodegraphClient;
 let _ctxReady = false;
 
+/** Shared extractor factory — used by ensureContext, scan, and gc.
+ *  Tries Codegraph first, falls back to builtin regex extractor.
+ *  Diagnostics are handled by CodegraphClient.preflight(), so we stay quiet. */
+async function createExtractor(cg: CodegraphClient, cfg: ReturnType<typeof loadConfig>): Promise<SymbolExtractor> {
+  const codegraphExt = new CodegraphExtractor(cg, cfg.codegraph?.maxFiles);
+  if (await codegraphExt.isAvailable()) return codegraphExt;
+  return new BuiltinExtractor();
+}
+
 async function ensureContext(): Promise<void> {
   if (_ctxReady) return;
   try {
@@ -72,9 +81,7 @@ async function ensureContext(): Promise<void> {
     db = getDb(projectRoot);
     runMigrations(db);
     codegraph = new CodegraphClient(config.codegraph?.command);
-    const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
-    const builtinExtractor = new BuiltinExtractor();
-    extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
+    extractor = await createExtractor(codegraph, config);
     _ctxReady = true;
   } catch (err: any) {
     console.error('DocRelay initialization failed:', errMsg(err));
@@ -107,18 +114,36 @@ program
 
       // 2. Write default config if missing (or --force)
       if (!fs.existsSync(configPath) || opts.force) {
-        const defaultConfig = `# DocRelay configuration — see https://github.com/seek-hope/docrelay
+        const defaultConfig = `# DocRelay configuration — https://github.com/seek-hope/docrel
+# Schema version (auto-upgraded on new doc-relay releases)
+version: 1
+
 project: ${path.basename(projectRoot)}
+
+# Documentation paths — directories or individual files
 doc_dirs:
   - docs
   - README.md
+
+# Code directories — each is scanned recursively for symbols
 code_dirs:
   - src
+
+# Sync strategies per doc type:
+#   auto_update  — rewrite the doc section automatically
+#   mark_stale   — flag as stale, let a human review
+#   prompt       — suggest changes but don't apply them
+#   ignore       — skip this doc type entirely
 strategies:
-  inline: auto_update       # Docstrings in source — rewrite directly
-  standalone: auto_update   # Markdown docs — generate diff, agent reviews
-  generated: auto_update    # TypeDoc/OpenAPI — re-run generator
-  architecture: mark_stale  # Architecture docs — flag for review only
+  inline: auto_update       # docstrings in source code
+  standalone: auto_update   # markdown docs
+  generated: auto_update    # TypeDoc / OpenAPI / generated docs
+  architecture: mark_stale  # architecture decision records
+
+# Optional: Codegraph integration for richer symbol data
+# codegraph:
+#   command: codegraph      # path or binary name
+#   maxFiles: 20            # max files per explore call
 `;
         fs.writeFileSync(configPath, defaultConfig, 'utf-8');
         steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docrelay/config.yaml`);
@@ -355,7 +380,6 @@ program
     try {
       await ensureContext();
       if (opts.all) {
-        const { findUnreviewed } = require('./tools/review.js');
         // Query unreviewed mappings directly
         const unreviewed = db.prepare(`
           SELECT m.symbol_id, m.doc_id, m.rel_type
@@ -559,17 +583,8 @@ program
         console.error('[dry-run] Database writes are skipped.');
       }
 
-      // Pick extractor: try CodegraphExtractor, fall back to BuiltinExtractor
-      const codegraphExt = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
-      const builtinExt = new BuiltinExtractor();
-      const codegraphAvailable = await codegraphExt.isAvailable();
-      const scanExtractor = codegraphAvailable ? codegraphExt : builtinExt;
-
-      if (codegraphAvailable) {
-        console.error('Using Codegraph extractor');
-      } else {
-        console.error('Codegraph not available — falling back to builtin regex extractor');
-      }
+      // Pick extractor (shared factory with ensureContext and gc)
+      const scanExtractor = await createExtractor(codegraph, config);
 
       // Scan symbols via extractor
       console.error('Scanning codebase...');
@@ -755,7 +770,7 @@ program
         npmBin = realBin;
       } catch (err: any) {
         if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-          console.error("Cannot locate npm: 'which' utility is not available on this system. Try updating manually with: npm install -g docrelay@latest");
+          console.error("Cannot locate npm: 'which' utility is not available on this system. Try updating manually with: npm install -g doc-relay@latest");
         } else {
           console.error(`Cannot locate npm binary: ${err.message || err}`);
         }
@@ -777,7 +792,7 @@ program
 
       console.log('Updating DocRelay...');
       console.warn('Note: global install (-g) may require elevated privileges.');
-      const output = execFileSync(npmBin, ['install', '-g', 'docrelay@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
+      const output = execFileSync(npmBin, ['install', '-g', 'doc-relay@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
       console.log(output || 'DocRelay updated to the latest version.');
     } catch (err: any) {
       // npm stderr may contain absolute filesystem paths (global install
@@ -788,7 +803,7 @@ program
       } else {
         console.error('Update failed: npm install returned an error. Run with DOCRELAY_DEBUG=1 for details.');
       }
-      console.error('Try: npm install -g docrelay@latest');
+      console.error('Try: npm install -g doc-relay@latest');
       exit(1);
     }
   });
@@ -912,16 +927,7 @@ program
     // available; re-create and re-check here for the gc action.
     try {
       await ensureContext();
-      const codegraphExt = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
-      const builtinExt = new BuiltinExtractor();
-      const codegraphAvailable = await codegraphExt.isAvailable();
-      const gcExtractor = codegraphAvailable ? codegraphExt : builtinExt;
-
-      if (codegraphAvailable) {
-        console.error('Using Codegraph extractor');
-      } else {
-        console.error('Codegraph not available — falling back to builtin regex extractor');
-      }
+      const gcExtractor = await createExtractor(codegraph, config);
 
       console.error('Scanning codebase for GC...');
       const scanReport = await scanProject(gcExtractor, db, config, projectRoot);
