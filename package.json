@@ -1,6 +1,6 @@
 {
   "name": "doc-relay",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Forge and maintain living connections between code symbols and documentation",
   "type": "module",
   "main": "dist/index.js",
