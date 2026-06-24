@@ -6,7 +6,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ErrorCode } from '../utils/error-codes.js';
+import { ErrorCode, logError, docrelError } from '../utils/error-codes.js';
 
 export interface HealthReport {
   healthy: boolean;
@@ -29,6 +29,8 @@ interface HealthCheckFn {
   (): Promise<HealthCheck>;
 }
 
+const CODEGRAPH_HEALTH_TIMEOUT_MS = 5000;
+
 export async function docrelHealth(
   db: Database.Database,
   projectRoot: string,
@@ -38,12 +40,12 @@ export async function docrelHealth(
   const checks: HealthCheck[] = [];
   const errors: Array<{ code: string; message: string }> = [];
 
-  const run = async (fn: HealthCheckFn) => {
+  const run = async (name: string, fn: HealthCheckFn) => {
     try {
       checks.push(await fn());
     } catch (err: any) {
       checks.push({
-        name: 'unknown',
+        name,
         status: 'failed',
         code: ErrorCode.INTERNAL_UNEXPECTED,
         message: `Health check threw: ${err instanceof Error ? err.message : String(err)}`,
@@ -52,7 +54,7 @@ export async function docrelHealth(
   };
 
   // 1. Database connectivity
-  await run(async () => {
+  await run('database', async () => {
     const start = Date.now();
     try {
       const row = db.prepare('SELECT 1 AS ok').get() as { ok: number } | undefined;
@@ -68,7 +70,7 @@ export async function docrelHealth(
   });
 
   // 2. DocRel config existence
-  await run(async () => {
+  await run('config', async () => {
     const configPath = path.join(projectRoot, '.docrel', 'config.yaml');
     if (fs.existsSync(configPath)) {
       return { name: 'config', status: 'ok', message: '.docrel/config.yaml found' };
@@ -77,7 +79,7 @@ export async function docrelHealth(
   });
 
   // 3. .docrel/ directory writable
-  await run(async () => {
+  await run('docrel_dir_writable', async () => {
     const docrelDir = path.join(projectRoot, '.docrel');
     try {
       fs.accessSync(docrelDir, fs.constants.W_OK);
@@ -87,11 +89,16 @@ export async function docrelHealth(
     }
   });
 
-  // 4. Codegraph availability
-  await run(async () => {
+  // 4. Codegraph availability (with 5s timeout to prevent hangs)
+  await run('codegraph', async () => {
     const start = Date.now();
     try {
-      const available = await checkCodegraph();
+      const available = await Promise.race([
+        checkCodegraph(),
+        new Promise<boolean>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), CODEGRAPH_HEALTH_TIMEOUT_MS)
+        ),
+      ]);
       const latencyMs = Date.now() - start;
       if (available) {
         return { name: 'codegraph', status: 'ok', message: 'Codegraph is reachable', latencyMs };
@@ -104,7 +111,7 @@ export async function docrelHealth(
   });
 
   // 5. Symbol count
-  await run(async () => {
+  await run('symbols', async () => {
     const count = (db.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number }).c;
     if (count > 0) {
       return { name: 'symbols', status: 'ok', message: `${count} symbols tracked` };
@@ -113,7 +120,7 @@ export async function docrelHealth(
   });
 
   // 6. Doc section count
-  await run(async () => {
+  await run('docs', async () => {
     const count = (db.prepare('SELECT COUNT(*) AS c FROM doc_sections').get() as { c: number }).c;
     if (count > 0) {
       return { name: 'docs', status: 'ok', message: `${count} doc sections tracked` };
@@ -122,7 +129,7 @@ export async function docrelHealth(
   });
 
   // 7. Stale doc ratio
-  await run(async () => {
+  await run('stale_docs', async () => {
     const total = (db.prepare('SELECT COUNT(*) AS c FROM doc_sections').get() as { c: number }).c;
     if (total === 0) return { name: 'stale_docs', status: 'ok', message: 'No docs to check' };
     const stale = (db.prepare("SELECT COUNT(*) AS c FROM doc_sections WHERE status = 'stale'").get() as { c: number }).c;
@@ -133,24 +140,33 @@ export async function docrelHealth(
   });
 
   // 8. Last scan timestamp
-  await run(async () => {
+  await run('last_scan', async () => {
     const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
     if (row?.value) {
-      const age = Date.now() - new Date(row.value.replace(' ', 'T') + 'Z').getTime();
-      const hours = Math.round(age / 3600000);
-      if (hours < 24) return { name: 'last_scan', status: 'ok', message: `Last scan ${hours}h ago` };
-      return { name: 'last_scan', status: 'degraded', message: `Last scan ${hours}h ago — consider re-scanning` };
+      const scanMs = new Date(row.value).getTime();
+      if (!isNaN(scanMs)) {
+        const hours = Math.round((Date.now() - scanMs) / 3600000);
+        if (hours < 24) return { name: 'last_scan', status: 'ok', message: `Last scan ${hours}h ago` };
+        return { name: 'last_scan', status: 'degraded', message: `Last scan ${hours}h ago — consider re-scanning` };
+      }
     }
     return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run docrel scan' };
   });
 
-  // Aggregate
+  // Aggregate results and log failures
   const failed = checks.filter(c => c.status === 'failed');
   const degraded = checks.filter(c => c.status === 'degraded');
   const healthy = failed.length === 0;
 
   for (const c of failed) {
     errors.push({ code: c.code ?? ErrorCode.INTERNAL_UNEXPECTED, message: c.message });
+    // Log structured errors so monitoring/alerting systems can scan for them.
+    logError(docrelError(
+      (c.code as ErrorCode) ?? ErrorCode.INTERNAL_UNEXPECTED,
+      c.message,
+      `health check: ${c.name}`,
+      false,
+    ));
   }
 
   let summary: string;
