@@ -1,2 +1,2 @@
 /** DocRelay version — single source of truth. Update on release. */
-export const DOCRELAY_VERSION = '0.1.5';
+export const DOCRELAY_VERSION = '0.2.0';
