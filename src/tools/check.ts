@@ -122,17 +122,7 @@ export function formatCheckCI(report: CheckReport): string {
       : 'Documentation is stale'
     ).replace(/,/g, '%2C').replace(/\r?\n/g, '%0A');
 
-    const lineParam = doc.linkedSymbols.length > 0
-      // Use the first linked symbol to approximate a line reference
-      // (the actual line is not tracked per-doc in check; we emit without line)
-      ? ''
-      : '';
-
-    if (lineParam) {
-      lines.push(`::warning file=${escapedFile}${lineParam}::${escapedMessage}`);
-    } else {
-      lines.push(`::warning file=${escapedFile}::${escapedMessage}`);
-    }
+    lines.push(`::warning file=${escapedFile}::${escapedMessage}`);
   }
 
   if (!report.passed) {

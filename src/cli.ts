@@ -563,6 +563,7 @@ program
   .option('--debounce <ms>', 'Debounce delay in milliseconds', '500')
   .option('--daemon', 'Write a PID file to .docrelay/watch.pid for process management')
   .action(async (opts) => {
+    await ensureContext();
     const { startWatch } = await import('./tools/watch.js');
     const cleanup = await startWatch(projectRoot, db, extractor, config, {
       debounceMs: parseInt(opts.debounce, 10) || 500,
@@ -834,7 +835,7 @@ configCommand
   .description('Show resolved config (defaults merged with user overrides) in YAML format')
   .action(async () => {
     try {
-      await ensureContext();
+      await ensureContext({ allowUninitialized: true });
       const resolved = loadConfig(projectRoot);
       console.log(stringifyYaml(resolved));
     } catch (err: any) {
@@ -847,7 +848,7 @@ configCommand
   .command('validate')
   .description('Validate .docrelay/config.yaml for common misconfigurations')
   .action(async () => {
-    await ensureContext();
+    await ensureContext({ allowUninitialized: true });
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
       console.log('✅ Configuration is valid.');
@@ -867,7 +868,7 @@ configCommand
 // Default action for `docrelay config` (no subcommand) → show config
 configCommand.action(async () => {
   try {
-    await ensureContext();
+    await ensureContext({ allowUninitialized: true });
     const resolved = loadConfig(projectRoot);
     console.log(stringifyYaml(resolved));
   } catch (err: any) {

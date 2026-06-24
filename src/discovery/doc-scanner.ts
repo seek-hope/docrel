@@ -146,6 +146,7 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
   ]);
 
   const stack: string[] = [dir];
+  const seenDirs = new Set<string>();
   while (stack.length > 0 && result.length < MAX_FILES) {
     const current = stack.pop()!;
     let entries: fs.Dirent[];
@@ -166,6 +167,12 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
         }
         // Skip directories matching .docrelayignore patterns
         if (isIgnored(relPath, projectRoot)) continue;
+        // Resolve symlinks to detect directory cycles (entry.isDirectory()
+        // follows symlinks). Track real paths to prevent infinite loops.
+        let realPath: string;
+        try { realPath = fs.realpathSync(fullPath); } catch { continue; }
+        if (seenDirs.has(realPath)) continue;
+        seenDirs.add(realPath);
         stack.push(fullPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();

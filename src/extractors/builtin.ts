@@ -129,6 +129,7 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   }
 
   const stack: string[] = [realDir];
+  const seenDirs = new Set<string>();
   while (stack.length > 0 && result.length < maxFiles) {
     const current = stack.pop()!;
     let entries: fs.Dirent[];
@@ -148,6 +149,13 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
             entry.name === '__pycache__' || entry.name === 'vendor') {
           continue;
         }
+        // Resolve symlinks to detect directory cycles. entry.isDirectory()
+        // follows symlinks, so a symlink loop (A->B->A) would cause repeated
+        // entries — track real paths and skip already-visited directories.
+        let realPath: string;
+        try { realPath = fs.realpathSync(fullPath); } catch { continue; }
+        if (seenDirs.has(realPath)) continue;
+        seenDirs.add(realPath);
         stack.push(fullPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();

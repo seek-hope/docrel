@@ -256,7 +256,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
       const buf = Buffer.alloc(1024);
       const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
       const firstBytes = buf.toString('utf-8', 0, bytesRead);
-      if (/^(openapi|swagger):\s*["']?\d/i.test(firstBytes)) {
+      if (/^(openapi|swagger):\s*["']?\d/mi.test(firstBytes)) {
         // Content confirms this is an OpenAPI spec — try type-specific scripts first
         const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
         if (npmCmd) return npmCmd;
