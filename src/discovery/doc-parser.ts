@@ -223,6 +223,17 @@ export class MarkdownParser implements DocParser {
       return sections;
     }
 
+    // Capture preamble content (before the first heading) as a synthetic
+    // "top" section. Without this, any text, code references, or symbol
+    // mentions before the first heading are silently dropped — they are
+    // never indexed, never auto-linked, and can never appear in mappings.
+    if (headings.length > 0 && headings[0].line > 0) {
+      const preambleLines = lines.slice(0, headings[0].line).join('\n');
+      if (preambleLines.trim()) {
+        sections.push(this.makeSection(filePath, '', preambleLines, 0));
+      }
+    }
+
     for (let i = 0; i < headings.length; i++) {
       const start = headings[i].line;
       const end = i + 1 < headings.length ? headings[i + 1].line : lines.length;
@@ -344,6 +355,14 @@ export class RstParser implements DocParser {
       return sections;
     }
 
+    // Capture preamble content before the first heading as a "top" section.
+    if (headings.length > 0 && headings[0].line > 0) {
+      const preambleLines = lines.slice(0, headings[0].line).join('\n');
+      if (preambleLines.trim()) {
+        sections.push(this.makeSection(filePath, '', preambleLines, 0));
+      }
+    }
+
     for (let i = 0; i < headings.length; i++) {
       const start = headings[i].line;
       // Each heading consumes 2 lines (text + underline), skip past them
@@ -456,6 +475,14 @@ export class AsciidocParser implements DocParser {
     if (headings.length === 0 && content.trim()) {
       sections.push(this.makeSection(filePath, '', content, 0));
       return sections;
+    }
+
+    // Capture preamble content before the first heading as a "top" section.
+    if (headings.length > 0 && headings[0].line > 0) {
+      const preambleLines = lines.slice(0, headings[0].line).join('\n');
+      if (preambleLines.trim()) {
+        sections.push(this.makeSection(filePath, '', preambleLines, 0));
+      }
     }
 
     for (let i = 0; i < headings.length; i++) {
@@ -584,6 +611,14 @@ export class HtmlParser implements DocParser {
     if (matches.length === 0 && content.trim()) {
       sections.push(this.makeSection(filePath, '', content));
       return sections;
+    }
+
+    // Capture preamble content (before the first heading tag) as a "top" section.
+    if (matches.length > 0 && matches[0].index > 0) {
+      const preambleContent = content.substring(0, matches[0].index).trim();
+      if (preambleContent) {
+        sections.push(this.makeSection(filePath, '', content.substring(0, matches[0].index)));
+      }
     }
 
     for (let i = 0; i < matches.length; i++) {
