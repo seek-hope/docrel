@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "docsync": "./dist/cli.js"
+    "docsync": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
