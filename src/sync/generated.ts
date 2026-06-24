@@ -308,8 +308,8 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
         // Content confirms this is an OpenAPI spec — try type-specific scripts first
         const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
         if (npmCmd) return npmCmd;
-        const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
-        if (typeof cmd === 'string' && cmd.trim() && validateCommandSafety(cmd)) return cmd;
+        const fallbackScript = scripts['generate:api'] ? 'generate:api' : (scripts['generate:openapi'] ? 'generate:openapi' : null);
+        if (fallbackScript) return `npm run ${fallbackScript}`;
       }
     } catch { /* file unreadable — not an OpenAPI spec for our purposes */ }
     finally {
@@ -322,15 +322,13 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     // Prefer type-specific OpenAPI scripts over generic ones
     const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
     if (npmCmd) return npmCmd;
-    // Fall back to direct command for backwards compatibility
-    const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
-    if (typeof cmd !== 'string' || !cmd.trim()) return null;
+    // Fall back to npm run for backwards compatibility
+    const fallbackScript = scripts['generate:api'] ? 'generate:api' : (scripts['generate:openapi'] ? 'generate:openapi' : null);
+    if (!fallbackScript) return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
       console.warn(`DocRelay: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
     }
-    // Validate it's a safe command (no shell metacharacters, length check)
-    if (!validateCommandSafety(cmd)) return null;
-    return cmd;
+    return `npm run ${fallbackScript}`;
   }
 
   if ((file.endsWith('.md') && file.includes('typedoc')) || (file.endsWith('.md') && scripts['docs:generate'] &&
@@ -338,11 +336,11 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     // Prefer TypeDoc-specific scripts over generic ones
     const npmCmd = resolveNpmScript(scripts, ['docs:generate', 'generate:docs', 'build:docs', 'docs:build']);
     if (npmCmd) return npmCmd;
-    // Fall back to direct command for backwards compatibility
-    const cmd = scripts['docs:generate'];
-    if (typeof cmd !== 'string' || !cmd.trim()) return null;
-    if (!validateCommandSafety(cmd)) return null;
-    return cmd;
+    // Fall back to npm run for backwards compatibility
+    if (typeof scripts['docs:generate'] === 'string' && scripts['docs:generate'].trim()) {
+      return 'npm run docs:generate';
+    }
+    return null;
   }
 
   // General fallback: for any file, check if an ALLOWED_SCRIPTS script exists

@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ErrorCode, logError, docrelayError } from '../utils/error-codes.js';
+import { assertDbOpen } from '../db/connection.js';
 
 export interface HealthReport {
   healthy: boolean;
@@ -44,14 +45,19 @@ export async function docrelayHealth(
     try {
       checks.push(await fn());
     } catch (err: any) {
+      // Log the full error to stderr so operators can diagnose; return a
+      // sanitized message to clients to avoid leaking paths or stack details.
+      console.error(`Health check '${name}' threw:`, err instanceof Error ? err.message : err);
       checks.push({
         name,
         status: 'failed',
         code: ErrorCode.INTERNAL_UNEXPECTED,
-        message: `Health check threw: ${err instanceof Error ? err.message : String(err)}`,
+        message: 'Internal error during health check — check server logs',
       });
     }
   };
+
+  assertDbOpen(db);
 
   // 1. Database connectivity
   await run('database', async () => {
@@ -65,7 +71,10 @@ export async function docrelayHealth(
       return { name: 'database', status: 'failed', code: ErrorCode.DB_QUERY_FAILED, message: 'Database returned unexpected result', latencyMs };
     } catch (err: any) {
       const latencyMs = Date.now() - start;
-      return { name: 'database', status: 'failed', code: ErrorCode.DB_CONNECTION_FAILED, message: `Cannot query database: ${err instanceof Error ? err.message : String(err)}`, latencyMs };
+      // Log the full error so operators can diagnose; return a sanitized
+      // message to clients to avoid leaking paths or stack details.
+      console.error('Database query failed:', err instanceof Error ? err.message : err);
+      return { name: 'database', status: 'failed', code: ErrorCode.DB_CONNECTION_FAILED, message: 'Internal error during health check — check server logs', latencyMs };
     }
   });
 
@@ -107,7 +116,10 @@ export async function docrelayHealth(
       return { name: 'codegraph', status: 'degraded', code: ErrorCode.CG_UNAVAILABLE, message: 'Codegraph is not available — falling back to builtin extractor', latencyMs };
     } catch (err: any) {
       const latencyMs = Date.now() - start;
-      return { name: 'codegraph', status: 'degraded', code: ErrorCode.CG_UNAVAILABLE, message: `Codegraph check failed: ${err instanceof Error ? err.message : String(err)}`, latencyMs };
+      // Log the full error so operators can diagnose; return a sanitized
+      // message to clients to avoid leaking paths or stack details.
+      console.error('Codegraph check failed:', err instanceof Error ? err.message : err);
+      return { name: 'codegraph', status: 'degraded', code: ErrorCode.CG_UNAVAILABLE, message: 'Internal error during health check — check server logs', latencyMs };
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -146,7 +158,7 @@ export async function docrelayHealth(
   await run('last_scan', async () => {
     const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
     if (row?.value) {
-      const scanMs = new Date(row.value).getTime();
+      const scanMs = new Date(row.value.replace(' ', 'T') + 'Z').getTime();
       if (!isNaN(scanMs)) {
         const hours = Math.round((Date.now() - scanMs) / 3600000);
         if (hours < 24) return { name: 'last_scan', status: 'ok', message: `Last scan ${hours}h ago` };

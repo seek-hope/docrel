@@ -12,7 +12,7 @@ export interface StandaloneSyncInput {
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
-import { validatePath, escapeRegex } from '../utils/fs.js';
+import { validatePath, escapeRegex, escapeRegexGlobal } from '../utils/fs.js';
 
 /**
  * Open and validate a file for read/write within projectRoot.
@@ -101,14 +101,51 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   const alignedOld = fileUsesCRLF
     ? input.oldContent.replace(/\r?\n/g, '\r\n')
     : input.oldContent.replace(/\r\n/g, '\n');
+  const alignedNew = fileUsesCRLF
+    ? input.newContent.replace(/\r?\n/g, '\r\n')
+    : input.newContent.replace(/\r\n/g, '\n');
+  // Count occurrences of oldContent in the section before replacing.
+  // If oldContent appears 0 or >1 times, refuse the replacement — matching
+  // the safety layer in inline.ts (lines 148-200) which rejects ambiguous
+  // replacements where a text appears multiple times within the target.
+  const oldRegex = escapeRegexGlobal(alignedOld);
+  if (!oldRegex) return { success: false, reason: 'oldContent too long for occurrence counting' };
+  let oldCount = 0;
+  for (const _ of sectionContent.matchAll(oldRegex)) {
+    if (++oldCount > 1) break;
+  }
+  if (oldCount !== 1) return { success: false, reason: `oldContent appears ${oldCount} times in section (expected 1)` };
+
   // Use replace (not replaceAll) to replace only the FIRST occurrence.
   // replaceAll would silently replace ALL occurrences of oldContent within
   // the section, corrupting the documentation when oldContent text appears
   // multiple times (e.g., a parameter name 'id' appearing in multiple
   // descriptions or code examples within the same heading section).
   // Use function-based replacement to avoid $ special-pattern injection.
-  const updatedSection = sectionContent.replace(alignedOld, () => input.newContent);
+  const updatedSection = sectionContent.replace(alignedOld, () => alignedNew);
   content = content.replace(sectionContent, () => updatedSection);
+
+  // Post-replacement validation: verify oldContent no longer appears and
+  // newContent appears exactly once in the updated section (matching the
+  // post-replacement validation in inline.ts at lines 234-241).
+  let postOldCount = 0;
+  for (const _ of updatedSection.matchAll(oldRegex)) {
+    postOldCount = 1; // any match is a failure
+    break;
+  }
+  if (postOldCount > 0) {
+    return { success: false, reason: 'post-validation failed — oldContent still present after replacement' };
+  }
+  const newRegex = escapeRegexGlobal(alignedNew);
+  if (newRegex) {
+    let newCount = 0;
+    for (const _ of updatedSection.matchAll(newRegex)) {
+      if (++newCount > 1) break;
+    }
+    if (newCount !== 1) {
+      return { success: false, reason: `post-validation failed — newContent appears ${newCount} times (expected 1)` };
+    }
+  }
 
   // Atomic write: use project-local temp directory with restrictive permissions
   const tmpDir = path.join(projectRoot, '.docrelay', 'tmp');

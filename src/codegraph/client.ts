@@ -167,11 +167,11 @@ export class CodegraphClient {
     // Relative paths containing / or \ (e.g. ./binary, ../binary) are rejected.
     let cmd = this.command ?? 'codegraph';
     if (!validateCommandSafety(cmd, 256)) {
-      throw new Error(`Invalid codegraph command: ${cmd}. Use 'codegraph' or a trusted installation path.`);
+      throw new Error(`Invalid codegraph command: ${cmd.slice(0, 200)}${cmd.length > 200 ? '…' : ''}. Use 'codegraph' or a trusted installation path.`);
     }
     // Reject relative paths (contain path separators but don't start with /)
     if ((cmd.includes('/') || cmd.includes('\\')) && !cmd.startsWith('/')) {
-      throw new Error(`Invalid codegraph command: ${cmd}. Relative paths are not allowed. Use an absolute path or a bare binary name.`);
+      throw new Error(`Invalid codegraph command: ${cmd.slice(0, 200)}${cmd.length > 200 ? '…' : ''}. Relative paths are not allowed. Use an absolute path or a bare binary name.`);
     }
 
     // Always resolve and validate the binary path, whether it comes from

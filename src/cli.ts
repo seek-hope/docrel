@@ -38,7 +38,9 @@ const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 function errMsg(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e ?? 'unknown error');
   // Sanitize project root paths from error messages
-  return raw.replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>');
+  return raw
+    .replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>')
+    .replace(/\/(?:home|opt|var|etc|tmp|usr)\/[^\s:,)]*/g, '<path>');
 }
 
 /** Exit with database cleanup — ensures WAL checkpointing completes. */
@@ -428,10 +430,12 @@ program
         }
 
         let confirmed = 0;
-        for (const m of unreviewed) {
-          const result = docrelayConfirm(db, m.symbol_id, m.doc_id, m.rel_type);
-          if (result.action === 'updated') confirmed++;
-        }
+        db.transaction(() => {
+          for (const m of unreviewed) {
+            const result = docrelayConfirm(db, m.symbol_id, m.doc_id, m.rel_type);
+            if (result.action === 'updated') confirmed++;
+          }
+        })();
         console.log(JSON.stringify({ confirmed, total: unreviewed.length }, null, 2));
         return;
       }
@@ -472,10 +476,12 @@ program
         }
 
         let rejected = 0;
-        for (const m of unreviewed) {
-          const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
-          if (result.action === 'updated') rejected++;
-        }
+        db.transaction(() => {
+          for (const m of unreviewed) {
+            const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
+            if (result.action === 'updated') rejected++;
+          }
+        })();
         console.log(JSON.stringify({ rejected, total: unreviewed.length }, null, 2));
         return;
       }
@@ -496,10 +502,12 @@ program
         }
 
         let rejected = 0;
-        for (const m of matched) {
-          const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
-          if (result.action === 'updated') rejected++;
-        }
+        db.transaction(() => {
+          for (const m of matched) {
+            const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
+            if (result.action === 'updated') rejected++;
+          }
+        })();
         console.log(JSON.stringify({ rejected, total: matched.length, pattern: opts.pattern,
           names: matched.map(m => m.name) }, null, 2));
         return;
@@ -625,7 +633,7 @@ program
     await ensureContext();
     const { startWatch } = await import('./tools/watch.js');
     const parsedDebounce = parseInt(opts.debounce, 10);
-    const debounceMs = isNaN(parsedDebounce) ? 500 : parsedDebounce;
+    const debounceMs = Math.max(100, isNaN(parsedDebounce) ? 500 : parsedDebounce);
     const cleanup = await startWatch(projectRoot, db, extractor, config, {
       debounceMs,
       daemon: opts.daemon ?? false,
@@ -865,7 +873,7 @@ program
       } catch {
         registry = 'https://registry.npmjs.org/';
       }
-      if (!registry.startsWith('https://registry.npmjs.org/') && !registry.startsWith('https://registry.yarnpkg.com/')) {
+      if (!registry.startsWith('https://registry.npmjs.org/') && !registry.startsWith('https://registry.yarnpkg.com')) {
         console.error(`Security warning: npm registry is set to ${registry}. Expected https://registry.npmjs.org/. Aborting update.`);
         exit(1);
       }
@@ -910,7 +918,12 @@ configCommand
   .command('validate')
   .description('Validate .docrelay/config.yaml for common misconfigurations')
   .action(async () => {
-    await ensureContext({ allowUninitialized: true });
+    try {
+      await ensureContext({ allowUninitialized: true });
+    } catch (err: any) {
+      console.error('Config validation failed:', errMsg(err));
+      exit(1);
+    }
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
       console.log('✅ Configuration is valid.');
@@ -1037,22 +1050,33 @@ program
   .action(async (opts) => {
     try {
       await ensureContext();
-      const dbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
-      if (!fs.existsSync(dbPath)) {
-        // Check .git/docrelay.db as fallback
-        const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
-        if (!fs.existsSync(gitDbPath)) {
+      // Prefer .git/docrelay.db (canonical location established by getDb()),
+      // fall back to .docrelay/docrelay.db for non-git projects.
+      const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
+      if (!fs.existsSync(gitDbPath)) {
+        const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
+        if (!fs.existsSync(docrelayDbPath)) {
           console.error('No DocRelay database found. Run docrelay init first.');
           exit(1);
         }
       }
-      const srcPath = fs.existsSync(path.join(projectRoot, '.docrelay', 'docrelay.db'))
-        ? path.join(projectRoot, '.docrelay', 'docrelay.db')
-        : path.join(projectRoot, '.git', 'docrelay.db');
+      const srcPath = fs.existsSync(path.join(projectRoot, '.git', 'docrelay.db'))
+        ? path.join(projectRoot, '.git', 'docrelay.db')
+        : path.join(projectRoot, '.docrelay', 'docrelay.db');
 
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
       const destPath = opts.output ?? path.join(projectRoot, '.docrelay', `backup-${ts}.db`);
-      fs.copyFileSync(srcPath, destPath);
+
+      // Containment check: reject output paths that escape projectRoot
+      const resolvedDest = path.resolve(projectRoot, destPath);
+      const root = path.resolve(projectRoot);
+      if (!resolvedDest.startsWith(root + path.sep) && resolvedDest !== root) {
+        console.error('Error: backup output must be within project root.');
+        console.error('Specify a path inside the project, or omit --output to use the default location.');
+        exit(1);
+      }
+
+      fs.copyFileSync(srcPath, resolvedDest);
       console.log(`Backed up to ${path.relative(projectRoot, destPath)}`);
     } catch (err: any) {
       console.error('Backup failed:', errMsg(err));
@@ -1087,6 +1111,16 @@ program
         exit(1);
       }
 
+      // Resolve symlinks and re-verify containment to close the TOCTOU
+      // window between the lexical check above and copyFileSync below.
+      // A concurrent process could swap a symlink at srcPath to point
+      // outside projectRoot after the lexical check passes.
+      const realSrc = fs.realpathSync(srcPath);
+      if (!realSrc.startsWith(root + path.sep) && realSrc !== root) {
+        console.error('Error: backup file symlink target escapes project root.');
+        exit(1);
+      }
+
       if (!opts.force) {
         console.error('WARNING: This will replace the current DocRelay database.');
         console.error('All current data will be lost.');
@@ -1104,12 +1138,12 @@ program
         }
       }
 
-      // Determine target path
-      const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
+      // Prefer .git/docrelay.db (canonical location), fall back to .docrelay/
       const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
-      const destPath = fs.existsSync(docrelayDbPath) ? docrelayDbPath
-        : fs.existsSync(gitDbPath) ? gitDbPath
-        : docrelayDbPath;
+      const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
+      const destPath = fs.existsSync(gitDbPath) ? gitDbPath
+        : fs.existsSync(docrelayDbPath) ? docrelayDbPath
+        : gitDbPath;
 
       // Close existing connections before replacing the file
       closeAllDbs();

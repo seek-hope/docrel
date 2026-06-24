@@ -61,9 +61,14 @@ async function getCurrentSignature(
   symbol: import('../db/symbols.js').SymbolRow,
   codegraph: CodegraphClient | undefined,
   projectRoot: string,
+  skipCache = false,
 ): Promise<{ signature: string | null; reason?: string; source: 'codegraph_raw' | 'codegraph_query' | 'regex' | 'none' }> {
-  // 1. Use the cached raw_signature from DB (populated by codegraph during scan)
-  if (symbol.raw_signature) {
+  // 1. Use the cached raw_signature from DB (populated by codegraph during scan),
+  //    UNLESS skipCache is true. When called from a sync context after a scan has
+  //    already updated raw_signature to the new code value, the cache is stale as
+  //    a measure of "current" (file still has the old text). Bypassing forces a
+  //    regex-based source file read so oldSig != newSig and updateInlineDoc works.
+  if (!skipCache && symbol.raw_signature) {
     return { signature: symbol.raw_signature, source: 'codegraph_raw' };
   }
 
@@ -179,9 +184,11 @@ export async function syncSymbol(
             const newSig = symbol.raw_signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, oldDocstring, newSig);
 
-            // Get current signature — prefer codegraph (cached or fresh query),
-            // fall back to regex-based source file parsing.
-            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot);
+            // Get current signature — skip the raw_signature cache (passed as
+            // skipCache=true) because a prior scan may have already updated
+            // symbol.raw_signature to the new value. Using the cache would
+            // make oldSig === newSig, causing updateInlineDoc to fail.
+            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot, true);
             if (sigResult.signature === null) {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${sigResult.reason ?? 'could not extract current signature'}`);
               continue;
@@ -246,13 +253,13 @@ export async function syncSymbol(
                 if (resolvedPath) {
                   try {
                     const st = fs.statSync(resolvedPath);
-                    // Use new Date() directly — the JS Date constructor handles
-                    // both space-separated (SQLite datetime('now')) and T-separated
-                    // ISO 8601 formats, with and without timezone offsets.
-                    // Guard against NaN (empty string, malformed date) — when the
-                    // timestamp is unparseable, conservatively skip the transition
-                    // rather than incorrectly marking a stale doc as in-sync.
-                    const docMs = new Date(doc.updated_at).getTime();
+                    // SQLite datetime('now') returns a UTC string like
+                    // '2024-01-15 10:30:00' with no timezone indicator.
+                    // new Date() parses this as LOCAL time, causing a skew of
+                    // up to +/-12 hours. Force UTC by inserting 'T' and
+                    // appending 'Z' so the comparison against st.mtimeMs (UTC)
+                    // is timezone-correct.
+                    const docMs = new Date(doc.updated_at.replace(' ', 'T') + 'Z').getTime();
                     // Reject epoch-0 (empty string or Jan 1 1970) and negative
                     // dates which indicate a corrupt or never-set updated_at field.
                     // Without this guard, st.mtimeMs > 0 is always true, incorrectly
@@ -477,11 +484,11 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
     `(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${escaped}\\b` +
     `|(?:export\\s+(?:default\\s+)?)?(?:const|let|var)\\s+${escaped}\\b\\s*=` +
     `|\\binterface\\s+${escaped}\\b` +
-    `|\\btype\\s+${escaped}\\b\\s*=`,
+    `|\\btype\\s+${escaped}\\b(?:<[^>]*>)?\\s*=`,
   );
   // Match method-like definitions: name( ... ) { or name( ... ) :
   // Use bracket-counting to handle nested parentheses in parameters
-  const methodRegex = new RegExp(`(?:async\\s+)?\\b${escaped}\\s*\\(`);
+  const methodRegex = new RegExp(`(?:async\\s+)?\\b${escaped}(?:<[^>]*>)?\\s*\\(`);
 
   for (let i = 0; i < processedLines.length; i++) {
     const line = processedLines[i];

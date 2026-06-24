@@ -227,11 +227,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // F20: Use sigInputEmpty/docInputEmpty as guards instead of sigCount/docCount,
     // so validation runs whenever a replacement was expected regardless of whether
     // the old count was exactly 1.
-    if (sigInputEmpty === false && countOccurrences(content, input.newSignature) !== 1) {
+    // Post-replacement validation uses comment-stripped content to avoid
+    // false negatives when the new signature/docstring text appears in JSDoc
+    // comments, string literals, or non-JSDoc comments — matching the
+    // pre-replacement occurrence counting approach at lines 134 and 148.
+    if (sigInputEmpty === false && countOccurrences(stripCommentsAndStrings(stripAllBlockComments(content)), input.newSignature) !== 1) {
       console.warn('DocRelay: updateInlineDoc post-validation failed — new signature count != 1');
       return false;
     }
-    if (docInputEmpty === false && countOccurrences(content, input.newDocstring) !== 1) {
+    if (docInputEmpty === false && countOccurrences(stripNonJsdocBlockComments(content), input.newDocstring) !== 1) {
       console.warn('DocRelay: updateInlineDoc post-validation failed — new docstring count != 1');
       return false;
     }
@@ -393,7 +397,7 @@ function extractPythonDocstring(content: string, symbolName: string): DocstringR
 // Go doc-comment extraction
 // ---------------------------------------------------------------------------
 
-function extractGoDocstring(content: string, symbolName: string): string | null {
+function extractGoDocstring(content: string, symbolName: string): DocstringResult | null {
   const escaped = escapeRegex(symbolName);
   // Match `func (receiver) Name(` or `func Name(` or `type Name `
   const defRegex = new RegExp(
@@ -420,10 +424,12 @@ function extractGoDocstring(content: string, symbolName: string): string | null 
 
   // Walk backwards collecting non-doc // lines (// that are NOT ///)
   const commentLines: string[] = [];
+  let firstCommentLineIdx = -1;
   for (let j = defLineIdx - 1; j >= 0; j--) {
     const trimmed = lines[j].trim();
     if (trimmed.startsWith('//') && !trimmed.startsWith('///')) {
       commentLines.unshift(lines[j]);
+      firstCommentLineIdx = j;
     } else if (trimmed === '') {
       // Empty line between blocks — stop
       if (commentLines.length > 0) break;
@@ -432,14 +438,22 @@ function extractGoDocstring(content: string, symbolName: string): string | null 
     }
   }
 
-  return commentLines.length > 0 ? commentLines.join('\n') : null;
+  if (commentLines.length === 0) return null;
+
+  const text = commentLines.join('\n');
+  // Compute byte offset of the first comment line
+  let startIndex = 0;
+  for (let k = 0; k < firstCommentLineIdx; k++) {
+    startIndex += lines[k].length + 1; // +1 for the \n separator
+  }
+  return { text, startIndex };
 }
 
 // ---------------------------------------------------------------------------
 // Rust doc-comment extraction
 // ---------------------------------------------------------------------------
 
-function extractRustDocstring(content: string, symbolName: string): string | null {
+function extractRustDocstring(content: string, symbolName: string): DocstringResult | null {
   const escaped = escapeRegex(symbolName);
   // Match fn/struct/trait/impl definitions — pub / async / unsafe are optional
   const defRegex = new RegExp(
@@ -467,10 +481,12 @@ function extractRustDocstring(content: string, symbolName: string): string | nul
   const defLineIdx = before.split('\n').length - 1;
   const lines = content.split('\n');
   const commentLines: string[] = [];
+  let firstCommentLineIdx = -1;
   for (let j = defLineIdx - 1; j >= 0; j--) {
     const trimmed = lines[j].trim();
     if (trimmed.startsWith('///') || trimmed.startsWith('//!')) {
       commentLines.unshift(lines[j]);
+      firstCommentLineIdx = j;
     } else if (trimmed === '') {
       if (commentLines.length > 0) break;
     } else if (trimmed.startsWith('#[')) {
@@ -481,7 +497,15 @@ function extractRustDocstring(content: string, symbolName: string): string | nul
     }
   }
 
-  return commentLines.length > 0 ? commentLines.join('\n') : null;
+  if (commentLines.length === 0) return null;
+
+  const text = commentLines.join('\n');
+  // Compute byte offset of the first comment line
+  let startIndex = 0;
+  for (let k = 0; k < firstCommentLineIdx; k++) {
+    startIndex += lines[k].length + 1; // +1 for the \n separator
+  }
+  return { text, startIndex };
 }
 
 // ---------------------------------------------------------------------------
@@ -543,24 +567,14 @@ function replaceGoDocComment(
   newDocstring: string,
 ): string | null {
   const existing = extractGoDocstring(content, symbolName);
-  if (!existing || normalizeDocLines(existing) !== normalizeDocLines(oldDocstring)) return null;
+  if (!existing || normalizeDocLines(existing.text) !== normalizeDocLines(oldDocstring)) return null;
 
-  // Find the definition position to constrain the search region.
-  // Doc comments immediately precede the definition, so lastIndexOf
-  // from the definition position finds the correct comment block
-  // even when an identical comment block exists elsewhere in the file.
-  const escaped = escapeRegex(symbolName);
-  const defRegex = new RegExp(
-    `(?:^|\\n)(?:func\\s+(?:\\([^)]*\\)\\s+)?${escaped}\\s*\\(|type\\s+${escaped}\\s+)`,
-    'm',
-  );
-  const defMatch = defRegex.exec(content);
-  const idx = defMatch
-    ? content.lastIndexOf(oldDocstring, defMatch.index)
-    : content.indexOf(oldDocstring);
-  if (idx < 0) return null;
-
-  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+  // Replace at the exact position found during extraction. Using the
+  // position from extractGoDocstring avoids the fragile lastIndexOf
+  // approach which can match an identical docstring belonging to a
+  // different symbol in the same file.
+  return content.slice(0, existing.startIndex) + newDocstring +
+    content.slice(existing.startIndex + existing.text.length);
 }
 
 /**
@@ -573,28 +587,14 @@ function replaceRustDocComment(
   newDocstring: string,
 ): string | null {
   const existing = extractRustDocstring(content, symbolName);
-  if (!existing || normalizeDocLines(existing) !== normalizeDocLines(oldDocstring)) return null;
+  if (!existing || normalizeDocLines(existing.text) !== normalizeDocLines(oldDocstring)) return null;
 
-  // Find the definition position to constrain the search region.
-  // Doc comments immediately precede the definition, so lastIndexOf
-  // from the definition position finds the correct comment block
-  // even when an identical comment block exists elsewhere in the file.
-  const escaped = escapeRegex(symbolName);
-  const defRegex = new RegExp(
-    `(?:^|\\n)(?:pub(?:\\s*\\(\\s*crate\\s*\\))?\\s+)?(?:default\\s+)?(?:async\\s+)?(?:unsafe\\s+)?fn\\s+${escaped}\\b|` +
-    `(?:^|\\n)(?:pub\\s+)?struct\\s+${escaped}\\b|` +
-    `(?:^|\\n)(?:pub\\s+)?(?:unsafe\\s+)?trait\\s+${escaped}\\b|` +
-    `(?:^|\\n)(?:pub\\s+)?impl(?:\\s*<[^>]*>)?(?:\\s+\\w+)?\\s+for\\s+${escaped}\\b|` +
-    `(?:^|\\n)impl(?:\\s*<[^>]*>)?\\s+${escaped}\\b`,
-    'm',
-  );
-  const defMatch = defRegex.exec(content);
-  const idx = defMatch
-    ? content.lastIndexOf(oldDocstring, defMatch.index)
-    : content.indexOf(oldDocstring);
-  if (idx < 0) return null;
-
-  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+  // Replace at the exact position found during extraction. Using the
+  // position from extractRustDocstring avoids the fragile lastIndexOf
+  // approach which can match an identical docstring belonging to a
+  // different symbol in the same file.
+  return content.slice(0, existing.startIndex) + newDocstring +
+    content.slice(existing.startIndex + existing.text.length);
 }
 
 /**
@@ -638,9 +638,9 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
     case 'python':
       return extractPythonDocstring(content, symbolName)?.text ?? null;
     case 'go':
-      return extractGoDocstring(content, symbolName);
+      return extractGoDocstring(content, symbolName)?.text ?? null;
     case 'rust':
-      return extractRustDocstring(content, symbolName);
+      return extractRustDocstring(content, symbolName)?.text ?? null;
     default:
       break; // JSDoc path below
   }
@@ -709,7 +709,7 @@ function escapedSymRegex(symbolName: string): RegExp {
     `|(?:export\\s+)?(?:const|let|var)\\s+${n}\\b` +
     `|\\binterface\\s+${n}\\b` +
     `|\\btype\\s+${n}\\b` +
-    `|(?:async\\s+)?\\b${n}\\s*\\(.*?\\)\\s*[{:]`,
+    `|(?:async\\s+)?\\b${n}(?:<[^>]*>)?\\s*\\(.*?\\)\\s*[{:]`,
   );
 }
 
@@ -802,6 +802,32 @@ function stripNonJsdocBlockComments(content: string): string {
   return out.join('');
 }
 
+const REGEX_CONTEXT_CHARS = '=([{!,:;|&^~?+-*/%<>';
+
+/**
+ * Determine whether `/` at `slashPos` in `content` is a regex delimiter
+ * (as opposed to a division operator). Scans backwards over whitespace and
+ * checks whether the preceding character or keyword creates an expression
+ * context where a regex literal is expected.
+ */
+function isRegexDelimiter(content: string, slashPos: number): boolean {
+  let j = slashPos - 1;
+  while (j >= 0 && (content[j] === ' ' || content[j] === '\t' || content[j] === '\n' || content[j] === '\r')) {
+    j--;
+  }
+  if (j < 0) return true;
+  const prev = content[j];
+  if (REGEX_CONTEXT_CHARS.includes(prev)) return true;
+  // Keyword: return, throw, typeof, instanceof, delete, void, yield, await, case, new, in, of
+  if (/[$\w]/.test(prev)) {
+    let k = j;
+    while (k >= 0 && /[$\w]/.test(content[k])) k--;
+    const word = content.slice(k + 1, j + 1);
+    return /^(return|throw|typeof|instanceof|delete|void|yield|await|case|new|in|of)$/.test(word);
+  }
+  return false;
+}
+
 /**
  * Strip ALL block comments (both /* ... *​/ and /** ... *​/) from content using
  * a state machine. Used before counting signature occurrences to prevent JSDoc
@@ -860,6 +886,26 @@ export function stripAllBlockComments(content: string): string {
         i++;
       }
       continue;
+    }
+    // Regex literal — skip body to avoid misinterpreting /*
+    // inside a regex (e.g., /\/\*.*\*\//) as a block comment start.
+    if (ch === '/' && next !== '*' && next !== '/') {
+      if (isRegexDelimiter(content, i)) {
+        out.push(ch); i++;
+        let inCharClass = false;
+        while (i < content.length) {
+          out.push(content[i]);
+          if (content[i] === '\\') {
+            if (i + 1 < content.length) { i++; out.push(content[i]); }
+            i++; continue;
+          }
+          if (content[i] === '[') { inCharClass = true; i++; continue; }
+          if (content[i] === ']' && inCharClass) { inCharClass = false; i++; continue; }
+          if (content[i] === '/' && !inCharClass) { i++; break; }
+          i++;
+        }
+        continue;
+      }
     }
     if (ch === '/' && next === '*') {
       // Block comment (including JSDoc /** ... */) — skip entirely

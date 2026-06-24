@@ -40,7 +40,7 @@ const userConfigSchema = z.object({
     architecture: z.enum(['mark_stale', 'ignore']).optional(),
   }).optional(),
   codegraph: z.object({
-    command: z.string().optional(),
+    command: z.string().max(256).optional(),
     mcpServerName: z.string().optional(),
     maxFiles: z.number().int().min(1).max(500).optional(),
   }).optional(),
@@ -99,8 +99,11 @@ export function loadConfig(projectRoot: string): DocRelayConfig {
     // Instead, warn once and strip the version field so other config keys
     // can still be validated and merged.
     if (typeof parsed === 'object' && parsed !== null && 'version' in parsed) {
-      const pv = (parsed as Record<string, unknown>).version;
-      if (typeof pv === 'number' && pv < CONFIG_SCHEMA_VERSION) {
+      const pv = Number((parsed as Record<string, unknown>).version);
+      if (Number.isNaN(pv)) {
+        console.error(`Warning: Config schema version field is not a valid number. Update .docrelay/config.yaml to set version: ${CONFIG_SCHEMA_VERSION}. Attempting to parse remaining config fields.`);
+        delete (parsed as Record<string, unknown>).version;
+      } else if (pv < CONFIG_SCHEMA_VERSION) {
         console.error(`Warning: Config schema version ${pv} is older than ${CONFIG_SCHEMA_VERSION}. Migrating config fields — update .docrelay/config.yaml to version: ${CONFIG_SCHEMA_VERSION} when convenient.`);
         delete (parsed as Record<string, unknown>).version;
       }

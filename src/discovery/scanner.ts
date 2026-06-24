@@ -53,7 +53,7 @@ export async function scanProject(
   const since = fullScan ? undefined : (() => {
     const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
     if (row?.value) {
-      const ms = new Date(row.value).getTime();
+      const ms = new Date(row.value.replace(' ', 'T') + 'Z').getTime();
       if (!isNaN(ms)) return ms;
     }
     return undefined;

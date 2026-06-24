@@ -29,7 +29,7 @@ export function docrelayLink(
     if (!ok) return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:'Mapping not found.' };
     return { action:'deleted', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:'Mapping deleted.' };
   } catch (err: any) {
-    if (err.code?.startsWith('SQLITE_CONSTRAINT') || err.errno === 19) {
+    if (err.code?.startsWith('SQLITE_CONSTRAINT') || err?.errno === 19) {
       try {
         const se = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(p.symbol_id);
         const de = db.prepare('SELECT 1 FROM doc_sections WHERE id = ?').get(p.doc_id);

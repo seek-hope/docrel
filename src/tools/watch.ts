@@ -61,14 +61,25 @@ export async function startWatch(
     const chokidar = await import('chokidar');
     const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    // Gather watch paths
+    // Gather watch paths (with path-traversal containment check)
     const watchPaths: string[] = [];
+    const root = path.resolve(projectRoot);
     for (const dir of config.code_dirs) {
       const p = path.join(projectRoot, dir);
+      const absDir = path.resolve(p);
+      if (!absDir.startsWith(root + path.sep) && absDir !== root) {
+        console.warn(`Watch: code_dir '${dir}' is outside project root — skipping`);
+        continue;
+      }
       if (fs.existsSync(p)) watchPaths.push(p);
     }
     for (const dir of config.doc_dirs) {
       const p = path.join(projectRoot, dir);
+      const absDir = path.resolve(p);
+      if (!absDir.startsWith(root + path.sep) && absDir !== root) {
+        console.warn(`Watch: doc_dir '${dir}' is outside project root — skipping`);
+        continue;
+      }
       if (fs.existsSync(p)) watchPaths.push(p);
     }
 
