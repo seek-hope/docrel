@@ -48,7 +48,7 @@ function resolveNpmScript(scripts: Record<string, string>, preferredScripts?: st
     if (typeof scripts[scriptName] === 'string') {
       // The script value is not validated beyond being a non-empty string —
       // npm handles the actual execution, and the script is already defined
-      // in the project's own package.json (not injected by DocSync).
+      // in the project's own package.json (not injected by DocRelay).
       const cmd = scripts[scriptName].trim();
       if (cmd.length === 0) continue;
       return `npm run ${scriptName}`;
@@ -90,13 +90,13 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
     if (parts[1] !== 'run') return null;
     const scriptName = parts[2];
     if (!ALLOWED_SCRIPTS.has(scriptName)) {
-      console.error(`DocSync: npm run script '${scriptName}' is not in the allowed scripts list`);
+      console.error(`DocRelay: npm run script '${scriptName}' is not in the allowed scripts list`);
       return null;
     }
     // Reject extra arguments — only `npm run <allowed_script>` is permitted.
     // This prevents `npm run docs:generate -- --evil-flag` injection.
     if (parts.length > 3) {
-      console.error('DocSync: npm run command rejected — extra arguments not allowed');
+      console.error('DocRelay: npm run command rejected — extra arguments not allowed');
       return null;
     }
     return { binary: 'npm', args: ['run', scriptName] };
@@ -133,12 +133,12 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
     for (const arg of genArgs) {
       if (arg === '--plugin' || arg === '-p' ||
           arg === '--options' || arg === '--tsconfig') {
-        console.error('DocSync: typedoc generator command rejected — contains code-loading flag:', arg);
+        console.error('DocRelay: typedoc generator command rejected — contains code-loading flag:', arg);
         return null;
       }
       if (/^--plugin=/.test(arg) || /^-p=/.test(arg) ||
           /^--options=/.test(arg) || /^--tsconfig=/.test(arg)) {
-        console.error('DocSync: typedoc generator command rejected — contains code-loading flag:', arg);
+        console.error('DocRelay: typedoc generator command rejected — contains code-loading flag:', arg);
         return null;
       }
     }
@@ -150,7 +150,7 @@ function splitCommand(cmd: string): { binary: string; args: string[] } | null {
 export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolean; output: string } {
   const split = splitCommand(input.generator);
   if (!split) {
-    console.error('DocSync: generator command rejected by security validation:', input.generator);
+    console.error('DocRelay: generator command rejected by security validation:', input.generator);
     return { success: false, output: 'Generator command rejected by security validation — check server logs for details' };
   }
 
@@ -167,7 +167,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
       // then stdout. Label each section so operators know what's what.
       const fullOutput = ['[stderr]', result.stderr, '[stdout]', result.stdout].filter(Boolean).join('\n');
       const truncated = fullOutput ? fullOutput.slice(-500) : '';
-      if (fullOutput) console.error('DocSync: generator error output (truncated):', truncated);
+      if (fullOutput) console.error('DocRelay: generator error output (truncated):', truncated);
       return {
         success: false,
         output: `Generator failed: ${result.error.message}`,
@@ -176,7 +176,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
     if (result.status !== 0) {
       const fullOutput = ['[stderr]', result.stderr, '[stdout]', result.stdout].filter(Boolean).join('\n') || `exit code ${result.status}`;
       const truncated = fullOutput.slice(-500);
-      console.error('DocSync: generator non-zero exit:', truncated);
+      console.error('DocRelay: generator non-zero exit:', truncated);
       return {
         success: false,
         output: `Generator exited with code ${result.status} — check server logs for details`,
@@ -184,7 +184,7 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
     }
     return { success: true, output: result.stdout };
   } catch (err: any) {
-    console.error('DocSync: updateGeneratedDoc spawn failed:', err instanceof Error ? err.message : err);
+    console.error('DocRelay: updateGeneratedDoc spawn failed:', err instanceof Error ? err.message : err);
     return { success: false, output: err.message };
   }
 }
@@ -278,7 +278,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
     if (typeof cmd !== 'string') return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
-      console.warn(`DocSync: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
+      console.warn(`DocRelay: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
     }
     // Validate it's a safe command (no shell metacharacters, length check)
     if (!validateCommandSafety(cmd)) return null;

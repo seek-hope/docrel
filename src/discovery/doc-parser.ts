@@ -182,7 +182,7 @@ export class MarkdownParser implements DocParser {
     const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
     if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocSync: MarkdownParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      console.warn(`DocRelay: MarkdownParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
     const sections: ParsedDocSection[] = [];
@@ -329,7 +329,7 @@ export class RstParser implements DocParser {
     const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
     if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocSync: RstParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      console.warn(`DocRelay: RstParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
     const sections: ParsedDocSection[] = [];
@@ -451,7 +451,7 @@ export class AsciidocParser implements DocParser {
     const MAX_DOC_LINES = 100_000;
     const lines = content.split('\n');
     if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocSync: AsciidocParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+      console.warn(`DocRelay: AsciidocParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
     const sections: ParsedDocSection[] = [];
@@ -574,7 +574,7 @@ export class HtmlParser implements DocParser {
     // applies a 10MB file-size limit).
     const MAX_HTML_SIZE = 10 * 1024 * 1024;
     if (content.length > MAX_HTML_SIZE) {
-      console.warn(`DocSync: HtmlParser: content exceeds ${MAX_HTML_SIZE} bytes — skipping`);
+      console.warn(`DocRelay: HtmlParser: content exceeds ${MAX_HTML_SIZE} bytes — skipping`);
       return [];
     }
     const sections: ParsedDocSection[] = [];
@@ -590,7 +590,7 @@ export class HtmlParser implements DocParser {
     let m: RegExpExecArray | null;
     while ((m = headingRe.exec(content)) !== null) {
       if (matches.length >= MAX_HEADINGS) {
-        console.warn(`DocSync: HtmlParser reached limit of ${MAX_HEADINGS} headings — truncating`);
+        console.warn(`DocRelay: HtmlParser reached limit of ${MAX_HEADINGS} headings — truncating`);
         break;
       }
       matches.push({
@@ -658,7 +658,7 @@ function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
     // Cap total refs per section to prevent memory exhaustion from crafted
     // input (e.g., 10 MB file consisting entirely of `func()` repeats).
     if (refs.length >= MAX_CODE_REFS_PER_FILE) {
-      console.warn(`DocSync: extractHtmlCodeRefs reached limit of ${MAX_CODE_REFS_PER_FILE} refs — stopping extraction`);
+      console.warn(`DocRelay: extractHtmlCodeRefs reached limit of ${MAX_CODE_REFS_PER_FILE} refs — stopping extraction`);
       break;
     }
     const lineNum = baseLine + i;
@@ -735,7 +735,7 @@ function extractPreContent(lines: string[], startIdx: number): string[] {
     content.push(lines[i]);
   }
   if (content.length >= MAX_PRE_LINES) {
-    console.warn(`DocSync: extractPreContent reached limit of ${MAX_PRE_LINES} lines — content may be truncated`);
+    console.warn(`DocRelay: extractPreContent reached limit of ${MAX_PRE_LINES} lines — content may be truncated`);
   }
   return content;
 }

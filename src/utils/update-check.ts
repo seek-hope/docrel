@@ -25,12 +25,12 @@ function cachePath(): string {
   // Use a user-specific cache directory (XDG-style) instead of os.tmpdir().
   // os.tmpdir() is world-writable and the deterministic filename would allow
   // an attacker on a multi-user system to pre-create a symlink at the path
-  // and corrupt arbitrary files when docsync writes the cache.
-  const cacheDir = path.join(os.homedir(), '.cache', 'docsync');
+  // and corrupt arbitrary files when docrelay writes the cache.
+  const cacheDir = path.join(os.homedir(), '.cache', 'docrelay');
   try { fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 }); } catch {
     if (!cacheWriteWarned) {
       cacheWriteWarned = true;
-      console.warn(`DocSync: cannot create update-check cache directory at ${cacheDir} — update checks may hit npm registry on every invocation`);
+      console.warn(`DocRelay: cannot create update-check cache directory at ${cacheDir} — update checks may hit npm registry on every invocation`);
     }
   }
   return path.join(cacheDir, 'update-check.json');
@@ -45,7 +45,7 @@ function readCache(): CacheEntry | null {
     return null;
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn('DocSync: cannot read update-check cache:', err instanceof Error ? err.message : err);
+      console.warn('DocRelay: cannot read update-check cache:', err instanceof Error ? err.message : err);
     }
     return null;
   }
@@ -62,13 +62,13 @@ function writeCache(entry: CacheEntry): void {
   } catch (err: any) {
     if (!cacheWriteFailed) {
       cacheWriteFailed = true;
-      console.warn('DocSync: cannot write update-check cache:', err instanceof Error ? err.message : err);
+      console.warn('DocRelay: cannot write update-check cache:', err instanceof Error ? err.message : err);
     }
   }
 }
 
 /**
- * Check npm registry for the latest version of docsync.
+ * Check npm registry for the latest version of docrelay.
  * Uses a local cache to avoid checking more than once per day.
  * Non-blocking — caller should call this in the background.
  */
@@ -83,7 +83,7 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch('https://registry.npmjs.org/docsync/latest', {
+    const response = await fetch('https://registry.npmjs.org/docrelay/latest', {
       signal: controller.signal,
       headers: { 'Accept': 'application/json' },
     });

@@ -7,7 +7,7 @@ import { escapeRegex } from './fs.js';
 /** Current config schema version. Increment on breaking changes. */
 export const CONFIG_SCHEMA_VERSION = 1;
 
-export interface DocSyncConfig {
+export interface DocRelayConfig {
   /** Config schema version for migration support. */
   version: number;
   project: string;
@@ -49,7 +49,7 @@ const userConfigSchema = z.object({
 // NOTE: 'project' is intentionally NOT in DEFAULT_CONFIG — it is always
 // computed from projectRoot in loadConfig to avoid stale process.cwd() values
 // captured at module import time.
-const DEFAULT_CONFIG: Omit<DocSyncConfig, 'project' | 'version'> = {
+const DEFAULT_CONFIG: Omit<DocRelayConfig, 'project' | 'version'> = {
   doc_dirs: ['docs', 'README.md'],
   code_dirs: ['src'],
   strategies: {
@@ -60,18 +60,18 @@ const DEFAULT_CONFIG: Omit<DocSyncConfig, 'project' | 'version'> = {
   },
 };
 
-export function loadConfig(projectRoot: string): DocSyncConfig {
+export function loadConfig(projectRoot: string): DocRelayConfig {
   if (!projectRoot) throw new Error('projectRoot is required — cannot load config without a project root');
-  const configPath = path.join(projectRoot, '.docsync', 'config.yaml');
+  const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
   const project = path.basename(projectRoot) || 'unknown-project';
 
   if (!fs.existsSync(configPath)) {
     return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
   }
 
-  const configRelPath = `.docsync/config.yaml`;
+  const configRelPath = `.docrelay/config.yaml`;
 
-  let userConfig: Partial<DocSyncConfig>;
+  let userConfig: Partial<DocRelayConfig>;
 
   try {
     const raw = fs.readFileSync(configPath, 'utf-8');
@@ -81,7 +81,7 @@ export function loadConfig(projectRoot: string): DocSyncConfig {
       console.error(`Warning: Invalid config in ${configRelPath}: ${result.error.message}. Using defaults.`);
       return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
     }
-    userConfig = result.data as Partial<DocSyncConfig>;
+    userConfig = result.data as Partial<DocRelayConfig>;
   } catch (err: any) {
     // Log the relative config path plus sanitized error details. YAML parse
     // errors from the 'yaml' library typically mention line/column numbers,
@@ -114,7 +114,7 @@ export interface ConfigValidationIssue {
  * Pre-flight config validation. Checks for common misconfigurations and
  * returns actionable diagnostic messages. Call before scanning.
  */
-export function validateConfig(config: DocSyncConfig, projectRoot: string): ConfigValidationIssue[] {
+export function validateConfig(config: DocRelayConfig, projectRoot: string): ConfigValidationIssue[] {
   const issues: ConfigValidationIssue[] = [];
 
   // Version check — warn if config is from a future version
@@ -122,7 +122,7 @@ export function validateConfig(config: DocSyncConfig, projectRoot: string): Conf
     issues.push({
       field: 'version',
       severity: 'warning',
-      message: `Config schema version ${config.version} is newer than DocSync's supported version ${CONFIG_SCHEMA_VERSION}. Some features may not work. Consider upgrading DocSync.`,
+      message: `Config schema version ${config.version} is newer than DocRelay's supported version ${CONFIG_SCHEMA_VERSION}. Some features may not work. Consider upgrading DocRelay.`,
     });
   }
 
@@ -133,7 +133,7 @@ export function validateConfig(config: DocSyncConfig, projectRoot: string): Conf
       issues.push({
         field: `code_dirs.${dir}`,
         severity: 'error',
-        message: `Code directory '${dir}' does not exist. Create it or update code_dirs in .docsync/config.yaml.`,
+        message: `Code directory '${dir}' does not exist. Create it or update code_dirs in .docrelay/config.yaml.`,
       });
     }
   }
@@ -145,7 +145,7 @@ export function validateConfig(config: DocSyncConfig, projectRoot: string): Conf
       issues.push({
         field: `doc_dirs.${dir}`,
         severity: 'warning',
-        message: `Doc path '${dir}' does not exist. Create it or update doc_dirs in .docsync/config.yaml.`,
+        message: `Doc path '${dir}' does not exist. Create it or update doc_dirs in .docrelay/config.yaml.`,
       });
     }
   }
@@ -155,7 +155,7 @@ export function validateConfig(config: DocSyncConfig, projectRoot: string): Conf
     issues.push({
       field: 'code_dirs',
       severity: 'error',
-      message: 'No code_dirs configured. Add at least one directory (e.g., src) to .docsync/config.yaml.',
+      message: 'No code_dirs configured. Add at least one directory (e.g., src) to .docrelay/config.yaml.',
     });
   }
 

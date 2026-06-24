@@ -8,9 +8,9 @@ describe('integrate', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-integrate-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-integrate-'));
     // Simulate a project root
-    fs.mkdirSync(path.join(tmpDir, '.docsync'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
   });
 
   afterEach(() => {
@@ -32,19 +32,19 @@ describe('integrate', () => {
     expect(result.agent).toBe('claude-code');
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
 
-    // .claude/CLAUDE.md should be created with the DocSync section
+    // .claude/CLAUDE.md should be created with the DocRelay section
     const claudePath = path.join(tmpDir, '.claude', 'CLAUDE.md');
     expect(fs.existsSync(claudePath)).toBe(true);
     const content = fs.readFileSync(claudePath, 'utf-8');
-    expect(content).toContain('## DocSync — Code-Documentation Sync');
-    expect(content).toContain('docsync status');
+    expect(content).toContain('## DocRelay — Code-Documentation Sync');
+    expect(content).toContain('docrelay status');
 
-    // .mcp.json should be created with docsync entry
+    // .mcp.json should be created with docrelay entry
     const mcpPath = path.join(tmpDir, '.mcp.json');
     expect(fs.existsSync(mcpPath)).toBe(true);
     const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-    expect(mcp.mcpServers.docsync).toBeDefined();
-    expect(mcp.mcpServers.docsync.command).toBe('npx');
+    expect(mcp.mcpServers.docrelay).toBeDefined();
+    expect(mcp.mcpServers.docrelay.command).toBe('npx');
   });
 
   it('is idempotent for claude-code integration', async () => {
@@ -66,9 +66,9 @@ describe('integrate', () => {
     const content = fs.readFileSync(path.join(tmpDir, '.claude', 'CLAUDE.md'), 'utf-8');
     expect(content).toContain('# My Project');
     expect(content).toContain('Some existing instructions.');
-    expect(content).toContain('## DocSync — Code-Documentation Sync');
-    // Original content should come before DocSync section
-    expect(content.indexOf('# My Project')).toBeLessThan(content.indexOf('## DocSync'));
+    expect(content).toContain('## DocRelay — Code-Documentation Sync');
+    // Original content should come before DocRelay section
+    expect(content.indexOf('# My Project')).toBeLessThan(content.indexOf('## DocRelay'));
   });
 
   // ── opencode ─────────────────────────────────────────────────────
@@ -81,46 +81,46 @@ describe('integrate', () => {
     const opencodePath = path.join(tmpDir, 'OPENCODE.md');
     expect(fs.existsSync(opencodePath)).toBe(true);
     const content = fs.readFileSync(opencodePath, 'utf-8');
-    expect(content).toContain('## DocSync — Code-Documentation Sync');
+    expect(content).toContain('## DocRelay — Code-Documentation Sync');
   });
 
   // ── oh-my-pi ─────────────────────────────────────────────────────
 
-  it('creates .pi/docsync.md for oh-my-pi', async () => {
+  it('creates .pi/docrelay.md for oh-my-pi', async () => {
     const result = await integrate(tmpDir, 'oh-my-pi', false);
     expect(result.agent).toBe('oh-my-pi');
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
 
-    const piPath = path.join(tmpDir, '.pi', 'docsync.md');
+    const piPath = path.join(tmpDir, '.pi', 'docrelay.md');
     expect(fs.existsSync(piPath)).toBe(true);
     const content = fs.readFileSync(piPath, 'utf-8');
-    expect(content).toContain('# DocSync — Code-Documentation Sync');
+    expect(content).toContain('# DocRelay — Code-Documentation Sync');
     expect(content).toContain('Shell Alias');
   });
 
   it('dry run for oh-my-pi reports without writing', async () => {
     const result = await integrate(tmpDir, 'oh-my-pi', true);
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
-    expect(fs.existsSync(path.join(tmpDir, '.pi', 'docsync.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.pi', 'docrelay.md'))).toBe(false);
   });
 
   // ── unknown ──────────────────────────────────────────────────────
 
-  it('creates .docsync/agent-instructions.md for unknown agent', async () => {
+  it('creates .docrelay/agent-instructions.md for unknown agent', async () => {
     const result = await integrate(tmpDir, 'unknown', false);
     expect(result.agent).toBe('unknown');
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
 
-    const genPath = path.join(tmpDir, '.docsync', 'agent-instructions.md');
+    const genPath = path.join(tmpDir, '.docrelay', 'agent-instructions.md');
     expect(fs.existsSync(genPath)).toBe(true);
     const content = fs.readFileSync(genPath, 'utf-8');
-    expect(content).toContain('DocSync Agent Integration');
+    expect(content).toContain('DocRelay Agent Integration');
     expect(content).toContain('MCP Server');
   });
 
   // ── existing .mcp.json handling ──────────────────────────────────
 
-  it('adds docsync to existing .mcp.json without overwriting other servers', async () => {
+  it('adds docrelay to existing .mcp.json without overwriting other servers', async () => {
     const existingMcp = {
       mcpServers: {
         'my-server': { command: 'node', args: ['server.js'] },
@@ -133,14 +133,14 @@ describe('integrate', () => {
     const mcp = JSON.parse(fs.readFileSync(path.join(tmpDir, '.mcp.json'), 'utf-8'));
     expect(mcp.mcpServers['my-server']).toBeDefined();
     expect(mcp.mcpServers['my-server'].command).toBe('node');
-    expect(mcp.mcpServers.docsync).toBeDefined();
-    expect(mcp.mcpServers.docsync.command).toBe('npx');
+    expect(mcp.mcpServers.docrelay).toBeDefined();
+    expect(mcp.mcpServers.docrelay.command).toBe('npx');
   });
 
-  it('does not duplicate docsync in .mcp.json if already present', async () => {
+  it('does not duplicate docrelay in .mcp.json if already present', async () => {
     const existingMcp = {
       mcpServers: {
-        docsync: { command: 'npx', args: ['docsync'] },
+        docrelay: { command: 'npx', args: ['docrelay'] },
       },
     };
     fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify(existingMcp, null, 2), 'utf-8');
@@ -148,10 +148,10 @@ describe('integrate', () => {
     await integrate(tmpDir, 'claude-code', false);
 
     const mcp = JSON.parse(fs.readFileSync(path.join(tmpDir, '.mcp.json'), 'utf-8'));
-    // Should still have exactly one docsync entry
+    // Should still have exactly one docrelay entry
     const keys = Object.keys(mcp.mcpServers);
-    const docsyncEntries = keys.filter((k) => k === 'docsync');
-    expect(docsyncEntries.length).toBe(1);
+    const docrelayEntries = keys.filter((k) => k === 'docrelay');
+    expect(docrelayEntries.length).toBe(1);
   });
 
   // ── codex (uses claude-code integration) ─────────────────────────

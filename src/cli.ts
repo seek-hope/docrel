@@ -10,12 +10,12 @@ import { CodegraphClient } from './codegraph/client.js';
 import { CodegraphExtractor } from './extractors/codegraph.js';
 import { BuiltinExtractor } from './extractors/builtin.js';
 import type { SymbolExtractor } from './extractors/interface.js';
-import { docsyncStatus } from './tools/status.js';
-import { docsyncCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
-import { docsyncImpact, formatImpactMarkdown } from './tools/impact.js';
+import { docrelayStatus } from './tools/status.js';
+import { docrelayCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
+import { docrelayImpact, formatImpactMarkdown } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
-import { docsyncLink, docsyncConfirm, docsyncReject } from './tools/link.js';
-import { docsyncDiff, formatDiffMarkdown } from './tools/diff.js';
+import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
+import { docrelayDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
@@ -23,11 +23,11 @@ import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { listSymbols } from './db/symbols.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
-import { DOCSYNC_VERSION } from './version.js';
+import { DOCRELAY_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
-import { docsyncGc } from './tools/gc.js';
+import { docrelayGc } from './tools/gc.js';
 import { stringify as stringifyYaml } from 'yaml';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
@@ -54,7 +54,7 @@ process.on('exit', () => {
 });
 
 const program = new Command();
-const projectRoot = process.env.DOCSYNC_PROJECT_ROOT ?? process.cwd();
+const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
 let config: ReturnType<typeof loadConfig>;
 let db: ReturnType<typeof getDb>;
@@ -71,35 +71,35 @@ try {
   // Try codegraph; fall back to builtin regex-based extraction
   extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
-  console.error('DocSync initialization failed:', errMsg(err));
+  console.error('DocRelay initialization failed:', errMsg(err));
   exit(1);
 }
 
 program
-  .name('docsync')
+  .name('docrelay')
   .description('Code-Documentation Relational Sync System')
-  .version(DOCSYNC_VERSION);
+  .version(DOCRELAY_VERSION);
 
 program
   .command('init')
-  .description('Initialize DocSync in the current project (config + DB + hooks + scan)')
+  .description('Initialize DocRelay in the current project (config + DB + hooks + scan)')
   .option('--no-hooks', 'Skip installing git hooks')
   .option('--no-scan', 'Skip scanning the codebase (requires codegraph)')
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
     try {
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
-      const configPath = path.join(projectRoot, '.docsync', 'config.yaml');
-      const docsyncDir = path.join(projectRoot, '.docsync');
+      const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
+      const docrelayDir = path.join(projectRoot, '.docrelay');
       let steps: string[] = [];
 
-      // 1. Create .docsync/ directory with restrictive permissions (0o700)
-      fs.mkdirSync(docsyncDir, { recursive: true, mode: 0o700 });
-      steps.push('Created .docsync/ directory');
+      // 1. Create .docrelay/ directory with restrictive permissions (0o700)
+      fs.mkdirSync(docrelayDir, { recursive: true, mode: 0o700 });
+      steps.push('Created .docrelay/ directory');
 
       // 2. Write default config if missing (or --force)
       if (!fs.existsSync(configPath) || opts.force) {
-        const defaultConfig = `# DocSync configuration — see https://github.com/seek-hope/docsync
+        const defaultConfig = `# DocRelay configuration — see https://github.com/seek-hope/docrelay
 project: ${path.basename(projectRoot)}
 doc_dirs:
   - docs
@@ -113,22 +113,22 @@ strategies:
   architecture: mark_stale  # Architecture docs — flag for review only
 `;
         fs.writeFileSync(configPath, defaultConfig, 'utf-8');
-        steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docsync/config.yaml`);
+        steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docrelay/config.yaml`);
       } else {
-        steps.push('.docsync/config.yaml already exists (use --force to overwrite)');
+        steps.push('.docrelay/config.yaml already exists (use --force to overwrite)');
       }
 
       // 3. Initialize database
       db.pragma('journal_mode = WAL');
       db.pragma('foreign_keys = ON');
-      steps.push('Initialized database (.git/docsync.db)');
+      steps.push('Initialized database (.git/docrelay.db)');
 
       // 4. Install git hooks (unless --no-hooks)
       if (opts.hooks) {
         installHooks(projectRoot, opts.force);
         steps.push('Installed git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)');
       } else {
-        steps.push('Skipped git hooks (run \'docsync install-hooks\' later)');
+        steps.push('Skipped git hooks (run \'docrelay install-hooks\' later)');
       }
 
       // 5. Scan codebase (unless --no-scan)
@@ -138,16 +138,16 @@ strategies:
           const report = await scanProject(extractor, db, config, projectRoot);
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
         } else {
-          steps.push('Skipped scan: no extractor available (run \'docsync scan\' later)');
+          steps.push('Skipped scan: no extractor available (run \'docrelay scan\' later)');
         }
       } else {
-        steps.push('Skipped scan (run \'docsync scan\' later or omit --no-scan)');
+        steps.push('Skipped scan (run \'docrelay scan\' later or omit --no-scan)');
       }
 
       // 6. Summary
-      console.log('DocSync initialized!\n');
+      console.log('DocRelay initialized!\n');
       steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
-      console.log(`\nNext: docsync status   — check documentation health`);
+      console.log(`\nNext: docrelay status   — check documentation health`);
     } catch (err: any) {
       console.error('Init failed:', errMsg(err));
       exit(1);
@@ -160,12 +160,12 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'markdown')
   .action(async (opts) => {
     try {
-      const { docsyncHealth } = await import('./tools/health.js');
-      const report = await docsyncHealth(db, projectRoot, () => extractor.isAvailable(), DOCSYNC_VERSION);
+      const { docrelayHealth } = await import('./tools/health.js');
+      const report = await docrelayHealth(db, projectRoot, () => extractor.isAvailable(), DOCRELAY_VERSION);
       if (opts.format === 'json') {
         console.log(JSON.stringify(report, null, 2));
       } else {
-        console.log(`## DocSync Health — ${report.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
+        console.log(`## DocRelay Health — ${report.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
         console.log(`_${report.summary}_`);
         console.log('');
         for (const c of report.checks) {
@@ -188,13 +188,13 @@ program
   .action((opts) => {
     try {
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
-      const status = docsyncStatus(db);
+      const status = docrelayStatus(db);
       if (status.error) {
         console.error('Status query failed:', status.error);
         exit(1);
       }
       if (opts.format === 'markdown') {
-        console.log(`## DocSync Status
+        console.log(`## DocRelay Status
 - Symbols: ${status.totalSymbols}
 - Linked: ${status.linkedSymbols} (${status.linkedPercentage}%)
 - Docs in sync: ${status.syncedDocs}/${status.totalDocs} (${status.syncPercentage}%)
@@ -216,11 +216,11 @@ program
   .option('--format <format>', 'Output format: json, markdown, or ci', 'json')
   .action((opts) => {
     try {
-      const report = docsyncCheck(db, opts.strict);
+      const report = docrelayCheck(db, opts.strict);
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count.
       if (report.error && opts.format === 'json') {
-        console.error('DocSync check failed:', report.error);
+        console.error('DocRelay check failed:', report.error);
         exit(1);
       }
       let filtered = report.staleDocs;
@@ -267,7 +267,7 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action((paths: string[], opts) => {
     try {
-      const impact = docsyncImpact(db, paths);
+      const impact = docrelayImpact(db, paths);
       if (opts.format === 'markdown') {
         console.log(formatImpactMarkdown(impact));
       } else {
@@ -316,7 +316,7 @@ program
       if (!['create', 'delete'].includes(action)) {
         console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
         exit(1);
-      }const result = docsyncLink(db, {
+      }const result = docrelayLink(db, {
         action: action as 'create' | 'delete',
         symbol_id: opts.symbol,
         doc_id: opts.doc,
@@ -355,7 +355,7 @@ program
 
         let confirmed = 0;
         for (const m of unreviewed) {
-          const result = docsyncConfirm(db, m.symbol_id, m.doc_id, m.rel_type);
+          const result = docrelayConfirm(db, m.symbol_id, m.doc_id, m.rel_type);
           if (result.action === 'updated') confirmed++;
         }
         console.log(JSON.stringify({ confirmed, total: unreviewed.length }, null, 2));
@@ -363,7 +363,7 @@ program
       }
       if (!opts.symbol) { console.error('Error: --symbol <id> is required (or use --all)'); exit(1); }
       if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all)'); exit(1); }
-      const result = docsyncConfirm(db, opts.symbol, opts.doc, opts.type);
+      const result = docrelayConfirm(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
       if (result.action === 'error') exit(1);
     } catch (err: any) {
@@ -396,7 +396,7 @@ program
 
         let rejected = 0;
         for (const m of unreviewed) {
-          const result = docsyncReject(db, m.symbol_id, m.doc_id, m.rel_type);
+          const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
           if (result.action === 'updated') rejected++;
         }
         console.log(JSON.stringify({ rejected, total: unreviewed.length }, null, 2));
@@ -418,7 +418,7 @@ program
 
         let rejected = 0;
         for (const m of matched) {
-          const result = docsyncReject(db, m.symbol_id, m.doc_id, m.rel_type);
+          const result = docrelayReject(db, m.symbol_id, m.doc_id, m.rel_type);
           if (result.action === 'updated') rejected++;
         }
         console.log(JSON.stringify({ rejected, total: matched.length, pattern: opts.pattern,
@@ -428,7 +428,7 @@ program
 
       if (!opts.symbol) { console.error('Error: --symbol <id> is required (or use --all/--pattern)'); exit(1); }
       if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all/--pattern)'); exit(1); }
-      const result = docsyncReject(db, opts.symbol, opts.doc, opts.type);
+      const result = docrelayReject(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
       if (result.action === 'error') exit(1);
     } catch (err: any) {
@@ -444,7 +444,7 @@ program
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action((symbolId, opts) => {
     try {
-      const diff = docsyncDiff(db, symbolId);
+      const diff = docrelayDiff(db, symbolId);
       if (!diff.found) {
         console.error(diff.message || 'Symbol not found');
         exit(1);
@@ -462,11 +462,11 @@ program
 
 program
   .command('install-hooks')
-  .description('Install DocSync git hooks in .git/hooks/')
+  .description('Install DocRelay git hooks in .git/hooks/')
   .action(() => {
     try {
       installHooks(projectRoot);
-      console.log('DocSync hooks installed successfully.');
+      console.log('DocRelay hooks installed successfully.');
     } catch (err: any) {
       console.error('Failed to install hooks:', errMsg(err));
       exit(1);
@@ -475,7 +475,7 @@ program
 
 program
   .command('annotate-commit')
-  .description('Annotate a commit message with DocSync summary stats')
+  .description('Annotate a commit message with DocRelay summary stats')
   .argument('<commit-msg-file>', 'Path to the commit message file')
   .action((commitMsgFile: string) => {
     try {
@@ -500,7 +500,7 @@ program
   .command('watch')
   .description('Watch for file changes and auto-update mappings (for non-agent use)')
   .option('--debounce <ms>', 'Debounce delay in milliseconds', '500')
-  .option('--daemon', 'Write a PID file to .docsync/watch.pid for process management')
+  .option('--daemon', 'Write a PID file to .docrelay/watch.pid for process management')
   .action(async (opts) => {
     const { startWatch } = await import('./tools/watch.js');
     const cleanup = await startWatch(projectRoot, db, extractor, config, {
@@ -528,7 +528,7 @@ program
         for (const i of configErrors) {
           console.error(`❌ ${i.field}: ${i.message}`);
         }
-        console.error('Fix the errors above or run `docsync config validate` for details.');
+        console.error('Fix the errors above or run `docrelay config validate` for details.');
         exit(1);
       }
 
@@ -609,8 +609,8 @@ program
   .option('-S, --side-by-side', 'Show code↔doc blocks for unreviewed mappings')
   .action(async (opts) => {
     try {
-      const { docsyncReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
-      const report = docsyncReview(db, projectRoot);
+      const { docrelayReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
+      const report = docrelayReview(db, projectRoot);
       if (opts.json || opts.format === 'json') {
         console.log(JSON.stringify(report, null, 2));
       } else if (opts.sideBySide || opts.format === 'detailed') {
@@ -626,13 +626,13 @@ program
 
 program
   .command('export-mappings')
-  .description('Export mappings to .docsync/mappings.json (for CodeGraph integration)')
+  .description('Export mappings to .docrelay/mappings.json (for CodeGraph integration)')
   .action(() => {
     try {
       const mappings = exportMappingsJson(db);
-      const docsyncDir = path.join(projectRoot, '.docsync');
-      fs.mkdirSync(docsyncDir, { recursive: true });
-      const outPath = path.join(docsyncDir, 'mappings.json');
+      const docrelayDir = path.join(projectRoot, '.docrelay');
+      fs.mkdirSync(docrelayDir, { recursive: true });
+      const outPath = path.join(docrelayDir, 'mappings.json');
       fs.writeFileSync(outPath, JSON.stringify(mappings, null, 2), 'utf-8');
       console.log(`Exported ${mappings.length} mappings to ${outPath}`);
     } catch (err: any) {
@@ -643,7 +643,7 @@ program
 
 program
   .command('integrate')
-  .description('Generate agent integration configs for DocSync')
+  .description('Generate agent integration configs for DocRelay')
   .option('--agent <agent>', 'Agent to integrate with (claude-code, codex, opencode, oh-my-pi, hermes)')
   .option('--dry-run', 'Preview what would be created without writing files')
   .action(async (opts) => {
@@ -690,9 +690,9 @@ program
 
 async function notifyIfOutdated(): Promise<void> {
   try {
-    const latest = await checkForUpdates(DOCSYNC_VERSION);
-    if (latest && isNewer(DOCSYNC_VERSION, latest)) {
-      console.error(`\n  DocSync ${latest} is available (you have ${DOCSYNC_VERSION}). Run 'docsync update' to upgrade.\n`);
+    const latest = await checkForUpdates(DOCRELAY_VERSION);
+    if (latest && isNewer(DOCRELAY_VERSION, latest)) {
+      console.error(`\n  DocRelay ${latest} is available (you have ${DOCRELAY_VERSION}). Run 'docrelay update' to upgrade.\n`);
     }
   } catch {
     // Never let update check break the main command
@@ -701,7 +701,7 @@ async function notifyIfOutdated(): Promise<void> {
 
 program
   .command('update')
-  .description('Update DocSync to the latest version via npm')
+  .description('Update DocRelay to the latest version via npm')
   .action(() => {
     try {
       // Resolve npm binary path with TOCTOU-safe validation matching the
@@ -728,7 +728,7 @@ program
         npmBin = realBin;
       } catch (err: any) {
         if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-          console.error("Cannot locate npm: 'which' utility is not available on this system. Try updating manually with: npm install -g docsync@latest");
+          console.error("Cannot locate npm: 'which' utility is not available on this system. Try updating manually with: npm install -g docrelay@latest");
         } else {
           console.error(`Cannot locate npm binary: ${err.message || err}`);
         }
@@ -747,20 +747,20 @@ program
         exit(1);
       }
 
-      console.log('Updating DocSync...');
+      console.log('Updating DocRelay...');
       console.warn('Note: global install (-g) may require elevated privileges.');
-      const output = execFileSync(npmBin, ['install', '-g', 'docsync@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
-      console.log(output || 'DocSync updated to the latest version.');
+      const output = execFileSync(npmBin, ['install', '-g', 'docrelay@latest', '--ignore-scripts'], { encoding: 'utf-8', timeout: 60_000 });
+      console.log(output || 'DocRelay updated to the latest version.');
     } catch (err: any) {
       // npm stderr may contain absolute filesystem paths (global install
       // prefixes, npm config paths, etc.). Log the full output only when
-      // DOCSYNC_DEBUG is enabled; otherwise show a generic message.
-      if (process.env.DOCSYNC_DEBUG === '1' || process.env.DOCSYNC_DEBUG === 'true') {
+      // DOCRELAY_DEBUG is enabled; otherwise show a generic message.
+      if (process.env.DOCRELAY_DEBUG === '1' || process.env.DOCRELAY_DEBUG === 'true') {
         console.error(`Update failed: ${err.stderr ?? err.message}`);
       } else {
-        console.error('Update failed: npm install returned an error. Run with DOCSYNC_DEBUG=1 for details.');
+        console.error('Update failed: npm install returned an error. Run with DOCRELAY_DEBUG=1 for details.');
       }
-      console.error('Try: npm install -g docsync@latest');
+      console.error('Try: npm install -g docrelay@latest');
       exit(1);
     }
   });
@@ -784,7 +784,7 @@ configCommand
 
 configCommand
   .command('validate')
-  .description('Validate .docsync/config.yaml for common misconfigurations')
+  .description('Validate .docrelay/config.yaml for common misconfigurations')
   .action(() => {
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
@@ -802,7 +802,7 @@ configCommand
     if (errors.length > 0) exit(1);
   });
 
-// Default action for `docsync config` (no subcommand) → show config
+// Default action for `docrelay config` (no subcommand) → show config
 configCommand.action(() => {
   try {
     const resolved = loadConfig(projectRoot);
@@ -815,12 +815,12 @@ configCommand.action(() => {
 
 program
   .command('reset')
-  .description('Delete the DocSync database and re-run migrations (destructive)')
+  .description('Delete the DocRelay database and re-run migrations (destructive)')
   .option('--force', 'Skip confirmation prompt')
   .action(async (opts) => {
     try {
       if (!opts.force) {
-        console.error('WARNING: This will delete the DocSync database (.git/docsync.db or .docsync/docsync.db).');
+        console.error('WARNING: This will delete the DocRelay database (.git/docrelay.db or .docrelay/docrelay.db).');
         console.error('All symbol mappings, changelog history, and scan metadata will be lost.');
         console.error('This is irreversible.');
         console.error('');
@@ -836,14 +836,14 @@ program
         }
       }
 
-      // Determine the database path (check .git/ then .docsync/)
-      const gitDbPath = path.join(projectRoot, '.git', 'docsync.db');
-      const docsyncDbPath = path.join(projectRoot, '.docsync', 'docsync.db');
+      // Determine the database path (check .git/ then .docrelay/)
+      const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
+      const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
       let dbPath = '';
       if (fs.existsSync(gitDbPath)) {
         dbPath = gitDbPath;
-      } else if (fs.existsSync(docsyncDbPath)) {
-        dbPath = docsyncDbPath;
+      } else if (fs.existsSync(docrelayDbPath)) {
+        dbPath = docrelayDbPath;
       }
 
       // Close existing database connections
@@ -861,7 +861,7 @@ program
       db = getDb(projectRoot);
       runMigrations(db);
 
-      console.error('DocSync database has been reset and re-initialized.');
+      console.error('DocRelay database has been reset and re-initialized.');
     } catch (err: any) {
       console.error('Reset failed:', errMsg(err));
       exit(1);
@@ -892,7 +892,7 @@ program
       const scanReport = await scanProject(gcExtractor, db, config, projectRoot);
 
       console.error('Running garbage collection...');
-      const gcReport = docsyncGc(db, scanReport, opts.dryRun ?? false);
+      const gcReport = docrelayGc(db, scanReport, opts.dryRun ?? false);
 
       if (gcReport.dryRun) {
         console.error(`[dry-run] Would remove ${gcReport.symbolsRemoved} symbol(s), would mark ${gcReport.symbolsMarkedStale} symbol(s) as stale`);
@@ -907,25 +907,25 @@ program
 
 program
   .command('backup')
-  .description('Backup the DocSync database to a timestamped file')
-  .option('--output <path>', 'Output path (default: .docsync/backup-<timestamp>.db)')
+  .description('Backup the DocRelay database to a timestamped file')
+  .option('--output <path>', 'Output path (default: .docrelay/backup-<timestamp>.db)')
   .action((opts) => {
     try {
-      const dbPath = path.join(projectRoot, '.docsync', 'docsync.db');
+      const dbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
       if (!fs.existsSync(dbPath)) {
-        // Check .git/docsync.db as fallback
-        const gitDbPath = path.join(projectRoot, '.git', 'docsync.db');
+        // Check .git/docrelay.db as fallback
+        const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
         if (!fs.existsSync(gitDbPath)) {
-          console.error('No DocSync database found. Run docsync init first.');
+          console.error('No DocRelay database found. Run docrelay init first.');
           exit(1);
         }
       }
-      const srcPath = fs.existsSync(path.join(projectRoot, '.docsync', 'docsync.db'))
-        ? path.join(projectRoot, '.docsync', 'docsync.db')
-        : path.join(projectRoot, '.git', 'docsync.db');
+      const srcPath = fs.existsSync(path.join(projectRoot, '.docrelay', 'docrelay.db'))
+        ? path.join(projectRoot, '.docrelay', 'docrelay.db')
+        : path.join(projectRoot, '.git', 'docrelay.db');
 
       const ts = new Date().toISOString().replace(/[:.]/g, '-');
-      const destPath = opts.output ?? path.join(projectRoot, '.docsync', `backup-${ts}.db`);
+      const destPath = opts.output ?? path.join(projectRoot, '.docrelay', `backup-${ts}.db`);
       fs.copyFileSync(srcPath, destPath);
       console.log(`Backed up to ${path.relative(projectRoot, destPath)}`);
     } catch (err: any) {
@@ -936,7 +936,7 @@ program
 
 program
   .command('restore')
-  .description('Restore the DocSync database from a backup file')
+  .description('Restore the DocRelay database from a backup file')
   .argument('<backup-path>', 'Path to the backup .db file')
   .option('--force', 'Skip confirmation prompt')
   .action(async (backupPath, opts) => {
@@ -952,7 +952,7 @@ program
       }
 
       if (!opts.force) {
-        console.error('WARNING: This will replace the current DocSync database.');
+        console.error('WARNING: This will replace the current DocRelay database.');
         console.error('All current data will be lost.');
         console.error('');
 
@@ -968,11 +968,11 @@ program
       }
 
       // Determine target path
-      const docsyncDbPath = path.join(projectRoot, '.docsync', 'docsync.db');
-      const gitDbPath = path.join(projectRoot, '.git', 'docsync.db');
-      const destPath = fs.existsSync(docsyncDbPath) ? docsyncDbPath
+      const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
+      const gitDbPath = path.join(projectRoot, '.git', 'docrelay.db');
+      const destPath = fs.existsSync(docrelayDbPath) ? docrelayDbPath
         : fs.existsSync(gitDbPath) ? gitDbPath
-        : docsyncDbPath;
+        : docrelayDbPath;
 
       // Close existing connections before replacing the file
       closeAllDbs();

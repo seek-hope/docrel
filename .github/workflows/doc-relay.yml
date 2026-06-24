@@ -1,0 +1,45 @@
+name: DocRelay
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  doc-check:
+    name: Documentation Health
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # needed for diff-based checks
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install DocRelay
+        run: npm install -g doc-relay
+
+      - name: Initialize DocRelay
+        run: doc-relay init --no-hooks
+
+      - name: Scan codebase
+        run: doc-relay scan
+
+      - name: Check documentation health
+        run: doc-relay check --strict --format ci
+
+      - name: Impact analysis (changed files)
+        run: |
+          CHANGED=$(git diff --name-only HEAD~1..HEAD)
+          if [ -n "$CHANGED" ]; then
+            echo "$CHANGED" | xargs doc-relay impact --format ci
+          fi
+
+      - name: Health dashboard
+        run: doc-relay health --format ci
+
+      - name: Review summary
+        run: doc-relay review --format markdown >> $GITHUB_STEP_SUMMARY

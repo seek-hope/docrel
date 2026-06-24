@@ -26,7 +26,7 @@ export function validatePath(filePath: string, projectRoot: string): string | nu
       // EACCES, EIO, etc. indicate we cannot verify this is a safe path.
       const code = (err as NodeJS.ErrnoException)?.code;
       if (code && code !== 'ENOENT') {
-        console.warn(`DocSync: lstat failed for ${resolved}: ${code} — rejecting for safety`);
+        console.warn(`DocRelay: lstat failed for ${resolved}: ${code} — rejecting for safety`);
       }
       return null;
     }
@@ -44,7 +44,7 @@ export function escapeRegex(str: string): string {
  *  null to distinguish "no match possible" from "search was aborted". */
 export function escapeRegexGlobal(str: string, maxLength = 200): RegExp | null {
   if (str.length > maxLength) {
-    console.warn(`DocSync: escapeRegexGlobal aborted — string length ${str.length} exceeds max ${maxLength}`);
+    console.warn(`DocRelay: escapeRegexGlobal aborted — string length ${str.length} exceeds max ${maxLength}`);
     return null;
   }
   return new RegExp(escapeRegex(str), 'g');

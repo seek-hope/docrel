@@ -37,7 +37,7 @@ function detectDocStyle(file: string): DocStyle {
 export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): boolean {
   const resolved = validatePath(input.file, projectRoot);
   if (!resolved) {
-    console.warn('DocSync: updateInlineDoc failed — invalid file path or path traversal detected:', input.file);
+    console.warn('DocRelay: updateInlineDoc failed — invalid file path or path traversal detected:', input.file);
     return false;
   }
 
@@ -54,22 +54,22 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     if (process.platform === 'linux') {
       const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
       if (!fdReal.startsWith(projectRoot + path.sep) && fdReal !== projectRoot) {
-        console.warn('DocSync: updateInlineDoc failed — path traversal detected via fd:', resolved);
+        console.warn('DocRelay: updateInlineDoc failed — path traversal detected via fd:', resolved);
         return false;
       }
     }
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) {
-      console.warn('DocSync: updateInlineDoc failed — not a regular file:', resolved);
+      console.warn('DocRelay: updateInlineDoc failed — not a regular file:', resolved);
       return false;
     }
     if (stat.size > MAX_FILE_SIZE) {
-      console.warn('DocSync: updateInlineDoc failed — file exceeds size limit:', resolved, stat.size);
+      console.warn('DocRelay: updateInlineDoc failed — file exceeds size limit:', resolved, stat.size);
       return false;
     }
     content = fs.readFileSync(fd, 'utf-8');
   } catch (err: any) {
-    console.warn('DocSync: updateInlineDoc failed — could not read file:', resolved, err?.message ?? err);
+    console.warn('DocRelay: updateInlineDoc failed — could not read file:', resolved, err?.message ?? err);
     return false;
   } finally {
     if (fd !== undefined) {
@@ -87,7 +87,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   if (style !== 'jsdoc') {
     const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
     if (docInputEmpty) {
-      console.warn('DocSync: updateInlineDoc skipped docstring — old or new docstring is empty');
+      console.warn('DocRelay: updateInlineDoc skipped docstring — old or new docstring is empty');
       return false;
     }
 
@@ -105,7 +105,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     }
 
     if (result === null) {
-      console.warn(`DocSync: updateInlineDoc — could not replace ${style} docstring for ${input.symbolName} in ${input.file}`);
+      console.warn(`DocRelay: updateInlineDoc — could not replace ${style} docstring for ${input.symbolName} in ${input.file}`);
       return false;
     }
 
@@ -114,7 +114,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
 
     // Post-replacement sanity: verify new docstring appears exactly once
     if (countOccurrences(content, input.newDocstring) !== 1) {
-      console.warn('DocSync: updateInlineDoc post-validation failed — new docstring count != 1');
+      console.warn('DocRelay: updateInlineDoc post-validation failed — new docstring count != 1');
       return false;
     }
   } else {
@@ -150,14 +150,14 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // Distinguish aborted searches (>10,000 char) from genuinely empty inputs.
     // countOccurrences returns -1 when the search string exceeds MAX_SEARCH_LENGTH.
     if (sigCount === -2) {
-      console.warn('DocSync: updateInlineDoc skipped signature — old or new signature is empty');
+      console.warn('DocRelay: updateInlineDoc skipped signature — old or new signature is empty');
     } else if (sigCount === -1) {
-      console.warn(`DocSync: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+      console.warn(`DocRelay: updateInlineDoc skipped signature — old signature exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
     }
     if (docCount === -2) {
-      console.warn('DocSync: updateInlineDoc skipped docstring — old or new docstring is empty');
+      console.warn('DocRelay: updateInlineDoc skipped docstring — old or new docstring is empty');
     } else if (docCount === -1) {
-      console.warn(`DocSync: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
+      console.warn(`DocRelay: updateInlineDoc skipped docstring — old docstring exceeds ${MAX_SEARCH_LENGTH} chars (possibly corrupted symbol record)`);
     }
 
     // Diagnostic: log when non-comment signature count differs significantly
@@ -167,7 +167,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     if (sigCount >= 0) {
       const fullCount = countOccurrences(content, input.oldSignature);
       if (Math.abs(sigCount - fullCount) > 1) {
-        console.debug(`DocSync: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
+        console.debug(`DocRelay: updateInlineDoc — signature occurrence count differs between stripped (${sigCount}) and full (${fullCount}) content`);
       }
     }
 
@@ -177,7 +177,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
       // (e.g., once in a comment before the definition), skip the replacement
       // to avoid corrupting the wrong location.
       if (countOccurrences(content, input.oldSignature) !== 1) {
-        console.warn(`DocSync: updateInlineDoc skipped signature replacement — old signature count mismatch (non-comment: 1, full: ${countOccurrences(content, input.oldSignature)})`);
+        console.warn(`DocRelay: updateInlineDoc skipped signature replacement — old signature count mismatch (non-comment: 1, full: ${countOccurrences(content, input.oldSignature)})`);
         return false;
       }
       // Use function-based replacement to avoid $ special-pattern injection.
@@ -186,7 +186,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
       content = content.replace(input.oldSignature, () => input.newSignature);
       replaced = true;
     } else if (sigCount > 1) {
-      console.warn(`DocSync: updateInlineDoc skipped signature — old signature count is ${sigCount} (expected 1)`);
+      console.warn(`DocRelay: updateInlineDoc skipped signature — old signature count is ${sigCount} (expected 1)`);
     }
     // If count is 0 or >1, skip to avoid replacing wrong text
 
@@ -194,7 +194,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
       content = content.replace(input.oldDocstring, () => input.newDocstring);
       replaced = true;
     } else if (docCount > 1) {
-      console.warn(`DocSync: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
+      console.warn(`DocRelay: updateInlineDoc skipped docstring — old docstring count is ${docCount} (expected 1)`);
     }
 
     // If the signature was supposed to be replaced but was skipped due to
@@ -202,7 +202,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // replacement succeeded. A stale signature paired with a fresh docstring
     // would incorrectly mark the doc as in_sync when it's only partially updated.
     if (replaced && sigCount > 1) {
-      console.warn('DocSync: updateInlineDoc — signature ambiguous, refusing partial update');
+      console.warn('DocRelay: updateInlineDoc — signature ambiguous, refusing partial update');
       return false;
     }
     // If the signature was not found (sigCount === 0) and the caller expected
@@ -211,12 +211,12 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // partially updated (new docstring, stale signature) but permanently marked
     // as in_sync — future scans won't detect the stale signature.
     if (replaced && sigCount === 0 && sigInputEmpty === false) {
-      console.warn('DocSync: updateInlineDoc — signature missing from source, refusing partial update');
+      console.warn('DocRelay: updateInlineDoc — signature missing from source, refusing partial update');
       return false;
     }
 
     if (!replaced) {
-      console.warn(`DocSync: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
+      console.warn(`DocRelay: updateInlineDoc had nothing to replace (sigCount=${sigCount}, docCount=${docCount})`);
       return false;
     }
 
@@ -226,11 +226,11 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // so validation runs whenever a replacement was expected regardless of whether
     // the old count was exactly 1.
     if (sigInputEmpty === false && countOccurrences(content, input.newSignature) !== 1) {
-      console.warn('DocSync: updateInlineDoc post-validation failed — new signature count != 1');
+      console.warn('DocRelay: updateInlineDoc post-validation failed — new signature count != 1');
       return false;
     }
     if (docInputEmpty === false && countOccurrences(content, input.newDocstring) !== 1) {
-      console.warn('DocSync: updateInlineDoc post-validation failed — new docstring count != 1');
+      console.warn('DocRelay: updateInlineDoc post-validation failed — new docstring count != 1');
       return false;
     }
   }
@@ -238,12 +238,12 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
   // Atomic write: use project-local temp directory with restrictive permissions.
   // Prefer local over os.tmpdir() to stay within the project's permission boundary
   // and avoid cross-filesystem EXDEV errors from rename().
-  const tmpDir = path.join(projectRoot, '.docsync', 'tmp');
+  const tmpDir = path.join(projectRoot, '.docrelay', 'tmp');
   try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch {
-    console.warn('DocSync: updateInlineDoc failed — could not create temp directory:', tmpDir);
+    console.warn('DocRelay: updateInlineDoc failed — could not create temp directory:', tmpDir);
     return false;
   }
-  const tmpPath = path.join(tmpDir, `docsync-${crypto.randomUUID()}.tmp`);
+  const tmpPath = path.join(tmpDir, `docrelay-${crypto.randomUUID()}.tmp`);
   // Capture original file mode before rename replaces the inode
   let originalMode: number | undefined;
   try { originalMode = fs.statSync(resolved).mode; } catch { /* proceed without mode */ }
@@ -258,7 +258,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     }
   } catch (err: any) {
     try { fs.unlinkSync(tmpPath); } catch {}
-    console.warn('DocSync: updateInlineDoc atomic write failed:', err?.message ?? err);
+    console.warn('DocRelay: updateInlineDoc atomic write failed:', err?.message ?? err);
     return false;
   }
 
@@ -466,7 +466,7 @@ function replacePythonDocstring(
   // Verify the old docstring matches what's actually in the file
   if (existing !== oldDocstring) {
     console.warn(
-      `DocSync: replacePythonDocstring — old docstring mismatch.\n` +
+      `DocRelay: replacePythonDocstring — old docstring mismatch.\n` +
       `  expected: ${oldDocstring.slice(0, 80)}...\n` +
       `  found:    ${existing.slice(0, 80)}...`,
     );
@@ -544,7 +544,7 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   } catch (err: any) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code && code !== 'ENOENT') {
-      console.warn(`DocSync: extractDocstring failed for ${resolved}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: extractDocstring failed for ${resolved}:`, err instanceof Error ? err.message : err);
     }
     return null;
   } finally {
@@ -921,7 +921,7 @@ export function generateUpdatedDocstring(
   if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) {
     lines.length = 0;
     lines.push('/**');
-    lines.push(` * ${symbolName} — [auto-updated by DocSync]`);
+    lines.push(` * ${symbolName} — [auto-updated by DocRelay]`);
   } else {
     // Insert the opening /** before the preserved narrative
     lines.unshift('/**');

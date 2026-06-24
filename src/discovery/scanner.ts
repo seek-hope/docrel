@@ -1,7 +1,7 @@
 // src/discovery/scanner.ts
 import type Database from 'better-sqlite3';
 import type { SymbolExtractor } from '../extractors/interface.js';
-import type { DocSyncConfig } from '../utils/config.js';
+import type { DocRelayConfig } from '../utils/config.js';
 import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
 import { symbolId, contentHash } from '../utils/hash.js';
 import { assertDbOpen } from '../db/connection.js';
@@ -14,7 +14,7 @@ function escFqn(s: string): string {
 
 import { createProgressReporter } from '../utils/progress.js';
 
-/** Codegraph symbol kind → canonical DocSync kind mapping (module-level). */
+/** Codegraph symbol kind → canonical DocRelay kind mapping (module-level). */
 const KIND_MAP: Record<string, ReturnType<typeof mapKind>> = {
   function: 'function', method: 'function', func: 'function',
   class: 'class', struct: 'class',
@@ -29,7 +29,7 @@ export interface ScanReport {
   newSymbols: number;
   updatedSymbols: number;
   failedDirs: string[];
-  /** All symbol IDs that were found during this scan. Used by `docsync gc` to
+  /** All symbol IDs that were found during this scan. Used by `docrelay gc` to
    *  identify symbols that existed in the database but were not re-discovered. */
   scannedIds: string[];
 }
@@ -37,14 +37,14 @@ export interface ScanReport {
 export async function scanProject(
   extractor: SymbolExtractor,
   db: Database.Database,
-  config: DocSyncConfig,
+  config: DocRelayConfig,
   projectRoot: string,
   fullScan = true,
 ): Promise<ScanReport> {
   assertDbOpen(db);
   const failedDirs: string[] = [];
   if (config.code_dirs.length === 0) {
-    console.warn('Warning: No code directories configured. Set code_dirs in .docsync/config.yaml');
+    console.warn('Warning: No code directories configured. Set code_dirs in .docrelay/config.yaml');
     return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs, scannedIds: [] };
   }
 
@@ -74,7 +74,7 @@ export async function scanProject(
       const reportProgress = createProgressReporter(symbols.length, `Scanning ${codeDir}`);
       for (const sym of symbols) {
         reportProgress(++symIdx);
-        // Skip symbols whose source file matches a .docsyncignore pattern
+        // Skip symbols whose source file matches a .docrelayignore pattern
         if (isIgnored(sym.file, projectRoot)) continue;
 
         // Wrap per-symbol processing in its own try/catch to prevent a single
@@ -82,7 +82,7 @@ export async function scanProject(
         // response) from aborting the entire directory's scan.
         try {
           if (++dirSymbolCount > MAX_SYMBOLS_PER_DIR) {
-            console.warn(`DocSync: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
+            console.warn(`DocRelay: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
             break;
           }
           const lang = sym.language;
@@ -126,7 +126,7 @@ export async function scanProject(
               signature: sig,
               raw_signature: rawSig,
             });
-            // Record changelog entry so docsyncDiff and the changelog table
+            // Record changelog entry so docrelayDiff and the changelog table
             // surface what changed between scans.
             const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig);
             if (logged) {
@@ -140,7 +140,7 @@ export async function scanProject(
               const inserted = db.transaction(() => {
                 const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
                 if (!stillExists) {
-                  console.warn(`DocSync: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
+                  console.warn(`DocRelay: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
                   return false;
                 }
                 db.prepare(
@@ -150,12 +150,12 @@ export async function scanProject(
               })();
               if (inserted) {
                 updatedSymbols++;
-                console.warn(`DocSync: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
+                console.warn(`DocRelay: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
               }
             }
           }
         } catch (e: any) {
-          console.warn(`DocSync: skipping malformed symbol in '${codeDir}': ${e?.message ?? e}`);
+          console.warn(`DocRelay: skipping malformed symbol in '${codeDir}': ${e?.message ?? e}`);
           // continue to next symbol — individual failures do not abort the directory
         }
       }
@@ -167,7 +167,7 @@ export async function scanProject(
       // responses that include warnings from this scan.
       const rawMsg = err instanceof Error ? err.message : String(err);
       const sanitized = rawMsg.replace(/\/[^\s:,)]{20,}/g, '...').slice(0, 200);
-      console.warn(`DocSync: Failed to scan directory '${safeName}': ${sanitized}`);
+      console.warn(`DocRelay: Failed to scan directory '${safeName}': ${sanitized}`);
     }
   }
 
@@ -203,7 +203,7 @@ export async function scanProject(
 function mapKind(kind: string): 'function' | 'class' | 'module' | 'api_endpoint' | 'type' | 'interface' | 'variable' | 'unknown' {
   const mapped = KIND_MAP[kind.toLowerCase()];
   if (!mapped) {
-    console.warn(`DocSync: Unknown symbol kind '${kind}' — storing as 'unknown'`);
+    console.warn(`DocRelay: Unknown symbol kind '${kind}' — storing as 'unknown'`);
     return 'unknown';
   }
   return mapped;

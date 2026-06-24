@@ -193,10 +193,10 @@ function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
   `).all() as UnreviewedMapping[];
 }
 
-export function docsyncReview(db: Database.Database, projectRoot: string): ReviewReport {
+export function docrelayReview(db: Database.Database, projectRoot: string): ReviewReport {
   // F19: Wrap the body in try/catch to handle DB errors, corrupted state,
   // and I/O exceptions from findImplied — matching the defensive pattern
-  // used in docsyncStatus, docsyncCheck, and other tool functions.
+  // used in docrelayStatus, docrelayCheck, and other tool functions.
   try {
     assertDbOpen(db);
     const unlinkedSymbols = findUnlinked(db);
@@ -226,7 +226,7 @@ export function docsyncReview(db: Database.Database, projectRoot: string): Revie
     };
   } catch (err: any) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error('DocSync: docsyncReview failed:', msg);
+    console.error('DocRelay: docrelayReview failed:', msg);
     return {
       unlinkedSymbols: [],
       orphanedSections: [],
@@ -250,7 +250,7 @@ export function formatReview(report: ReviewReport): string {
   const lines: string[] = [];
   const { summary } = report;
 
-  lines.push('## DocSync Review');
+  lines.push('## DocRelay Review');
   lines.push('');
   lines.push(`Symbols: ${summary.linkedSymbols}/${summary.totalSymbols} linked, ${summary.unlinkedCount} unlinked`);
   lines.push('');
@@ -330,7 +330,7 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
   const lines: string[] = [];
   const w = 70; // column width
 
-  lines.push('## DocSync Review — Detailed');
+  lines.push('## DocRelay Review — Detailed');
   lines.push('');
 
   if (report.unreviewedMappings.length > 0) {
@@ -363,7 +363,7 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
 
       lines.push(`\`\`\`${'─'.repeat(w)}┴${'─'.repeat(w)}\`\`\``);
       lines.push('');
-      lines.push(`→ \`docsync confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docsync reject --symbol ${m.symbolId} --doc ${m.docId}\``);
+      lines.push(`→ \`docrelay confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docrelay reject --symbol ${m.symbolId} --doc ${m.docId}\``);
       lines.push('');
     }
   }

@@ -2,7 +2,7 @@
  * Agent integration — config generation for each supported agent.
  *
  * Generates rules-file sections, MCP server configuration, and shell wrappers
- * so that DocSync is automatically available in the user's coding agent.
+ * so that DocRelay is automatically available in the user's coding agent.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,58 +15,58 @@ export interface IntegrationResult {
 }
 
 // ── MCP server entry for .mcp.json ───────────────────────────────────
-const DOCSYNC_MCP_ENTRY = {
-  docsync: {
+const DOCRELAY_MCP_ENTRY = {
+  docrelay: {
     command: 'npx',
-    args: ['docsync'],
+    args: ['docrelay'],
   },
 };
 
 // ── CLAUDE.md section ────────────────────────────────────────────────
-const CLAUDE_DOCSYNC_SECTION = `
+const CLAUDE_DOCRELAY_SECTION = `
 
-## DocSync — Code-Documentation Sync
+## DocRelay — Code-Documentation Sync
 
-DocSync tracks code symbols and their linked documentation, keeping everything
+DocRelay tracks code symbols and their linked documentation, keeping everything
 in sync as the codebase evolves.
 
 ### SessionStart
-Run \`docsync status\` at the beginning of each session to see current
+Run \`docrelay status\` at the beginning of each session to see current
 documentation health (symbols tracked, docs linked, stale docs).
 
 ### PostToolUse
 After using Edit or Write tools, consider whether the change affects
-documentation. Run \`docsync impact <changed-file>\` to see which doc sections
+documentation. Run \`docrelay impact <changed-file>\` to see which doc sections
 reference the modified code.
 
 ### Available MCP Tools
 | Tool | Purpose |
 |------|---------|
-| \`docsync_status\` | Overall health dashboard (symbols, docs, sync %) |
-| \`docsync_check\` | Find stale documentation sections |
-| \`docsync_impact\` | Show docs affected by changed files |
-| \`docsync_sync\` | Sync docs for a specific symbol |
-| \`docsync_link\` | Create or delete symbol-to-doc mappings |
-| \`docsync_diff\` | Show change history for a symbol |
-| \`docsync_scan\` | Rescan codebase and re-link docs |
+| \`docrelay_status\` | Overall health dashboard (symbols, docs, sync %) |
+| \`docrelay_check\` | Find stale documentation sections |
+| \`docrelay_impact\` | Show docs affected by changed files |
+| \`docrelay_sync\` | Sync docs for a specific symbol |
+| \`docrelay_link\` | Create or delete symbol-to-doc mappings |
+| \`docrelay_diff\` | Show change history for a symbol |
+| \`docrelay_scan\` | Rescan codebase and re-link docs |
 
 ### CLI Quick Reference
 \`\`\`
-docsync status              # Health dashboard
-docsync check               # Find stale docs
-docsync check --strict      # Exit 1 if any stale docs
-docsync impact src/foo.ts   # What docs are affected?
-docsync sync --symbol <id>  # Sync docs for a symbol
-docsync scan                # Rescan codebase
+docrelay status              # Health dashboard
+docrelay check               # Find stale docs
+docrelay check --strict      # Exit 1 if any stale docs
+docrelay impact src/foo.ts   # What docs are affected?
+docrelay sync --symbol <id>  # Sync docs for a symbol
+docrelay scan                # Rescan codebase
 \`\`\`
 `;
 
 // ── OPENCODE.md section ──────────────────────────────────────────────
-const OPENCODE_DOCSYNC_SECTION = `
+const OPENCODE_DOCRELAY_SECTION = `
 
-## DocSync — Code-Documentation Sync
+## DocRelay — Code-Documentation Sync
 
-DocSync tracks code symbols and their linked documentation. Add it as an MCP
+DocRelay tracks code symbols and their linked documentation. Add it as an MCP
 server to get documentation health tools in your OpenCode session.
 
 ### MCP Configuration
@@ -74,9 +74,9 @@ Add this to your \`.mcp.json\`:
 \`\`\`json
 {
   "mcpServers": {
-    "docsync": {
+    "docrelay": {
       "command": "npx",
-      "args": ["docsync"]
+      "args": ["docrelay"]
     }
   }
 }
@@ -84,42 +84,42 @@ Add this to your \`.mcp.json\`:
 
 ### CLI Quick Reference
 \`\`\`
-docsync status              # Health dashboard
-docsync check               # Find stale docs
-docsync check --strict      # Exit 1 if any stale docs
-docsync impact src/foo.ts   # What docs are affected?
-docsync sync --symbol <id>  # Sync docs for a symbol
-docsync scan                # Rescan codebase
+docrelay status              # Health dashboard
+docrelay check               # Find stale docs
+docrelay check --strict      # Exit 1 if any stale docs
+docrelay impact src/foo.ts   # What docs are affected?
+docrelay sync --symbol <id>  # Sync docs for a symbol
+docrelay scan                # Rescan codebase
 \`\`\`
 `;
 
 // ── Oh My Pi section ─────────────────────────────────────────────────
-const PI_DOCSYNC_SECTION = `# DocSync — Code-Documentation Sync
+const PI_DOCRELAY_SECTION = `# DocRelay — Code-Documentation Sync
 
-DocSync keeps your code symbols and documentation in sync.
+DocRelay keeps your code symbols and documentation in sync.
 
 ## Shell Alias (recommended)
 Add this to your shell profile (~/.zshrc or ~/.bashrc):
 
 \`\`\`sh
-alias docsync='npx docsync'
+alias docrelay='npx docrelay'
 \`\`\`
 
 ## Commands
 | Command | Purpose |
 |---------|---------|
-| \`docsync status\` | Health dashboard |
-| \`docsync check\` | Find stale docs |
-| \`docsync check --strict\` | Exit 1 if any stale |
-| \`docsync impact <file>\` | Docs affected by change |
-| \`docsync sync --symbol <id>\` | Sync docs for symbol |
-| \`docsync scan\` | Rescan codebase |
+| \`docrelay status\` | Health dashboard |
+| \`docrelay check\` | Find stale docs |
+| \`docrelay check --strict\` | Exit 1 if any stale |
+| \`docrelay impact <file>\` | Docs affected by change |
+| \`docrelay sync --symbol <id>\` | Sync docs for symbol |
+| \`docrelay scan\` | Rescan codebase |
 `;
 
 // ── Generic instructions (unknown agent) ─────────────────────────────
-const GENERIC_INSTRUCTIONS = `# DocSync Agent Integration
+const GENERIC_INSTRUCTIONS = `# DocRelay Agent Integration
 
-DocSync is a code-documentation relational sync system. It tracks symbols
+DocRelay is a code-documentation relational sync system. It tracks symbols
 (function, classes, etc.) and their linked documentation, keeping them in
 sync as the codebase changes.
 
@@ -130,9 +130,9 @@ Add this to your MCP configuration:
 \`\`\`json
 {
   "mcpServers": {
-    "docsync": {
+    "docrelay": {
       "command": "npx",
-      "args": ["docsync"]
+      "args": ["docrelay"]
     }
   }
 }
@@ -140,33 +140,33 @@ Add this to your MCP configuration:
 
 ### 2. Shell Alias
 \`\`\`sh
-alias docsync='npx docsync'
+alias docrelay='npx docrelay'
 \`\`\`
 
 ### 3. Recommended Workflow
-- At session start, run \`docsync status\` to see documentation health
-- After code changes, run \`docsync impact <file>\` to check affected docs
-- Run \`docsync check --strict\` before committing to catch stale docs
+- At session start, run \`docrelay status\` to see documentation health
+- After code changes, run \`docrelay impact <file>\` to check affected docs
+- Run \`docrelay check --strict\` before committing to catch stale docs
 
 ## Available Tools
 | Tool | Purpose |
 |------|---------|
-| \`docsync_status\` | Health dashboard |
-| \`docsync_check\` | Find stale docs |
-| \`docsync_impact\` | Docs affected by changed files |
-| \`docsync_sync\` | Sync docs for a symbol |
-| \`docsync_link\` | Map symbols to docs |
-| \`docsync_diff\` | Change history for a symbol |
-| \`docsync_scan\` | Rescan codebase |
+| \`docrelay_status\` | Health dashboard |
+| \`docrelay_check\` | Find stale docs |
+| \`docrelay_impact\` | Docs affected by changed files |
+| \`docrelay_sync\` | Sync docs for a symbol |
+| \`docrelay_link\` | Map symbols to docs |
+| \`docrelay_diff\` | Change history for a symbol |
+| \`docrelay_scan\` | Rescan codebase |
 
 ## CLI Commands
 \`\`\`
-docsync status              # Health dashboard
-docsync check               # Find stale docs
-docsync check --strict      # Exit 1 if stale (good for CI)
-docsync impact src/foo.ts   # Impact analysis
-docsync sync --symbol <id>  # Sync docs
-docsync scan                # Rescan
+docrelay status              # Health dashboard
+docrelay check               # Find stale docs
+docrelay check --strict      # Exit 1 if stale (good for CI)
+docrelay impact src/foo.ts   # Impact analysis
+docrelay sync --symbol <id>  # Sync docs
+docrelay scan                # Rescan
 \`\`\`
 `;
 
@@ -210,7 +210,7 @@ function upsertMcpJson(projectRoot: string): boolean {
       mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
     } catch (err: any) {
       if (fs.existsSync(mcpPath)) {
-        console.warn(`DocSync: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
+        console.warn(`DocRelay: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
       }
       mcpConfig = {};
     }
@@ -222,9 +222,9 @@ function upsertMcpJson(projectRoot: string): boolean {
     mcpConfig.mcpServers = {};
   }
 
-  if (mcpConfig.mcpServers.docsync) return false; // already present
+  if (mcpConfig.mcpServers.docrelay) return false; // already present
 
-  mcpConfig.mcpServers.docsync = DOCSYNC_MCP_ENTRY.docsync;
+  mcpConfig.mcpServers.docrelay = DOCRELAY_MCP_ENTRY.docrelay;
   fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n', 'utf-8');
   return true;
 }
@@ -238,7 +238,7 @@ function integrateClaudeCode(
   rulesFileName: string = 'CLAUDE.md',
 ): IntegrationResult {
   const files: string[] = [];
-  const CLAUDE_SECTION_MARKER = '## DocSync — Code-Documentation Sync';
+  const CLAUDE_SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
 
   // Prefer project-root rules file; fall back to .claude/<rulesFile>
   const rootRules = path.join(projectRoot, rulesFileName);
@@ -246,7 +246,7 @@ function integrateClaudeCode(
   const rulesPath = fs.existsSync(rootRules) ? rootRules : dotRules;
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, CLAUDE_DOCSYNC_SECTION, CLAUDE_SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, CLAUDE_DOCRELAY_SECTION, CLAUDE_SECTION_MARKER);
     if (added) files.push(rulesPath);
 
     const mcpAdded = upsertMcpJson(projectRoot);
@@ -261,7 +261,7 @@ function integrateClaudeCode(
     let hasDocrel = false;
     try {
       const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docsync);
+      hasDocrel = !!(m.mcpServers?.docrelay);
     } catch { /* missing or invalid */ }
     if (!hasDocrel) files.push(mcpPath);
   }
@@ -278,11 +278,11 @@ function integrateClaudeCode(
 
 function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationResult {
   const files: string[] = [];
-  const SECTION_MARKER = '## DocSync — Code-Documentation Sync';
+  const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
   const rulesPath = path.join(projectRoot, 'OPENCODE.md');
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, OPENCODE_DOCSYNC_SECTION, SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, OPENCODE_DOCRELAY_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
 
     const mcpAdded = upsertMcpJson(projectRoot);
@@ -296,7 +296,7 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
     let hasDocrel = false;
     try {
       const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docsync);
+      hasDocrel = !!(m.mcpServers?.docrelay);
     } catch { /* missing or invalid */ }
     if (!hasDocrel) files.push(mcpPath);
   }
@@ -312,11 +312,11 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
 
 function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentKind = 'oh-my-pi'): IntegrationResult {
   const files: string[] = [];
-  const SECTION_MARKER = '# DocSync — Code-Documentation Sync';
-  const rulesPath = path.join(projectRoot, '.pi', 'docsync.md');
+  const SECTION_MARKER = '# DocRelay — Code-Documentation Sync';
+  const rulesPath = path.join(projectRoot, '.pi', 'docrelay.md');
 
   if (!dryRun) {
-    const added = appendToRulesFile(rulesPath, PI_DOCSYNC_SECTION, SECTION_MARKER);
+    const added = appendToRulesFile(rulesPath, PI_DOCRELAY_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
   } else {
     let existing = '';
@@ -336,7 +336,7 @@ function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentK
 
 function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResult {
   const files: string[] = [];
-  const outPath = path.join(projectRoot, '.docsync', 'agent-instructions.md');
+  const outPath = path.join(projectRoot, '.docrelay', 'agent-instructions.md');
 
   if (!dryRun) {
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -360,7 +360,7 @@ function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResu
 // ── Main entry point ─────────────────────────────────────────────────
 
 /**
- * Generate agent-specific config files so DocSync integrates with the user's
+ * Generate agent-specific config files so DocRelay integrates with the user's
  * coding agent. Pass `agent` to force a specific kind, or omit it to
  * auto-detect. Pass `dryRun: true` to preview without writing files.
  */

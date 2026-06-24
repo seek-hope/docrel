@@ -9,7 +9,7 @@ describe('getDb', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
   });
 
@@ -18,9 +18,9 @@ describe('getDb', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('creates docsync.db inside .git directory', () => {
+  it('creates docrelay.db inside .git directory', () => {
     const db = getDb(tmpDir);
-    expect(fs.existsSync(path.join(tmpDir, '.git', 'docsync.db'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, '.git', 'docrelay.db'))).toBe(true);
   });
 
   it('returns the same connection on repeated calls', () => {
@@ -46,7 +46,7 @@ describe('runMigrations', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
   });
 

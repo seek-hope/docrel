@@ -34,7 +34,7 @@ function detectLanguage(file: string): string {
 function mapKind(kind: string): ExtractedSymbol['kind'] {
   const mapped = CODEGRAPH_KIND_MAP[kind.toLowerCase()];
   if (!mapped) {
-    console.warn(`DocSync: CodegraphExtractor received unknown symbol kind '${kind}' — defaulting to 'function'. Codegraph may have added new symbol types.`);
+    console.warn(`DocRelay: CodegraphExtractor received unknown symbol kind '${kind}' — defaulting to 'function'. Codegraph may have added new symbol types.`);
     return 'function';
   }
   return mapped;

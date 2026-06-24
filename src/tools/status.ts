@@ -14,7 +14,7 @@ export interface StatusReport {
   error?: string;
 }
 
-export function docsyncStatus(db: Database.Database): StatusReport {
+export function docrelayStatus(db: Database.Database): StatusReport {
   try {
     assertDbOpen(db);
     return db.transaction(() => {
@@ -55,7 +55,7 @@ export function docsyncStatus(db: Database.Database): StatusReport {
       };
     })();
   } catch (err: any) {
-    console.error('docsyncStatus failed:', err);
+    console.error('docrelayStatus failed:', err);
     return {
       totalSymbols: 0, linkedSymbols: 0, linkedPercentage: 0,
       syncedDocs: 0, staleDocs: 0, totalDocs: 0,

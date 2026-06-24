@@ -1,11 +1,11 @@
 {
-  "name": "@seek_hope/docsync",
-  "version": "0.1.1",
-  "description": "Code-Documentation Relational Sync System",
+  "name": "doc-relay",
+  "version": "0.1.0",
+  "description": "Forge and maintain living connections between code symbols and documentation",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "docsync": "dist/cli.js"
+    "doc-relay": "dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

@@ -107,7 +107,7 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
     realDir = fs.realpathSync(absDir);
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`DocSync: cannot resolve code directory ${absDir}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: cannot resolve code directory ${absDir}:`, err instanceof Error ? err.message : err);
     }
     return result;
   }
@@ -118,9 +118,9 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   } catch (err: any) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ENOENT') {
-      console.warn(`DocSync: code directory not found: ${absDir}`);
+      console.warn(`DocRelay: code directory not found: ${absDir}`);
     } else {
-      console.warn(`DocSync: cannot access code directory ${absDir}: ${err instanceof Error ? err.message : err} (${code ?? 'unknown'})`);
+      console.warn(`DocRelay: cannot access code directory ${absDir}: ${err instanceof Error ? err.message : err} (${code ?? 'unknown'})`);
     }
     return result;
   }
@@ -135,7 +135,7 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
     } catch (err: any) {
-      console.warn(`DocSync: cannot read directory ${current}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: cannot read directory ${current}:`, err instanceof Error ? err.message : err);
       continue;
     }
     for (const entry of entries) {
@@ -170,7 +170,7 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
     if (!realPath.startsWith(root + path.sep) && realPath !== root) return [];
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`DocSync: cannot resolve source file ${filePath}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: cannot resolve source file ${filePath}:`, err instanceof Error ? err.message : err);
     }
     return [];
   }
@@ -179,7 +179,7 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
     content = fs.readFileSync(realPath, 'utf-8');
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-      console.warn(`DocSync: cannot read source file ${realPath}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: cannot read source file ${realPath}:`, err instanceof Error ? err.message : err);
     }
     return [];
   }

@@ -48,7 +48,7 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
   } catch (err: any) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code && code !== 'ENOENT') {
-      console.warn(`DocSync: openAndValidate failed for ${resolved}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: openAndValidate failed for ${resolved}:`, err instanceof Error ? err.message : err);
     }
     return null;
   } finally {
@@ -96,9 +96,9 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   content = content.replace(sectionContent, () => updatedSection);
 
   // Atomic write: use project-local temp directory with restrictive permissions
-  const tmpDir = path.join(projectRoot, '.docsync', 'tmp');
+  const tmpDir = path.join(projectRoot, '.docrelay', 'tmp');
   try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch (err: any) { return { success: false, reason: `could not create temp directory: ${(err as NodeJS.ErrnoException)?.code ?? 'unknown'}` }; }
-  const tmpPath = path.join(tmpDir, `docsync-${crypto.randomUUID()}.tmp`);
+  const tmpPath = path.join(tmpDir, `docrelay-${crypto.randomUUID()}.tmp`);
   // Capture original file mode before rename replaces the inode
   let originalMode: number | undefined;
   try { originalMode = fs.statSync(resolved).mode; } catch { /* proceed without mode */ }
@@ -149,7 +149,7 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
     // diagnostic instead of silently returning null.
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'EACCES' || code === 'EIO' || code === 'ELOOP' || code === 'ENAMETOOLONG') {
-      console.warn(`DocSync: cannot resolve real path for ${path.relative(root, resolved)} — ${code}`);
+      console.warn(`DocRelay: cannot resolve real path for ${path.relative(root, resolved)} — ${code}`);
     }
     return null;
   }
@@ -185,7 +185,7 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
   } catch (err: any) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code && code !== 'ENOENT') {
-      console.warn(`DocSync: findSectionContent failed for ${file}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: findSectionContent failed for ${file}:`, err instanceof Error ? err.message : err);
     }
     return null;
   } finally {
@@ -204,7 +204,7 @@ const MAX_ANCHOR_LENGTH = 1000;
 export function findSectionContentFromString(content: string, anchor: string): string | null {
   if (!anchor) return null;
   if (anchor.length > MAX_ANCHOR_LENGTH) {
-    console.warn(`DocSync: anchor rejected — length ${anchor.length} exceeds max ${MAX_ANCHOR_LENGTH}`);
+    console.warn(`DocRelay: anchor rejected — length ${anchor.length} exceeds max ${MAX_ANCHOR_LENGTH}`);
     return null;
   }
 

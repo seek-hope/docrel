@@ -276,7 +276,7 @@ function tryCreateMapping(
     if ((err as any)?.code?.startsWith('SQLITE_CONSTRAINT')) {
       // expected — mapping already exists, skip
     } else {
-      console.warn('DocSync: autoLink createMapping failed:', err instanceof Error ? err.message : err);
+      console.warn('DocRelay: autoLink createMapping failed:', err instanceof Error ? err.message : err);
     }
     return false;
   }
@@ -286,7 +286,7 @@ function tryCreateMapping(
 function tryDocSectionId(section: ParsedDocSection): string | null {
   const docId = docSectionId(section.file, section.anchor);
   if (!docId) {
-    console.warn(`DocSync: autoLink — could not compute docSectionId for ${section.file}#${section.anchor}`);
+    console.warn(`DocRelay: autoLink — could not compute docSectionId for ${section.file}#${section.anchor}`);
   }
   return docId || null;
 }
@@ -330,7 +330,7 @@ export function autoLink(
 
   for (const symbol of symbols) {
     if (timedOut()) {
-      console.warn(`DocSync: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results.`);
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results.`);
       return {
         totalMatched: counters.high + counters.medium + counters.low,
         highConfidence: counters.high,
@@ -361,7 +361,7 @@ export function autoLink(
     if (linkedSymbolIds.has(symbol.id)) continue;
 
     if (timedOut()) {
-      console.warn(`DocSync: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
       break;
     }
 
@@ -394,8 +394,8 @@ export interface IngestResult {
  * create mappings for code references that match known symbols. This is the
  * shared pipeline used by MCP scan, MCP refresh, CLI scan, and file watcher.
  *
- * Extracted from the 3 duplicate implementations in index.ts (docsync_scan,
- * docsync_refresh) and cli.ts (scan command) — now a single source of truth.
+ * Extracted from the 3 duplicate implementations in index.ts (docrelay_scan,
+ * docrelay_refresh) and cli.ts (scan command) — now a single source of truth.
  */
 export function ingestDocSections(
   db: Database.Database,

@@ -87,7 +87,7 @@ describe('detectAgent', () => {
     expect(result.name).toBe('Oh My Pi');
     expect(result.mcpSupported).toBe(false);
     expect(result.hooksSupported).toBe(false);
-    expect(result.rulesFile).toBe('.pi/docsync.md');
+    expect(result.rulesFile).toBe('.pi/docrelay.md');
     expect(result.sessionId).toBe('pi-1');
   });
 

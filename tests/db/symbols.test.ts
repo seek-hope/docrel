@@ -66,7 +66,7 @@ describe('symbols CRUD', () => {
   };
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);

@@ -9,7 +9,7 @@ describe('updateInlineDoc', () => {
   let testFile: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-inline-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-inline-'));
     testFile = path.join(tmpDir, 'test.ts');
   });
 
@@ -72,7 +72,7 @@ describe('extractDocstring', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-extract-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-extract-'));
   });
 
   afterEach(() => {
@@ -111,7 +111,7 @@ describe('multi-language extractDocstring', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-multi-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-multi-'));
   });
 
   afterEach(() => {
@@ -251,7 +251,7 @@ describe('multi-language updateInlineDoc', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-upd-multi-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-upd-multi-'));
   });
 
   afterEach(() => {
@@ -429,7 +429,7 @@ describe('generateUpdatedDocstring', () => {
     );
 
     expect(result).toContain('/**');
-    expect(result).toContain('login — [auto-updated by DocSync]');
+    expect(result).toContain('login — [auto-updated by DocRelay]');
     expect(result).toContain('@param username — string');
     expect(result).toContain('@param password — string');
     expect(result).toContain('@returns {boolean}');

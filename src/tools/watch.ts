@@ -1,7 +1,7 @@
 // src/tools/watch.ts — file watcher for non-agent scenarios
 import type Database from 'better-sqlite3';
 import type { SymbolExtractor } from '../extractors/interface.js';
-import type { DocSyncConfig } from '../utils/config.js';
+import type { DocRelayConfig } from '../utils/config.js';
 import { scanProject } from '../discovery/scanner.js';
 import { scanDocs } from '../discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from '../discovery/auto-linker.js';
@@ -51,7 +51,7 @@ export async function startWatch(
   projectRoot: string,
   db: Database.Database,
   extractor: SymbolExtractor,
-  config: DocSyncConfig,
+  config: DocRelayConfig,
   opts: WatchOptions = {},
 ): Promise<() => void> {
   const debounceMs = opts.debounceMs ?? 500;
@@ -72,14 +72,14 @@ export async function startWatch(
     }
 
     if (watchPaths.length === 0) {
-      console.error('No directories to watch. Set code_dirs and doc_dirs in .docsync/config.yaml');
+      console.error('No directories to watch. Set code_dirs and doc_dirs in .docrelay/config.yaml');
       return () => {};
     }
 
     // Daemon mode: write PID file for process management
     let pidFile: string | undefined;
     if (opts.daemon) {
-      const pidDir = path.join(projectRoot, '.docsync');
+      const pidDir = path.join(projectRoot, '.docrelay');
       try { fs.mkdirSync(pidDir, { recursive: true, mode: 0o700 }); } catch { /* ok */ }
       pidFile = path.join(pidDir, 'watch.pid');
       fs.writeFileSync(pidFile, String(process.pid), { flag: 'w', mode: 0o600 });
@@ -118,7 +118,7 @@ export async function startWatch(
     const handleChange = (eventType: string, filePath: string) => {
       const rel = path.relative(projectRoot, filePath);
 
-      // Skip files matching .docsyncignore patterns
+      // Skip files matching .docrelayignore patterns
       if (isIgnored(rel, projectRoot)) return;
 
       const inCode = config.code_dirs.some(d => rel.startsWith(d));
@@ -158,9 +158,9 @@ export async function startWatch(
           watchStatus.lastError = err instanceof Error ? err.message : String(err);
           console.error(`[${now}] Watch error (${key}): ${err instanceof Error ? err.message : err}`);
 
-          // Write a recovery marker so `docsync status` can surface the failure
+          // Write a recovery marker so `docrelay status` can surface the failure
           try {
-            const markerDir = path.join(projectRoot, '.docsync');
+            const markerDir = path.join(projectRoot, '.docrelay');
             fs.mkdirSync(markerDir, { recursive: true });
             fs.writeFileSync(path.join(markerDir, 'watch-failed'), JSON.stringify({
               at: new Date().toISOString(),
@@ -186,7 +186,7 @@ export async function startWatch(
       console.error(`Watch error: ${err.message}`);
     });
 
-    console.log('DocSync watch is running. Press Ctrl+C to stop.');
+    console.log('DocRelay watch is running. Press Ctrl+C to stop.');
 
     return () => {
       watcher.close();
@@ -196,7 +196,7 @@ export async function startWatch(
         try { fs.unlinkSync(pidFile); } catch { /* already gone */ }
       }
       watchStatus.running = false;
-      console.log('DocSync watch stopped.');
+      console.log('DocRelay watch stopped.');
     };
   } catch (err: any) {
     watchStatus.running = false;
@@ -204,7 +204,7 @@ export async function startWatch(
     if (err?.code === 'ERR_MODULE_NOT_FOUND' || err?.code === 'MODULE_NOT_FOUND') {
       console.error('chokidar is not installed. Run: npm install -g chokidar');
     } else {
-      console.error('DocSync watch failed to start:', err instanceof Error ? err.message : err);
+      console.error('DocRelay watch failed to start:', err instanceof Error ? err.message : err);
     }
     return () => {};
   }

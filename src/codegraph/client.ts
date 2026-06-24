@@ -220,7 +220,7 @@ export class CodegraphClient {
     });
 
     const client = new Client(
-      { name: 'docsync-codegraph-client', version: '0.1.0' },
+      { name: 'docrelay-codegraph-client', version: '0.1.0' },
       { capabilities: {} },
     );
 
@@ -276,7 +276,7 @@ export class CodegraphClient {
       // Log the underlying error for diagnostics, then return false.
       // The empty catch previously swallowed all connection errors,
       // making it impossible to diagnose why codegraph was unavailable.
-      console.warn('DocSync: codegraph isAvailable() failed:', err instanceof Error ? err.message : err);
+      console.warn('DocRelay: codegraph isAvailable() failed:', err instanceof Error ? err.message : err);
       // Bump the generation so any in-flight doConnect discards its result
       this.connectGeneration++;
       if (this.client) {
@@ -409,7 +409,7 @@ export class CodegraphClient {
     const MAX_OUTPUT_LINES = 100_000;
     let lines = content.split('\n');
     if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocSync: explore output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      console.warn(`DocRelay: explore output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
       // F5: Signal truncation to callers so they can warn about potential
       // symbol loss. Continue parsing partial results (better than nothing).
@@ -474,15 +474,15 @@ export class CodegraphClient {
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
       const linesCount = content.split('\n').length;
-      console.warn(`DocSync: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
+      console.warn(`DocRelay: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
     }
     // F18: Warn when only one of symbols/files is empty — partial parse
     // may indicate a codegraph output format change.
     if (content && symbols.length === 0 && files.length > 0) {
-      console.warn(`DocSync: explore parsed ${files.length} files but 0 symbols — codegraph output format may have changed.`);
+      console.warn(`DocRelay: explore parsed ${files.length} files but 0 symbols — codegraph output format may have changed.`);
     }
     if (content && files.length === 0 && symbols.length > 0) {
-      console.warn(`DocSync: explore parsed ${symbols.length} symbols but 0 files — codegraph output format may have changed.`);
+      console.warn(`DocRelay: explore parsed ${symbols.length} symbols but 0 files — codegraph output format may have changed.`);
     }
 
     return { symbols, files, truncated };
@@ -495,7 +495,7 @@ export class CodegraphClient {
     let lines = content.split('\n');
     let truncated = false;
     if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocSync: impact output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      console.warn(`DocRelay: impact output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
       truncated = true;
     }
@@ -522,7 +522,7 @@ export class CodegraphClient {
     let lines = content.split('\n');
     let truncated = false;
     if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocSync: search output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
+      console.warn(`DocRelay: search output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
       lines = lines.slice(0, MAX_OUTPUT_LINES);
       truncated = true;
     }
@@ -545,7 +545,7 @@ export class CodegraphClient {
 function extractTextContent(content: unknown): string {
   if (!Array.isArray(content)) {
     if (content) {
-      console.warn('DocSync: codegraph returned non-array content type:', typeof content);
+      console.warn('DocRelay: codegraph returned non-array content type:', typeof content);
     }
     return '';
   }

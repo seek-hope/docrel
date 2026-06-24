@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { loadConfig } from '../../src/utils/config.js';
-import { docsyncStatus } from '../../src/tools/status.js';
-import { docsyncCheck } from '../../src/tools/check.js';
-import { docsyncLink } from '../../src/tools/link.js';
+import { docrelayStatus } from '../../src/tools/status.js';
+import { docrelayCheck } from '../../src/tools/check.js';
+import { docrelayLink } from '../../src/tools/link.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
@@ -13,14 +13,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-describe('DocSync E2E', () => {
+describe('DocRelay E2E', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-e2e-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-e2e-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
-    fs.mkdirSync(path.join(tmpDir, '.docsync'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
 
     // Copy fixtures
     fs.cpSync(
@@ -61,7 +61,7 @@ describe('DocSync E2E', () => {
     });
 
     // 3. Link them
-    const result = docsyncLink(db, {
+    const result = docrelayLink(db, {
       action: 'create',
       symbol_id: symId,
       doc_id: docId,
@@ -70,19 +70,19 @@ describe('DocSync E2E', () => {
     expect(result.action).toBe('created');
 
     // 4. Status shows linked
-    const status = docsyncStatus(db);
+    const status = docrelayStatus(db);
     expect(status.linkedSymbols).toBe(1);
     expect(status.linkedPercentage).toBe(100);
 
     // 5. Check passes (doc is in_sync)
-    const checkBefore = docsyncCheck(db, true);
+    const checkBefore = docrelayCheck(db, true);
     expect(checkBefore.passed).toBe(true);
 
     // 6. Simulate code change — mark doc stale
     db.prepare("UPDATE doc_sections SET status = 'stale' WHERE id = ?").run(docId);
 
     // 7. Check fails in strict mode
-    const checkAfter = docsyncCheck(db, true);
+    const checkAfter = docrelayCheck(db, true);
     expect(checkAfter.passed).toBe(false);
     expect(checkAfter.staleDocs).toHaveLength(1);
     expect(checkAfter.staleDocs[0].file).toBe('docs/api.md');

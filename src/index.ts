@@ -1,24 +1,24 @@
-// src/index.ts — DocSync MCP Server entry point
+// src/index.ts — DocRelay MCP Server entry point
 import fs from 'node:fs';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { DOCSYNC_VERSION } from './version.js';
+import { DOCRELAY_VERSION } from './version.js';
 import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
-import type { DocSyncConfig } from './utils/config.js';
+import type { DocRelayConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
 import { CodegraphExtractor } from './extractors/codegraph.js';
 import { BuiltinExtractor } from './extractors/builtin.js';
 import type { SymbolExtractor } from './extractors/interface.js';
-import { docsyncStatus } from './tools/status.js';
-import { docsyncCheck } from './tools/check.js';
-import { docsyncImpact } from './tools/impact.js';
+import { docrelayStatus } from './tools/status.js';
+import { docrelayCheck } from './tools/check.js';
+import { docrelayImpact } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
-import { docsyncLink } from './tools/link.js';
-import { docsyncDiff } from './tools/diff.js';
+import { docrelayLink } from './tools/link.js';
+import { docrelayDiff } from './tools/diff.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
@@ -27,32 +27,32 @@ import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
 
-const DOCSYNC_DEBUG = process.env.DOCSYNC_DEBUG === '1' || process.env.DOCSYNC_DEBUG === 'true';
+const DOCRELAY_DEBUG = process.env.DOCRELAY_DEBUG === '1' || process.env.DOCRELAY_DEBUG === 'true';
 
 /** Sanitize an error for MCP client responses. Logs the full error to stderr
  *  and returns a generic message that does not disclose internal paths or details. */
 function sanitizeError(err: unknown): string {
-  console.error('DocSync MCP tool error:', err instanceof Error ? err.message : err);
-  if (DOCSYNC_DEBUG && err instanceof Error && err.stack) {
-    console.error('DocSync MCP tool error (debug stack):', err.stack);
+  console.error('DocRelay MCP tool error:', err instanceof Error ? err.message : err);
+  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
+    console.error('DocRelay MCP tool error (debug stack):', err.stack);
   }
   return 'Internal error — check server logs.';
 }
 
-const projectRoot = process.env.DOCSYNC_PROJECT_ROOT ?? process.cwd();
+const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
-// When DOCSYNC_PROJECT_ROOT is not set, verify .docsync/config.yaml exists in CWD.
+// When DOCRELAY_PROJECT_ROOT is not set, verify .docrelay/config.yaml exists in CWD.
 // If it does not, the MCP server will initialize against the wrong directory
 // (silently creating a DB in a random location).
-if (!process.env.DOCSYNC_PROJECT_ROOT) {
-  if (!fs.existsSync(path.join(projectRoot, '.docsync', 'config.yaml'))) {
-    console.error('DocSync: DOCSYNC_PROJECT_ROOT not set and .docsync/config.yaml not found in CWD.');
-    console.error('Set DOCSYNC_PROJECT_ROOT or run from the project root directory.');
+if (!process.env.DOCRELAY_PROJECT_ROOT) {
+  if (!fs.existsSync(path.join(projectRoot, '.docrelay', 'config.yaml'))) {
+    console.error('DocRelay: DOCRELAY_PROJECT_ROOT not set and .docrelay/config.yaml not found in CWD.');
+    console.error('Set DOCRELAY_PROJECT_ROOT or run from the project root directory.');
     process.exit(1);
   }
 }
 
-let config: DocSyncConfig;
+let config: DocRelayConfig;
 let db: ReturnType<typeof getDb>;
 let extractor: SymbolExtractor;
 let codegraph: CodegraphClient;
@@ -67,23 +67,23 @@ try {
   // Try codegraph; fall back to builtin regex-based extraction
   extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
-  console.error('Failed to initialize DocSync:', err.message);
+  console.error('Failed to initialize DocRelay:', err.message);
   try { closeAllDbs(); } catch {}
   process.exit(1);
 }
 
 const server = new McpServer({
-  name: 'docsync',
-  version: DOCSYNC_VERSION,
+  name: 'docrelay',
+  version: DOCRELAY_VERSION,
 });
 
-// ── docsync_status ──────────────────────────────────────────────
+// ── docrelay_status ──────────────────────────────────────────────
 server.tool(
-  'docsync_status',
+  'docrelay_status',
   'Get the overall health dashboard of code-documentation synchronization',
   async () => {
     try {
-      const status = docsyncStatus(db);
+      const status = docrelayStatus(db);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
       };
@@ -93,9 +93,9 @@ server.tool(
   },
 );
 
-// ── docsync_check ───────────────────────────────────────────────
+// ── docrelay_check ───────────────────────────────────────────────
 server.tool(
-  'docsync_check',
+  'docrelay_check',
   'Check for stale documentation. Use strict=true to fail on any stale docs.',
   {
     strict: z.boolean().optional().default(false),
@@ -103,7 +103,7 @@ server.tool(
   },
   async ({ strict, file }) => {
     try {
-      const report = docsyncCheck(db, strict);
+      const report = docrelayCheck(db, strict);
       if (file) {
         // Propagate error context into filtered responses so MCP clients
         // can detect that the check failed, even when file-filtering would
@@ -150,16 +150,16 @@ server.tool(
   },
 );
 
-// ── docsync_impact ──────────────────────────────────────────────
+// ── docrelay_impact ──────────────────────────────────────────────
 server.tool(
-  'docsync_impact',
+  'docrelay_impact',
   'Analyze which documentation sections are affected by code changes',
   {
     paths: z.array(z.string()).describe('List of changed file paths'),
   },
   async ({ paths }) => {
     try {
-      const impact = docsyncImpact(db, paths);
+      const impact = docrelayImpact(db, paths);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(impact, null, 2) }],
       };
@@ -169,9 +169,9 @@ server.tool(
   },
 );
 
-// ── docsync_sync ────────────────────────────────────────────────
+// ── docrelay_sync ────────────────────────────────────────────────
 server.tool(
-  'docsync_sync',
+  'docrelay_sync',
   'Synchronize documentation for a specific symbol (CASCADE update)',
   {
     symbol_id: z.string().describe('Stable symbol ID to sync docs for'),
@@ -188,9 +188,9 @@ server.tool(
   },
 );
 
-// ── docsync_sync_all ────────────────────────────────────────────
+// ── docrelay_sync_all ────────────────────────────────────────────
 server.tool(
-  'docsync_sync_all',
+  'docrelay_sync_all',
   'Synchronize all stale documentation sections in batch',
   async () => {
     try {
@@ -204,9 +204,9 @@ server.tool(
   },
 );
 
-// ── docsync_link ────────────────────────────────────────────────
+// ── docrelay_link ────────────────────────────────────────────────
 server.tool(
-  'docsync_link',
+  'docrelay_link',
   'Manage a mapping between a code symbol and a documentation section (create, update review_status, or delete)',
   {
     action: z.enum(['create', 'delete']),
@@ -217,7 +217,7 @@ server.tool(
   },
   async ({ action, symbol_id, doc_id, rel_type, review_status }) => {
     try {
-      const result = docsyncLink(db, { action, symbol_id, doc_id, rel_type, review_status: review_status ?? 'auto' });
+      const result = docrelayLink(db, { action, symbol_id, doc_id, rel_type, review_status: review_status ?? 'auto' });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -227,9 +227,9 @@ server.tool(
   },
 );
 
-// ── docsync_confirm ─────────────────────────────────────────────
+// ── docrelay_confirm ─────────────────────────────────────────────
 server.tool(
-  'docsync_confirm',
+  'docrelay_confirm',
   'Confirm an auto-generated mapping as correct — sets review_status to confirmed (human/AI verified)',
   {
     symbol_id: z.string(),
@@ -238,8 +238,8 @@ server.tool(
   },
   async ({ symbol_id, doc_id, rel_type }) => {
     try {
-      const { docsyncConfirm } = await import('./tools/link.js');
-      const result = docsyncConfirm(db, symbol_id, doc_id, rel_type);
+      const { docrelayConfirm } = await import('./tools/link.js');
+      const result = docrelayConfirm(db, symbol_id, doc_id, rel_type);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -249,9 +249,9 @@ server.tool(
   },
 );
 
-// ── docsync_reject ──────────────────────────────────────────────
+// ── docrelay_reject ──────────────────────────────────────────────
 server.tool(
-  'docsync_reject',
+  'docrelay_reject',
   'Reject an auto-generated mapping as incorrect — sets review_status to rejected',
   {
     symbol_id: z.string(),
@@ -260,8 +260,8 @@ server.tool(
   },
   async ({ symbol_id, doc_id, rel_type }) => {
     try {
-      const { docsyncReject } = await import('./tools/link.js');
-      const result = docsyncReject(db, symbol_id, doc_id, rel_type);
+      const { docrelayReject } = await import('./tools/link.js');
+      const result = docrelayReject(db, symbol_id, doc_id, rel_type);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -271,16 +271,16 @@ server.tool(
   },
 );
 
-// ── docsync_diff ────────────────────────────────────────────────
+// ── docrelay_diff ────────────────────────────────────────────────
 server.tool(
-  'docsync_diff',
+  'docrelay_diff',
   'Show the diff of changes for a symbol and its linked documentation',
   {
     symbol_id: z.string().describe('Stable symbol ID'),
   },
   async ({ symbol_id }) => {
     try {
-      const diff = docsyncDiff(db, symbol_id);
+      const diff = docrelayDiff(db, symbol_id);
       if (!diff.found) {
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ error: diff.message || 'Symbol not found', reason: diff.reason }) }],
@@ -296,9 +296,9 @@ server.tool(
   },
 );
 
-// ── docsync_scan ────────────────────────────────────────────────
+// ── docrelay_scan ────────────────────────────────────────────────
 server.tool(
-  'docsync_scan',
+  'docrelay_scan',
   'Scan the codebase for symbols and documentation sections, then auto-link them',
   {
     docs: z.boolean().optional().default(true).describe('Also scan documentation files'),
@@ -351,17 +351,17 @@ server.tool(
   },
 );
 
-// ── docsync_review ──────────────────────────────────────────────
+// ── docrelay_review ──────────────────────────────────────────────
 server.tool(
-  'docsync_review',
+  'docrelay_review',
   'Audit code-doc mappings: find unlinked symbols, orphaned sections, implied references, and unreviewed (auto-generated) mappings',
   {
     format: z.enum(['json', 'markdown']).optional().default('markdown').describe('Output format'),
   },
   async ({ format }) => {
     try {
-      const { docsyncReview, formatReview } = await import('./tools/review.js');
-      const report = docsyncReview(db, projectRoot);
+      const { docrelayReview, formatReview } = await import('./tools/review.js');
+      const report = docrelayReview(db, projectRoot);
       const text = format === 'json' ? JSON.stringify(report, null, 2) : formatReview(report);
       return { content: [{ type: 'text' as const, text }] };
     } catch (err: any) {
@@ -370,10 +370,10 @@ server.tool(
   },
 );
 
-// ── docsync_integrate ───────────────────────────────────────────
+// ── docrelay_integrate ───────────────────────────────────────────
 server.tool(
-  'docsync_integrate',
-  'Generate agent integration configs so DocSync is available in your coding agent (Claude Code, OpenCode, Oh My Pi, etc.)',
+  'docrelay_integrate',
+  'Generate agent integration configs so DocRelay is available in your coding agent (Claude Code, OpenCode, Oh My Pi, etc.)',
   {
     agent: z.enum(['claude-code', 'codex', 'opencode', 'oh-my-pi', 'hermes']).optional().describe('Agent to integrate with. If omitted, auto-detects the current agent.'),
     dryRun: z.boolean().optional().default(false).describe('Preview what would be created without writing files'),
@@ -403,10 +403,10 @@ server.tool(
   },
 );
 
-// ── docsync_watch ─────────────────────────────────────────────
+// ── docrelay_watch ─────────────────────────────────────────────
 server.tool(
-  'docsync_watch',
-  'Return the list of paths DocSync would watch. The actual file watcher runs via the CLI (`docsync watch`), not through MCP. Use docsync_refresh for lightweight polling instead.',
+  'docrelay_watch',
+  'Return the list of paths DocRelay would watch. The actual file watcher runs via the CLI (`docrelay watch`), not through MCP. Use docrelay_refresh for lightweight polling instead.',
   async () => {
     try {
       const watchPaths: string[] = [];
@@ -424,7 +424,7 @@ server.tool(
           text: JSON.stringify({
             watching: true,
             paths: watchPaths,
-            hint: 'For persistent file watching, run `docsync watch` in the CLI. For agent polling, use docsync_refresh periodically.',
+            hint: 'For persistent file watching, run `docrelay watch` in the CLI. For agent polling, use docrelay_refresh periodically.',
           }, null, 2),
         }],
       };
@@ -434,9 +434,9 @@ server.tool(
   },
 );
 
-// ── docsync_refresh ────────────────────────────────────────────
+// ── docrelay_refresh ────────────────────────────────────────────
 server.tool(
-  'docsync_refresh',
+  'docrelay_refresh',
   'Re-scan the codebase for symbol changes and return new/updated symbols since the last scan. Lightweight alternative to persistent watching — agents should poll this periodically.',
   {
     full: z.boolean().optional().default(false).describe('Also re-scan documentation files and auto-link'),
@@ -488,9 +488,9 @@ server.tool(
   },
 );
 
-// ── docsync_watch_status ──────────────────────────────────────
+// ── docrelay_watch_status ──────────────────────────────────────
 server.tool(
-  'docsync_watch_status',
+  'docrelay_watch_status',
   'Get the current status of the file watcher (running, events, errors)',
   async () => {
     try {
@@ -505,14 +505,14 @@ server.tool(
   },
 );
 
-// ── docsync_health ─────────────────────────────────────────────
+// ── docrelay_health ─────────────────────────────────────────────
 server.tool(
-  'docsync_health',
+  'docrelay_health',
   'Comprehensive system health check — database, codegraph, filesystem, doc freshness',
   async () => {
     try {
-      const { docsyncHealth } = await import('./tools/health.js');
-      const report = await docsyncHealth(db, projectRoot, () => extractor.isAvailable(), DOCSYNC_VERSION);
+      const { docrelayHealth } = await import('./tools/health.js');
+      const report = await docrelayHealth(db, projectRoot, () => extractor.isAvailable(), DOCRELAY_VERSION);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
         isError: !report.healthy,
@@ -538,12 +538,12 @@ async function shutdown(code: number = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.error('DocSync MCP Server shutting down...');
+  console.error('DocRelay MCP Server shutting down...');
   try { await codegraph.close(); } catch (err: any) {
-    if (DOCSYNC_DEBUG) console.error('DocSync: codegraph.close() failed during shutdown:', err instanceof Error ? err.message : err);
+    if (DOCRELAY_DEBUG) console.error('DocRelay: codegraph.close() failed during shutdown:', err instanceof Error ? err.message : err);
   }
   try { closeAllDbs(); } catch (err: any) {
-    console.error('DocSync: closeAllDbs() failed during shutdown — WAL may not have checkpointed:', err instanceof Error ? err.message : err);
+    console.error('DocRelay: closeAllDbs() failed during shutdown — WAL may not have checkpointed:', err instanceof Error ? err.message : err);
   }
   // Use exitCode to let the event loop drain gracefully instead of
   // immediately terminating — gives async cleanup a chance to finish.
@@ -557,16 +557,16 @@ async function shutdown(code: number = 0): Promise<void> {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 process.on('uncaughtException', (err) => {
-  console.error('DocSync: uncaught exception:', err instanceof Error ? err.message : err);
-  if (DOCSYNC_DEBUG && err instanceof Error && err.stack) {
-    console.error('DocSync: uncaught exception (debug stack):', err.stack);
+  console.error('DocRelay: uncaught exception:', err instanceof Error ? err.message : err);
+  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
+    console.error('DocRelay: uncaught exception (debug stack):', err.stack);
   }
   shutdown(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('DocSync: unhandled rejection:', reason instanceof Error ? reason.message : reason);
-  if (DOCSYNC_DEBUG && reason instanceof Error && reason.stack) {
-    console.error('DocSync: unhandled rejection (debug stack):', reason.stack);
+  console.error('DocRelay: unhandled rejection:', reason instanceof Error ? reason.message : reason);
+  if (DOCRELAY_DEBUG && reason instanceof Error && reason.stack) {
+    console.error('DocRelay: unhandled rejection (debug stack):', reason.stack);
   }
   shutdown(1);
 });
@@ -574,12 +574,12 @@ process.on('unhandledRejection', (reason) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('DocSync MCP Server running on stdio');
+  console.error('DocRelay MCP Server running on stdio');
 }
 
 main().catch((err) => {
   console.error('Fatal error:', err instanceof Error ? err.message : err);
-  if (DOCSYNC_DEBUG && err instanceof Error && err.stack) {
+  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
     console.error('Fatal error (debug stack):', err.stack);
   }
   shutdown(1).then(() => process.exit(1));

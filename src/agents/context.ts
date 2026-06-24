@@ -1,5 +1,5 @@
 /**
- * Context injection helper — produces a markdown summary of DocSync status
+ * Context injection helper — produces a markdown summary of DocRelay status
  * suitable for injecting into an agent's system prompt or rules file.
  */
 import type Database from 'better-sqlite3';
@@ -54,19 +54,19 @@ function queryHealthContext(db: Database.Database): DocHealthContext {
 }
 
 /**
- * Build a concise one-line DocSync health summary suitable for system-prompt
+ * Build a concise one-line DocRelay health summary suitable for system-prompt
  * injection. Includes symbol counts, sync percentages, and stale doc names.
  *
  * Example output:
- * "DocSync status: 287 symbols tracked, 245 docs linked (85%), 12 docs stale.
- *  Stale docs: docs/api.md, README.md#setup. Run `docsync sync` to update."
+ * "DocRelay status: 287 symbols tracked, 245 docs linked (85%), 12 docs stale.
+ *  Stale docs: docs/api.md, README.md#setup. Run `docrelay sync` to update."
  */
 export function getDocHealthContext(db: Database.Database): string {
   try {
     const ctx = queryHealthContext(db);
 
     const parts: string[] = [];
-    parts.push(`DocSync status: ${ctx.totalSymbols} symbols tracked`);
+    parts.push(`DocRelay status: ${ctx.totalSymbols} symbols tracked`);
 
     if (ctx.totalSymbols > 0) {
       parts.push(`${ctx.linkedSymbols} docs linked (${ctx.linkedPercentage}%)`);
@@ -95,14 +95,14 @@ export function getDocHealthContext(db: Database.Database): string {
         output += ` and ${ctx.staleDocDetails.length - 5} more`;
       }
 
-      output += '. Run \`docsync sync\` to update.';
+      output += '. Run \`docrelay sync\` to update.';
     }
 
     return output;
   } catch (err: any) {
     // Return a safe fallback so context injection never crashes the agent
-    console.error('DocSync: getDocHealthContext failed:', err instanceof Error ? err.message : err);
-    return 'DocSync status: unavailable (database query failed).';
+    console.error('DocRelay: getDocHealthContext failed:', err instanceof Error ? err.message : err);
+    return 'DocRelay status: unavailable (database query failed).';
   }
 }
 
@@ -113,7 +113,7 @@ export function getDocHealthContextObject(db: Database.Database): DocHealthConte
   try {
     return queryHealthContext(db);
   } catch (err: any) {
-    console.error('DocSync: getDocHealthContextObject failed:', err instanceof Error ? err.message : err);
+    console.error('DocRelay: getDocHealthContextObject failed:', err instanceof Error ? err.message : err);
     return {
       totalSymbols: 0,
       linkedSymbols: 0,

@@ -2,18 +2,18 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertDocSection, markDocStale } from '../../src/db/docs.js';
-import { docsyncCheck, formatCheckMarkdown, formatCheckCI } from '../../src/tools/check.js';
+import { docrelayCheck, formatCheckMarkdown, formatCheckCI } from '../../src/tools/check.js';
 import { docSectionId } from '../../src/utils/hash.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-describe('docsyncCheck', () => {
+describe('docrelayCheck', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docsync-test-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-test-'));
     fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
     db = getDb(tmpDir);
     runMigrations(db);
@@ -25,7 +25,7 @@ describe('docsyncCheck', () => {
   });
 
   it('passes when no stale docs', () => {
-    const report = docsyncCheck(db, true);
+    const report = docrelayCheck(db, true);
     expect(report.passed).toBe(true);
   });
 
@@ -34,7 +34,7 @@ describe('docsyncCheck', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     markDocStale(db, docId);
 
-    const report = docsyncCheck(db, true);
+    const report = docrelayCheck(db, true);
     expect(report.passed).toBe(false);
     expect(report.staleDocs).toHaveLength(1);
   });
@@ -43,7 +43,7 @@ describe('docsyncCheck', () => {
     it('outputs all-clear message when no stale docs', () => {
       const report = { passed: true, staleDocs: [], summary: 'All documentation is in sync.' };
       const md = formatCheckMarkdown(report);
-      expect(md).toContain('## DocSync Check');
+      expect(md).toContain('## DocRelay Check');
       expect(md).toContain('All documentation is in sync.');
     });
 
