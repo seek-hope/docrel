@@ -180,37 +180,54 @@ export class MarkdownParser implements DocParser {
 
   parse(filePath: string, content: string): ParsedDocSection[] {
     const MAX_DOC_LINES = 100_000;
-    const lines = content.split('\n');
-    if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocRelay: MarkdownParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+    // Count newlines up to MAX_DOC_LINES+1 before calling split('\n') to
+    // prevent a massive array allocation from pathological input (e.g., a
+    // 10 MB file of 2-char lines). The content is already bounded at 10 MB
+    // by doc-scanner.ts, but without this guard the split creates ~5 M
+    // string objects before the line-count check below can reject them.
+    // Pattern matches the fix applied to builtin.ts (MAX_LINES=100K),
+    // engine.ts, standalone.ts, review.ts, and inline.ts in rounds 5/9.
+    let newlineCount = 1;
+    for (let i = 0; i < content.length && newlineCount <= MAX_DOC_LINES; i++) {
+      if (content[i] === '\n') newlineCount++;
+    }
+    if (newlineCount > MAX_DOC_LINES) {
+      console.warn(`DocRelay: MarkdownParser: file has ${newlineCount} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
+    const lines = content.split('\n');
     const sections: ParsedDocSection[] = [];
 
     // Find all heading positions, skipping headings inside fenced code blocks.
-    // Uses the same code-fence tracking technique as findSectionContentFromString
-    // in standalone.ts to prevent # lines inside ``` blocks from creating spurious
-    // doc sections (e.g., "# This is a comment" inside a code example).
-    const fenceOpenRegex = /^(```+|~~~+)\s*$/;
+    // Uses state-machine fence tracking to prevent # lines inside ``` or ~~~
+    // blocks from creating spurious doc sections (e.g., "# This is a comment"
+    // inside a code example). Opening fences may have a language identifier
+    // (e.g., ```typescript); closing fences must be the bare token.
     const headings: { level: number; line: number; text: string }[] = [];
     let inCodeBlock = false;
     let fenceToken = '';
     for (let i = 0; i < lines.length; i++) {
-      if (!inCodeBlock) {
-        const fenceMatch = lines[i].match(fenceOpenRegex);
-        if (fenceMatch) {
+      // Match fences: ```, ````, ~~~, ~~~~ etc. with optional language
+      // identifier after the fence characters.
+      const fenceMatch = lines[i].match(/^(```+|~~~+)(.*)/);
+      if (fenceMatch) {
+        const token = fenceMatch[1];
+        const afterFence = fenceMatch[2].trim();
+        if (!inCodeBlock) {
+          // Opening fence — language identifier is allowed
           inCodeBlock = true;
-          fenceToken = fenceMatch[1];
+          fenceToken = token;
           continue;
         }
-      } else {
-        const fenceMatch = lines[i].match(fenceOpenRegex);
-        if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+        // Closing fence — same character type, at least as long, and
+        // nothing but whitespace after the fence characters.
+        if (token.startsWith(fenceToken[0]) && token.length >= fenceToken.length && afterFence === '') {
           inCodeBlock = false;
           fenceToken = '';
         }
         continue;
       }
+      if (inCodeBlock) continue;
       const m = lines[i].match(/^(#{1,6})\s+(.+)/);
       if (m) {
         headings.push({ level: m[1].length, line: i, text: m[2].trim() });
@@ -275,12 +292,30 @@ function extractCodeBlockRefs(text: string, baseLine: number): CodeRef[] {
   const seen = new Set<string>();
   const lines = text.split('\n');
   let inBlock = false;
+  let fenceToken = '';
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fenceMatch = line.match(/^```(\w*)/);
+    // Match fences: ```, ````, ~~~, ~~~~ etc. with optional language
+    // identifier after the fence characters (e.g., ```typescript).
+    // Capture group 1: fence chars, group 2: everything after.
+    const fenceMatch = line.match(/^(```+|~~~+)(.*)/);
     if (fenceMatch) {
-      inBlock = !inBlock;
+      const token = fenceMatch[1];
+      const afterFence = fenceMatch[2].trim();
+      if (!inBlock) {
+        // Opening fence — language identifier is allowed after the fence
+        inBlock = true;
+        fenceToken = token;
+        continue;
+      }
+      // Closing fence — same character type, at least as long, and
+      // nothing but whitespace after the fence characters. This
+      // prevents ```` ```javascript ```` from closing a `````` block.
+      if (token.startsWith(fenceToken[0]) && token.length >= fenceToken.length && afterFence === '') {
+        inBlock = false;
+        fenceToken = '';
+      }
       continue;
     }
     if (inBlock) {
@@ -327,11 +362,16 @@ export class RstParser implements DocParser {
 
   parse(filePath: string, content: string): ParsedDocSection[] {
     const MAX_DOC_LINES = 100_000;
-    const lines = content.split('\n');
-    if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocRelay: RstParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+    // Pre-split line count guard — see MarkdownParser.parse() for rationale.
+    let newlineCount = 1;
+    for (let i = 0; i < content.length && newlineCount <= MAX_DOC_LINES; i++) {
+      if (content[i] === '\n') newlineCount++;
+    }
+    if (newlineCount > MAX_DOC_LINES) {
+      console.warn(`DocRelay: RstParser: file has ${newlineCount} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
+    const lines = content.split('\n');
     const sections: ParsedDocSection[] = [];
 
     // Find heading positions: underlined headings (line followed by === --- ~~~ ^^^ etc.)
@@ -449,11 +489,16 @@ export class AsciidocParser implements DocParser {
 
   parse(filePath: string, content: string): ParsedDocSection[] {
     const MAX_DOC_LINES = 100_000;
-    const lines = content.split('\n');
-    if (lines.length > MAX_DOC_LINES) {
-      console.warn(`DocRelay: AsciidocParser: file has ${lines.length} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
+    // Pre-split line count guard — see MarkdownParser.parse() for rationale.
+    let newlineCount = 1;
+    for (let i = 0; i < content.length && newlineCount <= MAX_DOC_LINES; i++) {
+      if (content[i] === '\n') newlineCount++;
+    }
+    if (newlineCount > MAX_DOC_LINES) {
+      console.warn(`DocRelay: AsciidocParser: file has ${newlineCount} lines, exceeding limit of ${MAX_DOC_LINES} — skipping`);
       return [];
     }
+    const lines = content.split('\n');
     const sections: ParsedDocSection[] = [];
 
     // Find heading positions: == or === headings
@@ -614,13 +659,45 @@ export class HtmlParser implements DocParser {
       }
     }
 
+    // F26 (round 14): Add a line-count guard before the heading loop to
+    // prevent O(n) line array allocations on pathological 10 MB HTML files
+    // with millions of short lines. The other three parsers (Markdown, RST,
+    // Asciidoc) all have MAX_DOC_LINES=100K guards added in round 10; the
+    // HTML parser was missed because it does not split the entire document
+    // upfront — but lineInDoc computation at line 680 still calls .split('\\n')
+    // on substrings up to 10 MB for each of up to 50000 headings.
+    const MAX_HTML_LINES = 100_000;
+    let htmlLineCount = 1;
+    for (let li = 0; li < content.length && htmlLineCount <= MAX_HTML_LINES; li++) {
+      if (content[li] === '\n') htmlLineCount++;
+    }
+    if (htmlLineCount > MAX_HTML_LINES) {
+      console.warn(`DocRelay: HtmlParser: content has ${htmlLineCount} lines, exceeding ${MAX_HTML_LINES} — skipping`);
+      return [];
+    }
+    // Pre-compute line-start offsets for O(1) line-number lookups, avoiding
+    // the repeated O(n) .split('\\n') per heading that could allocate millions
+    // of string objects on pathological input.
+    const lineStarts: number[] = [0];
+    for (let li = 0; li < content.length; li++) {
+      if (content[li] === '\n') lineStarts.push(li + 1);
+    }
+
     for (let i = 0; i < matches.length; i++) {
       const startIdx = matches[i].index;
       const endIdx = i + 1 < matches.length ? matches[i + 1].index : content.length;
       const sectionContent = content.substring(startIdx, endIdx);
 
-      // Approximate line number
-      const lineInDoc = content.substring(0, startIdx).split('\n').length;
+      // Approximate line number — use binary search on pre-computed offsets
+      // instead of content.substring(0, startIdx).split('\\n').length which
+      // allocates a full array per heading.
+      let lo = 0, hi = lineStarts.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >>> 1;
+        if (lineStarts[mid] <= startIdx) lo = mid;
+        else hi = mid - 1;
+      }
+      const lineInDoc = lo + 1;
 
       const codeRefs = extractHtmlCodeRefs(sectionContent, lineInDoc);
       const headingRefs = extractSymbolsFromHeading(matches[i].text, lineInDoc);
@@ -652,6 +729,18 @@ const MAX_CODE_REFS_PER_FILE = 10_000;
 function extractHtmlCodeRefs(text: string, baseLine: number): CodeRef[] {
   const refs: CodeRef[] = [];
   const seen = new Set<string>();
+  // HtmlParser processes raw HTML without splitting by line, so a single section
+  // between two heading tags can contain nearly the entire 10 MB file. Count
+  // newlines before split to prevent a multi-million-element array allocation.
+  const MAX_HTML_CODE_LINES = 100_000;
+  let newlineCount = 1;
+  for (let i = 0; i < text.length && newlineCount <= MAX_HTML_CODE_LINES; i++) {
+    if (text[i] === '\n') newlineCount++;
+  }
+  if (newlineCount > MAX_HTML_CODE_LINES) {
+    console.warn(`DocRelay: extractHtmlCodeRefs: content has ${newlineCount} lines, exceeding ${MAX_HTML_CODE_LINES} — skipping`);
+    return [];
+  }
   const lines = text.split('\n');
 
   for (let i = 0; i < lines.length; i++) {

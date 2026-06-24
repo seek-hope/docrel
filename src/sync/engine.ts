@@ -13,6 +13,8 @@ import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './i
 import { stripCommentsAndStrings, stripAllBlockComments } from './inline.js';
 import { findSectionContent } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
+import { escapeRegex, validatePath } from '../utils/fs.js';
+import path from 'node:path';
 
 /** A single proposed change when strategy is 'prompt' — the caller should
  *  present this diff to the user/agent for manual approval. */
@@ -159,6 +161,14 @@ export async function syncSymbol(
               result.warnings.push(`Could not extract existing docstring for ${symbol.name} — skipping inline sync to avoid data loss`);
               continue;
             }
+            // Skip non-JSDoc files (Python, Go, Rust) — generateUpdatedDocstring
+            // produces JSDoc /** ... */ output, which would replace language-specific
+            // docstrings ("""...""", // comments, /// comments) and corrupt the file.
+            const ext = path.extname(loc.file).toLowerCase();
+            if (ext === '.py' || ext === '.pyi' || ext === '.go' || ext === '.rs') {
+              result.warnings.push(`Skipped inline sync for ${symbol.name} — non-JSDoc file type (${ext}) not supported for auto_update. Use mark_stale strategy instead.`);
+              continue;
+            }
             // Use raw_signature (human-readable) for JSDoc generation, not the hash.
             // If raw_signature is empty, the symbol was created without a raw signature
             // (e.g. manual creation or corrupted state) — we cannot generate meaningful docs.
@@ -243,7 +253,11 @@ export async function syncSymbol(
                     // timestamp is unparseable, conservatively skip the transition
                     // rather than incorrectly marking a stale doc as in-sync.
                     const docMs = new Date(doc.updated_at).getTime();
-                    if (!isNaN(docMs)) {
+                    // Reject epoch-0 (empty string or Jan 1 1970) and negative
+                    // dates which indicate a corrupt or never-set updated_at field.
+                    // Without this guard, st.mtimeMs > 0 is always true, incorrectly
+                    // transitioning stale docs to in_sync.
+                    if (!isNaN(docMs) && docMs > 0) {
                       fileModified = st.mtimeMs > docMs;
                     }
                   } catch (err: any) {
@@ -364,7 +378,7 @@ export async function syncAllStale(
   config: DocRelayConfig,
   projectRoot: string,
 ): Promise<{ synced: SyncResult[]; totalStale: number }> {
-  const staleDocs = db.prepare("SELECT * FROM doc_sections WHERE status = 'stale'").all() as DocSectionRow[];
+  const staleDocs = db.prepare("SELECT * FROM doc_sections WHERE status = 'stale' LIMIT 5000").all() as DocSectionRow[];
   if (staleDocs.length === 0) {
     return { synced: [], totalStale: 0 };
   }
@@ -386,9 +400,6 @@ export async function syncAllStale(
 }
 
 const MAX_LINES = 100_000;
-
-import { escapeRegex, validatePath } from '../utils/fs.js';
-import path from 'node:path';
 
 /** Ensure a file path is relative to projectRoot in error messages.
  *  DB-stored paths are already relative but this provides defense-in-depth
@@ -447,10 +458,16 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // old implementations could match the regex and be returned as the
   // signature, causing updateInlineDoc to receive a wrong oldSignature.
   const processedContent = stripAllBlockComments(content);
+  // Limit line count to prevent hangs on degenerate input.
+  // Pre-scan newline count before splitting to avoid OOM from the array
+  // allocation itself. (Round 14: the original round 5 fix used a
+  // post-split guard which does not prevent the split from allocating.)
+  let engineNewlineCount = 1;
+  for (let i = 0; i < processedContent.length && engineNewlineCount <= MAX_LINES + 1; i++) {
+    if (processedContent[i] === '\n') engineNewlineCount++;
+  }
+  if (engineNewlineCount > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
   const processedLines = processedContent.split('\n');
-
-  // Limit line count to prevent hangs on degenerate input
-  if (processedLines.length > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
 
   const escaped = escapeRegex(symbolName);
   // Match only symbol definitions, not references or usage sites.
@@ -477,8 +494,20 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
       // For 'function' declarations: skip overload signatures that end with
       // ';' (e.g., `async function login(a: string): Promise<void>;`) to find
       // the actual implementation line instead.
-      if (trimmed.includes('function')) {
-        const parenIdx = trimmed.indexOf('(');
+      // Use a word-boundary regex that specifically tests for `function <name>`
+      // as a declaration keyword, NOT the substring "function" inside a
+      // const/let/var RHS like `const myFn = someFunction(42)`. The old check
+      // `trimmed.includes('function')` falsely routed const declarations
+      // through the function-overload-detection path, causing those symbols
+      // to be skipped entirely.
+      const funcDeclPattern = new RegExp(`\\bfunction\\s+${escaped}\\b`);
+      if (funcDeclPattern.test(codeOnly)) {
+        // Use findParamListOpen to skip angle brackets (<...>) when finding
+        // the parameter-list '(' — generic constraints like
+        // `function foo<T extends (x: number) => boolean>(param: T)` have
+        // parentheses inside the type-parameter brackets that indexOf('(')
+        // would misidentify as the parameter list opening.
+        const parenIdx = findParamListOpen(trimmed);
         if (parenIdx >= 0) {
           let closeParen = findMatchingClose(trimmed, parenIdx);
           // If closing paren is not on this line, read subsequent lines to
@@ -493,9 +522,30 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
           if (closeParen >= 0) {
             const after = multiLineSig.slice(closeParen + 1).trimStart();
             if (!after.startsWith('{') && !after.startsWith(':')) {
+              // No body on this line — could be an overload (;) or an
+              // Allman-style definition where { is on a subsequent line.
+              // Peek at the next non-empty line before discarding.
+              let peekIdx = lineIdx + 1;
+              while (peekIdx < processedLines.length && processedLines[peekIdx].trim() === '') {
+                peekIdx++;
+              }
+              if (peekIdx < processedLines.length) {
+                const peekLine = processedLines[peekIdx].trim();
+                if (peekLine === '{' || peekLine.startsWith('{')) {
+                  // Allman-style body — include intervening lines in signature
+                  for (let j = lineIdx + 1; j <= peekIdx; j++) {
+                    multiLineSig += '\n' + processedLines[j];
+                  }
+                  return { signature: multiLineSig.trim() };
+                }
+              }
               continue; // no body follows — overload declaration, skip
             }
-            if (after.endsWith(';')) {
+            // Strip inline comments before checking for ';' terminator.
+            // An overload declaration like `function foo(): void; // overload`
+            // has `after` = `: void; // overload` which does not end with ';'.
+            const afterClean = after.replace(/\/\/.*$/, '').trimEnd();
+            if (afterClean.endsWith(';')) {
               continue; // overload declaration ending with ; — skip
             }
             return { signature: multiLineSig.trim() };
@@ -522,14 +572,34 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
       return { signature: trimmed };
     }
     // Test method regex against codeOnly to avoid matching inside comments/strings.
-    // If it matches, run exec against the original trimmed to get the correct
-    // index position for the parenthesis tracking.
+    // The codeOnly match confirms a real (non-commented) definition exists on
+    // this line. To get the correct position in the original trimmed text,
+    // search for the same regex pattern but skip past any preceding /* ... */
+    // block comments — the first uncommented match corresponds to codeOnly.
     const mStart = methodRegex.exec(codeOnly);
     if (mStart) {
-      // Re-run against the original trimmed to get correct positional info
-      const realStart = methodRegex.exec(trimmed);
-      if (realStart) {
-        const parenStart = realStart.index + realStart[0].length - 1; // position of '('
+      // Find the matching occurrence in trimmed, skipping past any preceding
+      // block comments that may contain the same symbol-name + paren pattern.
+      let searchFrom = 0;
+      let parenStart = -1;
+      while (searchFrom < trimmed.length) {
+        const cand = methodRegex.exec(trimmed.slice(searchFrom));
+        if (!cand) break;
+        const absIdx = searchFrom + cand.index;
+        const before = trimmed.slice(0, absIdx);
+        const lastOpen = before.lastIndexOf('/*');
+        const lastClose = before.lastIndexOf('*/');
+        if (lastOpen <= lastClose) {
+          // Not inside a block comment — this is the real occurrence.
+          parenStart = absIdx + cand[0].length - 1; // position of '('
+          break;
+        }
+        // This match is inside a block comment. Skip past the comment close.
+        const closePos = trimmed.indexOf('*/', lastOpen + 2);
+        if (closePos < 0) break; // unclosed block comment — bail out
+        searchFrom = closePos + 2;
+      }
+      if (parenStart >= 0) {
         let closing = findMatchingClose(trimmed, parenStart);
         // Build multi-line signature if closing paren is not on this line
         let multiLineSig = trimmed;
@@ -542,8 +612,57 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
         if (closing >= 0 && closing < multiLineSig.length - 1) {
           const after = multiLineSig.slice(closing + 1).trimStart();
           if (after.startsWith('{') || after.startsWith(':')) {
-            if (after.endsWith(';')) continue;  // overload/interface declaration
+            // Strip inline comments before checking for ';' terminator
+            // (same issue as the function path at line 518).
+            const afterClean = after.replace(/\/\/.*$/, '').trimEnd();
+            if (afterClean.endsWith(';')) continue;  // overload/interface declaration
             return { signature: multiLineSig.trim() };
+          }
+          // No body on this line — peek at the next non-empty line for
+          // Allman-style { placement (e.g. method definition with { on its
+          // own line after a multi-line parameter list).
+          let peekIdx2 = lineIdx + 1;
+          while (peekIdx2 < processedLines.length && processedLines[peekIdx2].trim() === '') {
+            peekIdx2++;
+          }
+          if (peekIdx2 < processedLines.length) {
+            const peekLine2 = processedLines[peekIdx2].trim();
+            if (peekLine2 === '{' || peekLine2.startsWith('{')) {
+              for (let j = lineIdx + 1; j <= peekIdx2; j++) {
+                multiLineSig += '\n' + processedLines[j];
+              }
+              return { signature: multiLineSig.trim() };
+            }
+            // The next non-empty line does not start with { — it may have
+            // a return-type annotation before the brace (e.g. "Promise<User> {").
+            // Accumulate it and re-check for { so the signature is not lost.
+            const extended = multiLineSig + '\n' + processedLines[peekIdx2];
+            if (extended.includes('{')) {
+              return { signature: extended.trim() };
+            }
+          }
+        } else if (closing >= 0) {
+          // closing at end of line (closing == multiLineSig.length - 1) —
+          // peek at next non-empty line for Allman-style { body.
+          let peekIdx2 = lineIdx + 1;
+          while (peekIdx2 < processedLines.length && processedLines[peekIdx2].trim() === '') {
+            peekIdx2++;
+          }
+          if (peekIdx2 < processedLines.length) {
+            const peekLine2 = processedLines[peekIdx2].trim();
+            if (peekLine2 === '{' || peekLine2.startsWith('{')) {
+              for (let j = lineIdx + 1; j <= peekIdx2; j++) {
+                multiLineSig += '\n' + processedLines[j];
+              }
+              return { signature: multiLineSig.trim() };
+            }
+            // The next non-empty line does not start with { — it may have
+            // a return-type annotation before the brace (e.g. "Promise<User> {").
+            // Accumulate it and re-check for { so the signature is not lost.
+            const extended = multiLineSig + '\n' + processedLines[peekIdx2];
+            if (extended.includes('{')) {
+              return { signature: extended.trim() };
+            }
           }
         }
       }
@@ -552,12 +671,44 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   return { signature: null, reason: 'symbol definition not found in source file' };
 }
 
-/** Find the index of the closing ) matching the open-paren at `openIdx`. */
+/** Find the first '(' that is NOT inside angle brackets (<...>). This
+ *  correctly handles generic type parameters that contain function-typed
+ *  constraints like `foo<T extends (x: number) => boolean>(param: T)` where
+ *  the first '(' belongs to the constraint, not the parameter list.
+ *  Mirrors the helper of the same name in inline.ts. */
+function findParamListOpen(signature: string): number {
+  let angleDepth = 0;
+  for (let i = 0; i < signature.length; i++) {
+    const ch = signature[i];
+    if (ch === '<') angleDepth++;
+    else if (ch === '>' && (i === 0 || signature[i - 1] !== '=')) angleDepth--;
+    else if (ch === '(' && angleDepth === 0) return i;
+  }
+  return -1;
+}
+
+/** Find the index of the closing ) matching the open-paren at `openIdx`.
+ *  Tracks string and template literals so that a `)` inside a string
+ *  (e.g. foo(")")) is not mistaken for the closing parenthesis.
+ *  Also tracks `${...}` nesting inside template literals so that nested
+ *  backticks (e.g. foo(\`outer ${\`inner\`} tail\`)) do not prematurely
+ *  exit the string state. */
 function findMatchingClose(str: string, openIdx: number): number {
   let depth = 0;
+  let inString: string | null = null;
+  let nestDepth = 0; // ${...} nesting inside template literals
   for (let i = openIdx; i < str.length; i++) {
-    if (str[i] === '(') depth++;
-    else if (str[i] === ')') {
+    const ch = str[i];
+    if (inString) {
+      if (ch === '\\') { i++; continue; }
+      if (inString === '`' && ch === '$' && str[i + 1] === '{') { nestDepth++; continue; }
+      if (inString === '`' && ch === '}' && nestDepth > 0) { nestDepth--; continue; }
+      if (ch === inString && nestDepth === 0) { inString = null; }
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') {
       depth--;
       if (depth === 0) return i;
     }

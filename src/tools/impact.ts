@@ -5,6 +5,7 @@ import path from 'node:path';
 import { assertDbOpen } from '../db/connection.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
+import { escapeLike } from '../utils/fs.js';
 
 export interface ImpactReport {
   changedFiles: string[];
@@ -25,14 +26,6 @@ export interface ImpactReport {
   errors: Array<{ file: string; message: string }>;
 }
 
-function escapeLike(str: string): string {
-  // Escape the escape character FIRST so that backslashes inserted to
-  // escape wildcards are not themselves double-escaped. The previous
-  // order (wildcards before backslash) turned 'file_test.ts' into
-  // 'file\\_test.ts' — the doubled backslash consumes the escape,
-  // leaving '_' as a wildcard rather than a literal underscore.
-  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
-}
 
 export function docrelayImpact(
   db: Database.Database,
@@ -87,17 +80,26 @@ export function docrelayImpact(
       // match 'src/foo_test.ts' when checking 'src/foo.ts'.
       const candidateSymbols = db.prepare(
         `SELECT id, name, kind, location FROM symbols
-         WHERE location LIKE ? || ':%' ESCAPE '\\'`
+         WHERE location LIKE ? || ':%' ESCAPE '\\'
+         LIMIT 10000`
       ).all(escaped) as Array<{ id: string; name: string; kind: string; location: string }>;
 
       // F8: Hoist fileReal computation outside the inner loop.
       // `file` does not change per symbol, so computing realpathSync for
       // every matching symbol wastes filesystem I/O on large codebases.
-      const root = projectRoot ?? process.cwd();
-      let fileReal = file;
+      const root = path.resolve(projectRoot ?? process.cwd());
+      // Containment check: reject paths that resolve outside projectRoot.
+      // path.resolve returns absolute paths as-is, so a user-supplied
+      // /etc/passwd would bypass project-scoped containment.
+      const resolvedFile = path.resolve(root, file);
+      if (!resolvedFile.startsWith(root + path.sep) && resolvedFile !== root) {
+        errors.push({ file, message: 'Path outside project root — skipped for safety' });
+        continue;
+      }
+      let fileReal = path.normalize(file);
       try {
-        fileReal = fs.realpathSync(path.resolve(root, file));
-      } catch { /* realpath may fail — fall back to literal comparison */ }
+        fileReal = fs.realpathSync(resolvedFile);
+      } catch { /* realpath may fail — fall back to normalized literal comparison */ }
 
       for (const dbSym of candidateSymbols) {
         // Verify the file portion of the location exactly matches.
@@ -106,8 +108,16 @@ export function docrelayImpact(
         const lastColon = dbSym.location.lastIndexOf(':');
         const locFile = lastColon > 0 ? dbSym.location.slice(0, lastColon) : dbSym.location;
         let locReal = locFile;
+        // Defense-in-depth: verify DB-stored path resolves within projectRoot.
+        // While DB paths are populated by the scanner (which enforces containment),
+        // a corrupted or tampered database could contain traversal paths.
         try {
-          locReal = fs.realpathSync(path.resolve(root, locFile));
+          const resolvedLoc = path.resolve(root, locFile);
+          if (resolvedLoc.startsWith(root + path.sep) || resolvedLoc === root) {
+            locReal = fs.realpathSync(resolvedLoc);
+          }
+          // If outside projectRoot, keep locReal as-is (unresolved) so the
+          // comparison at line 119 fails rather than following a traversal.
         } catch { /* realpath may fail — fall back to literal comparison */ }
         if (locReal !== fileReal) continue;
 

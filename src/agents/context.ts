@@ -34,7 +34,7 @@ function queryHealthContext(db: Database.Database): DocHealthContext {
     ).get() as { c: number }).c;
 
     const staleRows = db.prepare(
-      "SELECT file, anchor FROM doc_sections WHERE status = 'stale' ORDER BY file, anchor",
+      "SELECT file, anchor FROM doc_sections WHERE status = 'stale' ORDER BY file, anchor LIMIT 10000",
     ).all() as Array<{ file: string; anchor: string }>;
 
     const staleDocFiles = [...new Set(staleRows.map((r) => r.file))];

@@ -309,7 +309,7 @@ export function autoLink(
   // Key: "symbol_id::doc_id::rel_type"
   const existingKeys = new Set<string>();
   const existingRows = db.prepare(
-    'SELECT symbol_id, doc_id, rel_type FROM mappings'
+    'SELECT symbol_id, doc_id, rel_type FROM mappings LIMIT 100000'
   ).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
   for (const row of existingRows) {
     existingKeys.add(`${row.symbol_id}::${row.doc_id}::${row.rel_type}`);
@@ -405,31 +405,38 @@ export function ingestDocSections(
   let newMappings = 0;
 
   for (const section of sections) {
-    const id = docSectionId(section.file, section.anchor);
-    if (!id) continue;
+    // Wrap per-section processing in try/catch to prevent a single corrupted
+    // section (empty file, invalid doc_type, etc.) from aborting the entire
+    // ingest batch. Matches the defensive pattern in scanProject (scanner.ts).
+    try {
+      const id = docSectionId(section.file, section.anchor);
+      if (!id) continue;
 
-    const hash = contentHash(section.content);
-    const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
-    upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
-    if (!existing) newDocs++;
+      const hash = contentHash(section.content);
+      const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+      upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+      if (!existing) newDocs++;
 
-    for (const ref of section.codeRefs) {
-      const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
-      const matched = db.prepare(
-        'SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1'
-      ).get(cleanName, ref.symbolName) as { id: string } | undefined;
+      for (const ref of section.codeRefs) {
+        const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
+        const matched = db.prepare(
+          'SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1'
+        ).get(cleanName, ref.symbolName) as { id: string } | undefined;
 
-      if (matched) {
-        try {
-          createMapping(db, {
-            symbol_id: matched.id,
-            doc_id: id,
-            rel_type: 'describes',
-            review_status: 'auto',
-          });
-          newMappings++;
-        } catch { /* skip duplicates */ }
+        if (matched) {
+          try {
+            createMapping(db, {
+              symbol_id: matched.id,
+              doc_id: id,
+              rel_type: 'describes',
+              review_status: 'auto',
+            });
+            newMappings++;
+          } catch { /* skip duplicates */ }
+        }
       }
+    } catch (err: any) {
+      console.warn(`DocRelay: ingestDocSections — skipping malformed section ${section.file}#${section.anchor}: ${err instanceof Error ? err.message : err}`);
     }
   }
 

@@ -35,11 +35,34 @@ function compilePatterns(projectRoot: string): CompiledPattern[] {
 
   let raw: string;
   try {
+    // Guard against malicious .docrelayignore files that could OOM the process.
+    // An ignore file is typically under 1KB; 1MB is extremely generous.
+    const ignoreStat = fs.statSync(ignorePath);
+    if (ignoreStat.size > 1_048_576) {
+      console.warn('DocRelay: .docrelayignore exceeds 1MB — ignoring');
+      cache = { projectRoot, patterns };
+      return patterns;
+    }
     raw = fs.readFileSync(ignorePath, 'utf-8');
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.warn(`DocRelay: cannot read .docrelayignore:`, (err as NodeJS.ErrnoException)?.message ?? err);
     }
+    cache = { projectRoot, patterns };
+    return patterns;
+  }
+
+  // Guard against pathological .docrelayignore files with excessive lines
+  // (e.g., 1 MB file of single-char lines). The file is size-limited at 1 MB
+  // above, but without a line-count cap the split and loop could process
+  // ~500 K iterations. Real ignore files typically have < 50 lines.
+  const MAX_IGNORE_LINES = 10_000;
+  let ignoreLineCount = 1;
+  for (let li = 0; li < raw.length && ignoreLineCount <= MAX_IGNORE_LINES + 1; li++) {
+    if (raw[li] === '\n') ignoreLineCount++;
+  }
+  if (ignoreLineCount > MAX_IGNORE_LINES) {
+    console.warn(`DocRelay: .docrelayignore has ${ignoreLineCount} lines, exceeding ${MAX_IGNORE_LINES} — ignoring`);
     cache = { projectRoot, patterns };
     return patterns;
   }
@@ -118,7 +141,11 @@ function compilePatterns(projectRoot: string): CompiledPattern[] {
       regexStr = regexStr.replace(/\$$/, '(?:/.*)?$');
     }
 
-    patterns.push({ regex: new RegExp(regexStr), negated });
+    try {
+      patterns.push({ regex: new RegExp(regexStr), negated });
+    } catch {
+      console.warn(`DocRelay: .docrelayignore: skipping invalid regex pattern: ${line}`);
+    }
   }
 
   cache = { projectRoot, patterns };

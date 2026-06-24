@@ -52,6 +52,10 @@ export class CodegraphExtractor implements SymbolExtractor {
     const query = `symbols in ${dir}/`;
     const result = await this.client.explore(query, this.maxFiles);
 
+    if (result.truncated) {
+      console.warn(`DocRelay: CodegraphExtractor — explore output was truncated for '${dir}'. Some symbols may not have been discovered. Consider increasing maxFiles (currently ${this.maxFiles}) in .docrelay/config.yaml.`);
+    }
+
     return result.symbols.map((sym) => ({
       name: sym.name,
       kind: mapKind(sym.kind),

@@ -42,6 +42,12 @@ export function escapeRegex(str: string): string {
 /** Build a global RegExp from a user string, escaping special chars.
  *  Returns null when the string exceeds maxLength — callers MUST check for
  *  null to distinguish "no match possible" from "search was aborted". */
+/** Escape LIKE-special characters (% and _) for use in SQL LIKE patterns
+ *  with ESCAPE '\\'. Must escape \\ first to avoid double-escaping. */
+export function escapeLike(str: string): string {
+  return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+}
+
 export function escapeRegexGlobal(str: string, maxLength = 200): RegExp | null {
   if (str.length > maxLength) {
     console.warn(`DocRelay: escapeRegexGlobal aborted — string length ${str.length} exceeds max ${maxLength}`);

@@ -27,7 +27,8 @@ type DocStyle = 'jsdoc' | 'python' | 'go' | 'rust';
 function detectDocStyle(file: string): DocStyle {
   const ext = path.extname(file).toLowerCase();
   switch (ext) {
-    case '.py':  return 'python';
+    case '.py':
+    case '.pyi': return 'python';
     case '.go':  return 'go';
     case '.rs':  return 'rust';
     default:     return 'jsdoc'; // .ts .tsx .js .jsx .mjs .cjs .mts .cts
@@ -53,7 +54,8 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // in standalone.ts.
     if (process.platform === 'linux') {
       const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
-      if (!fdReal.startsWith(projectRoot + path.sep) && fdReal !== projectRoot) {
+      const root = path.resolve(projectRoot);
+      if (!fdReal.startsWith(root + path.sep) && fdReal !== root) {
         console.warn('DocRelay: updateInlineDoc failed — path traversal detected via fd:', resolved);
         return false;
       }
@@ -269,7 +271,23 @@ function countOccurrences(content: string, search: string): number {
   if (search.length === 0) return 0;
   const regex = escapeRegexGlobal(search, MAX_SEARCH_LENGTH);
   if (!regex) return -1; // search string too long — signal aborted search
-  return (content.match(regex) || []).length;
+  // F25 (round 14): Use matchAll with a counter instead of content.match(g).
+  // content.match(g) allocates an array of ALL matches — a short search string
+  // (e.g., a single-char DB-stored value) in a 10 MB file could produce
+  // millions of matches and OOM the process. matchAll returns an iterator,
+  // so we can cap the match count without ever materializing the full array.
+  const MAX_MATCHES = 100_000;
+  let count = 0;
+  for (const _ of content.matchAll(regex)) {
+    if (++count >= MAX_MATCHES) {
+      console.warn(
+        `DocRelay: countOccurrences aborted — reached ${MAX_MATCHES} match limit ` +
+        `(search: "${search.slice(0, 80)}${search.length > 80 ? '...' : ''}")`,
+      );
+      return -1;
+    }
+  }
+  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +322,13 @@ function findPythonHeaderEnd(content: string, start: number): number {
   return -1;
 }
 
-function extractPythonDocstring(content: string, symbolName: string): string | null {
+/** Result of docstring extraction including its position in the source content.
+ *  Returning the startIndex prevents replace functions from using
+ *  content.indexOf() which can match a different occurrence when two symbols
+ *  in the same file share an identical docstring. */
+interface DocstringResult { text: string; startIndex: number }
+
+function extractPythonDocstring(content: string, symbolName: string): DocstringResult | null {
   const escaped = escapeRegex(symbolName);
   // Match 'def name' or 'class Name' — async def also matched
   const defRegex = new RegExp(
@@ -354,8 +378,8 @@ function extractPythonDocstring(content: string, symbolName: string): string | n
       i += 3;
       const closeIdx = content.indexOf(triple, i);
       if (closeIdx < 0) return null;
-      // Return the entire triple-quoted string including delimiters
-      return content.slice(docStart, closeIdx + 3);
+      // Return the entire triple-quoted string including delimiters AND its position
+      return { text: content.slice(docStart, closeIdx + 3), startIndex: docStart };
     }
 
     // First non-blank non-comment line is not a triple-quoted string
@@ -383,6 +407,14 @@ function extractGoDocstring(content: string, symbolName: string): string | null 
   // the index lands on the first character of the func/type line.
   const defStart = match.index + (match.index === 0 ? 0 : 1);
   const before = content.slice(0, defStart);
+  // Count newlines in the full content to guard against pathological files
+  // (10 MB with 2-char lines = ~5 M array elements from split).
+  const MAX_EXTRACT_LINES = 100_000;
+  let extractLineCount = 1;
+  for (let ei = 0; ei < content.length && extractLineCount <= MAX_EXTRACT_LINES; ei++) {
+    if (content[ei] === '\n') extractLineCount++;
+  }
+  if (extractLineCount > MAX_EXTRACT_LINES) return null;
   const defLineIdx = before.split('\n').length - 1;
   const lines = content.split('\n');
 
@@ -425,6 +457,13 @@ function extractRustDocstring(content: string, symbolName: string): string | nul
   // fn/struct/trait/impl line.
   const defStart = match.index + (match.index === 0 ? 0 : 1);
   const before = content.slice(0, defStart);
+  // Guard against pathological files — see extractGoDocstring for rationale.
+  const MAX_EXTRACT_LINES = 100_000;
+  let extractLineCount = 1;
+  for (let ei = 0; ei < content.length && extractLineCount <= MAX_EXTRACT_LINES; ei++) {
+    if (content[ei] === '\n') extractLineCount++;
+  }
+  if (extractLineCount > MAX_EXTRACT_LINES) return null;
   const defLineIdx = before.split('\n').length - 1;
   const lines = content.split('\n');
   const commentLines: string[] = [];
@@ -449,6 +488,13 @@ function extractRustDocstring(content: string, symbolName: string): string | nul
 // Language-specific docstring replacement helpers (updateInlineDoc)
 // ---------------------------------------------------------------------------
 
+/** Normalize line endings and trim trailing whitespace for comparison.
+ *  CRLF vs LF mismatches or invisible trailing spaces can cause exact string
+ *  comparison failures in replace*Docstring functions, silently aborting sync. */
+function normalizeDocLines(s: string): string {
+  return s.replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '');
+}
+
 /**
  * For Python: locate the triple-quoted docstring after the symbol definition
  * and replace `old` with `new`. Returns modified content or null.
@@ -459,26 +505,32 @@ function replacePythonDocstring(
   oldDocstring: string,
   newDocstring: string,
 ): string | null {
-  // Extract to find exact bounds of the existing docstring
+  // Extract to find exact bounds of the existing docstring and its position.
+  // Using the position from extraction avoids the risk of content.indexOf()
+  // matching an identical docstring belonging to a different symbol.
   const existing = extractPythonDocstring(content, symbolName);
   if (!existing) return null;
 
-  // Verify the old docstring matches what's actually in the file
-  if (existing !== oldDocstring) {
+  // Verify the old docstring matches what's actually in the file.
+  // Normalize line endings before comparison — CRLF vs LF mismatches or
+  // trailing whitespace differences should not cause silent sync failure.
+  if (normalizeDocLines(existing.text) !== normalizeDocLines(oldDocstring)) {
     console.warn(
       `DocRelay: replacePythonDocstring — old docstring mismatch.\n` +
       `  expected: ${oldDocstring.slice(0, 80)}...\n` +
-      `  found:    ${existing.slice(0, 80)}...`,
+      `  found:    ${existing.text.slice(0, 80)}...`,
     );
     return null;
   }
 
-  // Simple string replacement — the docstring text is unique as a triple-quoted
-  // string immediately after the definition header.
-  const idx = content.indexOf(oldDocstring);
-  if (idx < 0) return null;
-
-  return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
+  // Replace at the exact position found during extraction.
+  // Use existing.text.length (actual file content length) rather than
+  // oldDocstring.length (DB-stored length) for the slice offset. When
+  // normalizeDocLines matches but the original strings differ in length
+  // (e.g. CRLF vs LF), using oldDocstring.length would leave trailing
+  // characters from the original docstring in the file.
+  return content.slice(0, existing.startIndex) + newDocstring +
+    content.slice(existing.startIndex + existing.text.length);
 }
 
 /**
@@ -491,9 +543,21 @@ function replaceGoDocComment(
   newDocstring: string,
 ): string | null {
   const existing = extractGoDocstring(content, symbolName);
-  if (!existing || existing !== oldDocstring) return null;
+  if (!existing || normalizeDocLines(existing) !== normalizeDocLines(oldDocstring)) return null;
 
-  const idx = content.indexOf(oldDocstring);
+  // Find the definition position to constrain the search region.
+  // Doc comments immediately precede the definition, so lastIndexOf
+  // from the definition position finds the correct comment block
+  // even when an identical comment block exists elsewhere in the file.
+  const escaped = escapeRegex(symbolName);
+  const defRegex = new RegExp(
+    `(?:^|\\n)(?:func\\s+(?:\\([^)]*\\)\\s+)?${escaped}\\s*\\(|type\\s+${escaped}\\s+)`,
+    'm',
+  );
+  const defMatch = defRegex.exec(content);
+  const idx = defMatch
+    ? content.lastIndexOf(oldDocstring, defMatch.index)
+    : content.indexOf(oldDocstring);
   if (idx < 0) return null;
 
   return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
@@ -509,9 +573,25 @@ function replaceRustDocComment(
   newDocstring: string,
 ): string | null {
   const existing = extractRustDocstring(content, symbolName);
-  if (!existing || existing !== oldDocstring) return null;
+  if (!existing || normalizeDocLines(existing) !== normalizeDocLines(oldDocstring)) return null;
 
-  const idx = content.indexOf(oldDocstring);
+  // Find the definition position to constrain the search region.
+  // Doc comments immediately precede the definition, so lastIndexOf
+  // from the definition position finds the correct comment block
+  // even when an identical comment block exists elsewhere in the file.
+  const escaped = escapeRegex(symbolName);
+  const defRegex = new RegExp(
+    `(?:^|\\n)(?:pub(?:\\s*\\(\\s*crate\\s*\\))?\\s+)?(?:default\\s+)?(?:async\\s+)?(?:unsafe\\s+)?fn\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?struct\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?(?:unsafe\\s+)?trait\\s+${escaped}\\b|` +
+    `(?:^|\\n)(?:pub\\s+)?impl(?:\\s*<[^>]*>)?(?:\\s+\\w+)?\\s+for\\s+${escaped}\\b|` +
+    `(?:^|\\n)impl(?:\\s*<[^>]*>)?\\s+${escaped}\\b`,
+    'm',
+  );
+  const defMatch = defRegex.exec(content);
+  const idx = defMatch
+    ? content.lastIndexOf(oldDocstring, defMatch.index)
+    : content.indexOf(oldDocstring);
   if (idx < 0) return null;
 
   return content.slice(0, idx) + newDocstring + content.slice(idx + oldDocstring.length);
@@ -556,7 +636,7 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   // Dispatch to language-specific extraction
   switch (style) {
     case 'python':
-      return extractPythonDocstring(content, symbolName);
+      return extractPythonDocstring(content, symbolName)?.text ?? null;
     case 'go':
       return extractGoDocstring(content, symbolName);
     case 'rust':
@@ -572,6 +652,15 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   // Exclude JSDoc-style comments (/** ... */) which are the very docstrings
   // we aim to extract.
   content = stripNonJsdocBlockComments(content);
+  // Guard against pathological files with millions of short lines within
+  // the 10 MB content bound. Pattern matches the Go/Rust guards above and
+  // the generateUpdatedDocstring MAX_SPLIT_LINES guard added in round 9.
+  const MAX_JSDOC_LINES = 100_000;
+  let jsdocLineCount = 1;
+  for (let ei = 0; ei < content.length && jsdocLineCount <= MAX_JSDOC_LINES; ei++) {
+    if (content[ei] === '\n') jsdocLineCount++;
+  }
+  if (jsdocLineCount > MAX_JSDOC_LINES) return null;
   const lines = content.split('\n');
 
   const symRegex = escapedSymRegex(symbolName);
@@ -620,7 +709,7 @@ function escapedSymRegex(symbolName: string): RegExp {
     `|(?:export\\s+)?(?:const|let|var)\\s+${n}\\b` +
     `|\\binterface\\s+${n}\\b` +
     `|\\btype\\s+${n}\\b` +
-    `|(?:async\\s+)?${n}\\s*\\(.*?\\)\\s*[{:]`,
+    `|(?:async\\s+)?\\b${n}\\s*\\(.*?\\)\\s*[{:]`,
   );
 }
 
@@ -861,7 +950,8 @@ export function stripCommentsAndStrings(line: string): string {
     if (c === '/' && next === '/') {
       const prev = i > 0 ? line[i - 1] : ' ';
       if (i === 0 || prev === ' ' || prev === '\t' || prev === ';' ||
-          prev === '{' || prev === '}' || prev === '(' || prev === ',' ||
+          prev === '{' || prev === '}' || prev === '(' || prev === ')' ||
+          prev === ',' || prev === ']' || prev === '>' ||
           prev === '\n' || prev === '\r') {
         break; // rest of line is comment
       }
@@ -892,6 +982,15 @@ export function generateUpdatedDocstring(
   // Preserve user-written narrative content from the old docstring that falls
   // outside the @param/@returns blocks — this prevents auto_update from
   // silently destroying hand-written documentation (e.g., examples, notes).
+
+  // Guard against corrupted symbol records with multi-kilobyte signatures
+  // that would cause excessive parameter extraction and oversized docstrings.
+  const MAX_SIGNATURE_LENGTH = 2000;
+  if (newSignature.length > MAX_SIGNATURE_LENGTH) {
+    console.warn(`DocRelay: generateUpdatedDocstring — newSignature exceeds ${MAX_SIGNATURE_LENGTH} chars, using truncated signature`);
+    newSignature = newSignature.slice(0, MAX_SIGNATURE_LENGTH);
+  }
+
   const params = extractParams(newSignature);
   const lines: string[] = [];
   let inParamBlock = false;
@@ -899,20 +998,41 @@ export function generateUpdatedDocstring(
 
   // Extract user-written narrative lines from the old docstring.
   // Keep lines that are inside /** ... */ but NOT part of @param/@returns tags.
+  // Cap preserved lines to prevent unbounded memory growth from pathological
+  // JSDoc comments (e.g., minified files with massive docstrings).
+  const MAX_NARRATIVE_LINES = 2000;
+  // Pre-scan newline count before split to prevent OOM from the array
+  // allocation itself. The oldDocstring comes from DB (populated during
+  // scan, bounded at 10 MB). A 10 MB docstring of 2-char lines creates
+  // ~5 M array elements — the post-split guard below checks the count
+  // but does NOT prevent the split from allocating the full array first.
+  // (Round 15: this was a post-split guard missed by the round 14 sweep.)
+  const MAX_SPLIT_LINES = 100_000;
   if (oldDocstring.trim()) {
-    const oldLines = oldDocstring.split('\n');
-    for (const line of oldLines) {
-      const trimmed = line.trim();
-      // Skip the opening /** and closing */
-      if (trimmed === '/**' || trimmed === '*/') continue;
-      // Detect @param and @returns blocks
-      if (/^\*\s*@param\b/.test(trimmed)) { inParamBlock = true; continue; }
-      if (/^\*\s*@returns?\b/.test(trimmed)) { inReturnsBlock = true; continue; }
-      if (/^\*\s*@\w+/.test(trimmed)) { inParamBlock = false; inReturnsBlock = false; continue; }
-      if (inParamBlock || inReturnsBlock) continue;
-      // Keep user-written narrative lines (including blank * lines between sections)
-      if (trimmed.startsWith('*') || trimmed === '') {
-        lines.push(line);
+    let docstrLineCount = 1;
+    for (let di = 0; di < oldDocstring.length && docstrLineCount <= MAX_SPLIT_LINES + 1; di++) {
+      if (oldDocstring[di] === '\n') docstrLineCount++;
+    }
+    if (docstrLineCount > MAX_SPLIT_LINES) {
+      console.warn(`DocRelay: generateUpdatedDocstring — old docstring has ${docstrLineCount} lines, exceeds ${MAX_SPLIT_LINES} — using signature-derived docstring only`);
+      // Fall through to the placeholder path below — the old docstring is
+      // too large to split safely, so we generate from the signature alone.
+    } else {
+      const oldLines = oldDocstring.split('\n');
+      for (const line of oldLines) {
+        if (lines.length >= MAX_NARRATIVE_LINES) break;
+        const trimmed = line.trim();
+        // Skip the opening /** and closing */
+        if (trimmed === '/**' || trimmed === '*/') continue;
+        // Detect @param and @returns blocks
+        if (/^\*\s*@param\b/.test(trimmed)) { inParamBlock = true; continue; }
+        if (/^\*\s*@returns?\b/.test(trimmed)) { inReturnsBlock = true; continue; }
+        if (/^\*\s*@\w+/.test(trimmed)) { inParamBlock = false; inReturnsBlock = false; continue; }
+        if (inParamBlock || inReturnsBlock) continue;
+        // Keep user-written narrative lines (including blank * lines between sections)
+        if (trimmed.startsWith('*') || trimmed === '') {
+          lines.push(line);
+        }
       }
     }
   }
@@ -941,10 +1061,25 @@ export function generateUpdatedDocstring(
   return lines.join('\n');
 }
 
+/** Find the first '(' that is NOT inside angle brackets (<...>). This
+ *  correctly handles generic type parameters that contain function-typed
+ *  constraints like `foo<T extends (x: number) => boolean>(param: T)` where
+ *  the first '(' belongs to the constraint, not the parameter list. */
+function findParamListOpen(signature: string): number {
+  let angleDepth = 0;
+  for (let i = 0; i < signature.length; i++) {
+    const ch = signature[i];
+    if (ch === '<') angleDepth++;
+    else if (ch === '>' && (i === 0 || signature[i - 1] !== '=')) angleDepth--;
+    else if (ch === '(' && angleDepth === 0) return i;
+  }
+  return -1;
+}
+
 function extractParams(signature: string): Array<{ name: string; type: string }> {
   // Use bracket-counting to handle nested parentheses in TypeScript signatures,
   // e.g. `foo(cb: (x: number) => void): string`
-  const parenStart = signature.indexOf('(');
+  const parenStart = findParamListOpen(signature);
   if (parenStart < 0) return [];
 
   let depth = 0;
@@ -979,7 +1114,11 @@ function extractParams(signature: string): Array<{ name: string; type: string }>
  *  truncating at the first whitespace-boundary. */
 function extractReturnType(signature: string): string | null {
   // Find the closing parenthesis of the parameter list, then look for ':' after it
-  const parenStart = signature.indexOf('(');
+  // Use findParamListOpen to skip the type-parameter angle brackets, matching
+  // extractParams. Without this, generic constraints containing function-typed
+  // parameters like <T extends (x: number) => boolean> would cause the return
+  // type to be extracted from the wrong ')'.
+  const parenStart = findParamListOpen(signature);
   if (parenStart < 0) return null;
 
   let depth = 0;
@@ -1003,12 +1142,16 @@ function extractReturnType(signature: string): string | null {
 
   // Collect the return type with bracket counting to handle generics, unions,
   // and object types. Stop at comma, semicolon, or when all brackets close.
+  // The '>' in '=>' (arrow function return type) is NOT a bracket closer —
+  // check for the '=' prefix to avoid decrementing bracketDepth for arrows.
   let result = '';
   let bracketDepth = 0;
   for (; i < signature.length; i++) {
     const ch = signature[i];
     if (ch === '<' || ch === '(' || ch === '{' || ch === '[') bracketDepth++;
-    else if (ch === '>' || ch === ')' || ch === '}' || ch === ']') bracketDepth--;
+    else if (ch === '=') { /* noop — '=' inside arrow '=>' is not a bracket */ }
+    else if (ch === '>' && i > 0 && signature[i - 1] !== '=' ||
+             ch === ')' || ch === '}' || ch === ']') bracketDepth--;
     if (bracketDepth < 0) break;
     // At depth 0, stop at delimiters that signal the end of the return type
     if (bracketDepth === 0 && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) break;
@@ -1071,7 +1214,9 @@ function splitParams(paramsStr: string): string[] {
       continue;
     }
     if (ch === '<' || ch === '(' || ch === '{' || ch === '[') depth++;
-    else if (ch === '>' || ch === ')' || ch === '}' || ch === ']') depth--;
+    else if (ch === '=') { /* noop — '=' inside arrow '=>' is not a bracket */ }
+    else if (ch === '>' && i > 0 && paramsStr[i - 1] !== '=' ||
+             ch === ')' || ch === '}' || ch === ']') depth--;
     if (ch === ',' && depth === 0) {
       result.push(current);
       current = '';

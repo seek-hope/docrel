@@ -222,13 +222,14 @@ export function installHooks(projectRoot: string, force = false): void {
   let docrelayBin: string;
   if (!argv1 || argv1 === 'undefined') {
     try {
-      docrelayBin = execFileSync('which', ['docrelay'], { encoding: 'utf-8' }).trim();
+      docrelayBin = execFileSync('which', ['docrelay'], { encoding: 'utf-8', timeout: 5000 }).trim();
       if (!docrelayBin) throw new Error('docrelay not found on PATH');
       // Validate the resolved binary path against allowed prefixes and resolve
       // symlinks to prevent PATH hijacking via malicious symlinks.
       const realBin = fs.realpathSync(docrelayBin);
-      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
-      if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+      const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+      if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
+          !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
         throw new Error(`docrelay resolved to unexpected path: ${docrelayBin}`);
       }
       docrelayBin = realBin;
@@ -251,8 +252,9 @@ export function installHooks(projectRoot: string, force = false): void {
     const resolvedArgv = path.resolve(argv1);
     try {
       const realBin = fs.realpathSync(resolvedArgv);
-      const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
-      if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+      const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+      if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
+          !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
         throw new Error(`docrelay resolved to unexpected path: ${resolvedArgv}`);
       }
       docrelayBin = realBin;

@@ -61,7 +61,15 @@ const DEFAULT_CONFIG: Omit<DocRelayConfig, 'project' | 'version'> = {
 };
 
 export function loadConfig(projectRoot: string): DocRelayConfig {
-  if (!projectRoot) throw new Error('projectRoot is required — cannot load config without a project root');
+  if (!projectRoot || !projectRoot.trim()) throw new Error('projectRoot is required — cannot load config without a project root');
+  try {
+    if (!fs.statSync(projectRoot).isDirectory()) throw new Error(`projectRoot is not a directory: ${projectRoot}`);
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      throw new Error(`projectRoot does not exist: ${projectRoot}`);
+    }
+    throw err;
+  }
   const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
   const project = path.basename(projectRoot) || 'unknown-project';
 
@@ -74,8 +82,29 @@ export function loadConfig(projectRoot: string): DocRelayConfig {
   let userConfig: Partial<DocRelayConfig>;
 
   try {
+    // Guard against maliciously large config files that could OOM the process
+    // before YAML parsing begins. A real config is typically under 1 KB;
+    // 1 MB is extremely generous and prevents accidentally large files.
+    const MAX_CONFIG_SIZE = 1_048_576; // 1 MB
+    const configStat = fs.statSync(configPath);
+    if (configStat.size > MAX_CONFIG_SIZE) {
+      console.error(`Warning: .docrelay/config.yaml exceeds ${MAX_CONFIG_SIZE} bytes — using defaults.`);
+      return { version: CONFIG_SCHEMA_VERSION, project, ...DEFAULT_CONFIG };
+    }
     const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = parseYaml(raw);
+    // Pre-check version before Zod validation: a version < CONFIG_SCHEMA_VERSION
+    // (e.g. 0 from an older release) will fail the schema's min(1) check,
+    // which would discard ALL user config in favor of defaults.
+    // Instead, warn once and strip the version field so other config keys
+    // can still be validated and merged.
+    if (typeof parsed === 'object' && parsed !== null && 'version' in parsed) {
+      const pv = (parsed as Record<string, unknown>).version;
+      if (typeof pv === 'number' && pv < CONFIG_SCHEMA_VERSION) {
+        console.error(`Warning: Config schema version ${pv} is older than ${CONFIG_SCHEMA_VERSION}. Migrating config fields — update .docrelay/config.yaml to version: ${CONFIG_SCHEMA_VERSION} when convenient.`);
+        delete (parsed as Record<string, unknown>).version;
+      }
+    }
     const result = userConfigSchema.safeParse(parsed);
     if (!result.success) {
       console.error(`Warning: Invalid config in ${configRelPath}: ${result.error.message}. Using defaults.`);
@@ -127,8 +156,20 @@ export function validateConfig(config: DocRelayConfig, projectRoot: string): Con
   }
 
   // Code directories must exist
+  const root = path.resolve(projectRoot);
   for (const dir of config.code_dirs) {
     const absDir = path.resolve(projectRoot, dir);
+    // Containment check: reject config values that escape projectRoot.
+    // A malicious .docrelay/config.yaml could specify code_dirs: ['/etc'] to
+    // probe filesystem paths outside the project via existsSync.
+    if (!absDir.startsWith(root + path.sep) && absDir !== root) {
+      issues.push({
+        field: `code_dirs.${dir}`,
+        severity: 'error',
+        message: `Code directory '${dir}' is outside project root — rejected for safety.`,
+      });
+      continue;
+    }
     if (!fs.existsSync(absDir)) {
       issues.push({
         field: `code_dirs.${dir}`,
@@ -141,6 +182,14 @@ export function validateConfig(config: DocRelayConfig, projectRoot: string): Con
   // Doc directories must exist
   for (const dir of config.doc_dirs) {
     const absPath = path.resolve(projectRoot, dir);
+    if (!absPath.startsWith(root + path.sep) && absPath !== root) {
+      issues.push({
+        field: `doc_dirs.${dir}`,
+        severity: 'error',
+        message: `Doc path '${dir}' is outside project root — rejected for safety.`,
+      });
+      continue;
+    }
     if (!fs.existsSync(absPath)) {
       issues.push({
         field: `doc_dirs.${dir}`,

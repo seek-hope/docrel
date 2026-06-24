@@ -36,7 +36,7 @@ export function getMappingsForDoc(db: Database.Database, docId: string): Mapping
 }
 
 export function listAllMappings(db: Database.Database): MappingRow[] {
-  return db.prepare("SELECT * FROM mappings ORDER BY symbol_id").all() as MappingRow[];
+  return db.prepare("SELECT * FROM mappings ORDER BY symbol_id LIMIT 50000").all() as MappingRow[];
 }
 
 export function setReviewStatus(db: Database.Database, sid: string, did: string, rt: string, st: ReviewStatus): MappingRow | null {
@@ -50,6 +50,14 @@ export function deleteMapping(db: Database.Database, sid: string, did: string, r
   return (db.prepare("DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?").run(sid, did, rt).changes > 0);
 }
 
-export function exportMappingsJson(db: Database.Database): any[] {
-  return db.prepare("SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type, m.review_status FROM mappings m JOIN symbols s ON s.id = m.symbol_id JOIN doc_sections d ON d.id = m.doc_id ORDER BY s.name, d.file").all() as any[];
+export interface MappingExportRow {
+  symbol_name: string;
+  doc_file: string;
+  doc_anchor: string;
+  rel_type: string;
+  review_status: string;
+}
+
+export function exportMappingsJson(db: Database.Database): MappingExportRow[] {
+  return db.prepare("SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor, m.rel_type, m.review_status FROM mappings m JOIN symbols s ON s.id = m.symbol_id JOIN doc_sections d ON d.id = m.doc_id ORDER BY s.name, d.file LIMIT 50000").all() as MappingExportRow[];
 }

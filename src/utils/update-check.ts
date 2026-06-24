@@ -76,18 +76,28 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
   // Check cache first
   const cached = readCache();
   if (cached && Date.now() - cached.lastCheck < CHECK_INTERVAL_MS) {
-    return cached.latestVersion !== currentVersion ? cached.latestVersion : null;
+    // Only return cached version if it is newer than current.
+    // If the user upgraded since the cache was written (e.g. from
+    // v1.0.0 to v3.0.0), the cached v2.0.0 is stale — re-fetch instead
+    // of returning an older version that isNewer() would discard anyway.
+    if (cached.latestVersion === currentVersion) return null;
+    if (isNewer(currentVersion, cached.latestVersion)) return cached.latestVersion;
+    // Cache is stale (cached version <= current) — fall through to re-fetch
   }
 
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch('https://registry.npmjs.org/doc-relay/latest', {
-      signal: controller.signal,
-      headers: { 'Accept': 'application/json' },
-    });
-    clearTimeout(timeout);
+    let response: Response;
+    try {
+      response = await fetch('https://registry.npmjs.org/doc-relay/latest', {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) return null;
 
@@ -95,7 +105,25 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
     const contentType = response.headers.get('content-type');
     if (!contentType || !contentType.includes('application/json')) return null;
 
-    const data = await response.json();
+    // Guard against oversized responses that could OOM during JSON.parse.
+    // The npm registry response for /doc-relay/latest is typically < 1 KB.
+    // Check Content-Length first (no body read); fall back to reading the
+    // body as text with a size cap when Content-Length is absent.
+    const MAX_RESPONSE_SIZE = 102_400; // 100 KB
+    const contentLength = response.headers.get('content-length');
+    if (contentLength !== null) {
+      const len = parseInt(contentLength, 10);
+      if (isNaN(len) || len > MAX_RESPONSE_SIZE) return null;
+    }
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_SIZE) return null;
+
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
     if (typeof data?.version !== 'string' || data.version.length === 0) return null;
     const latest = data.version;
 

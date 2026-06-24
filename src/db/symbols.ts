@@ -98,7 +98,7 @@ export function listSymbols(db: Database.Database, filter?: SymbolFilter): Symbo
     params.push(filter.project);
   }
 
-  query += ' ORDER BY project, name';
+  query += ' ORDER BY project, name LIMIT 50000';
   return db.prepare(query).all(...params) as SymbolRow[];
 }
 

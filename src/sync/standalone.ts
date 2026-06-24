@@ -84,15 +84,30 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
   // Pass the already-read content to avoid a TOCTOU race from a second disk read.
   const sectionContent = findSectionContentFromString(content, input.anchor);
   if (!sectionContent) return { success: false, reason: `section '${input.anchor}' not found in file` };
-  if (!sectionContent.includes(input.oldContent)) return { success: false, reason: 'oldContent not found in section' };
+  // Normalize line endings (CRLF → LF) before comparison. If oldContent from
+  // the DB has CRLF but the file on disk has LF (or vice versa), includes()
+  // fails and the doc sync silently aborts. Matches the normalizeDocLines()
+  // pattern used in inline.ts replacePythonDocstring/Go/Rust.
+  const normalizedSection = sectionContent.replace(/\r\n/g, '\n');
+  const normalizedOld = input.oldContent.replace(/\r\n/g, '\n');
+  if (!normalizedSection.includes(normalizedOld)) return { success: false, reason: 'oldContent not found in section' };
 
+  // After the normalized guard check passes, align oldContent to the file's
+  // actual line endings before the replace. Without this alignment, a CRLF/LF
+  // mismatch causes String.replace to silently return the original string
+  // unchanged, and the function falsely reports success while making no
+  // modifications — leaving the doc permanently stale.
+  const fileUsesCRLF = sectionContent.includes('\r\n');
+  const alignedOld = fileUsesCRLF
+    ? input.oldContent.replace(/\r?\n/g, '\r\n')
+    : input.oldContent.replace(/\r\n/g, '\n');
   // Use replace (not replaceAll) to replace only the FIRST occurrence.
   // replaceAll would silently replace ALL occurrences of oldContent within
   // the section, corrupting the documentation when oldContent text appears
   // multiple times (e.g., a parameter name 'id' appearing in multiple
   // descriptions or code examples within the same heading section).
   // Use function-based replacement to avoid $ special-pattern injection.
-  const updatedSection = sectionContent.replace(input.oldContent, () => input.newContent);
+  const updatedSection = sectionContent.replace(alignedOld, () => input.newContent);
   content = content.replace(sectionContent, () => updatedSection);
 
   // Atomic write: use project-local temp directory with restrictive permissions
@@ -208,6 +223,21 @@ export function findSectionContentFromString(content: string, anchor: string): s
     return null;
   }
 
+  const MAX_SECTION_LINES = 100_000;
+  // Guard against pathological files with millions of short lines in
+  // the 10MB-bounded content. Pre-scan newline count before splitting to
+  // prevent the array allocation from OOM-ing on 2-char-per-line files.
+  // (Round 17: the round 9 guard was post-split — content.split('\n')
+  // allocated the full array before the lines.length check could reject
+  // it. Same pattern fixed in 6 other locations in rounds 14 and 15.)
+  let sectionNewlineCount = 1;
+  for (let si = 0; si < content.length && sectionNewlineCount <= MAX_SECTION_LINES + 1; si++) {
+    if (content[si] === '\n') sectionNewlineCount++;
+  }
+  if (sectionNewlineCount > MAX_SECTION_LINES) {
+    console.warn(`DocRelay: findSectionContentFromString — content has ${sectionNewlineCount} lines, exceeds limit of ${MAX_SECTION_LINES}`);
+    return null;
+  }
   const lines = content.split('\n');
   let startLine = -1;
   let startLevel = 0;
@@ -217,31 +247,34 @@ export function findSectionContentFromString(content: string, anchor: string): s
   // Track fenced code block state so # characters inside code blocks are
   // not incorrectly matched as headings or heading-level boundaries.
   // Supports both ``` and ~~~ fences of 3+ characters at line start.
-  // Uses a regex that captures the fence token and verifies that any trailing
-  // characters on the line are only whitespace or the same fence character.
+  // Opening fences may have a language identifier (e.g., ```typescript);
+  // closing fences must be the bare token with only optional trailing whitespace.
   let inCodeBlock = false;
   let fenceToken = '';
-  const fenceOpenRegex = /^(```+|~~~+)\s*$/;
 
   // Require exact heading match — nothing after the anchor text except optional trailing whitespace
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Track code fence toggles before evaluating heading regex
-    if (!inCodeBlock) {
-      const fenceMatch = line.match(fenceOpenRegex);
-      if (fenceMatch) {
+    const fenceMatch = line.match(/^(```+|~~~+)(.*)/);
+    if (fenceMatch) {
+      const token = fenceMatch[1];
+      const afterFence = fenceMatch[2].trim();
+      if (!inCodeBlock) {
+        // Opening fence — language identifier is allowed
         inCodeBlock = true;
-        fenceToken = fenceMatch[1];
+        fenceToken = token;
         continue;
       }
-    } else {
-      const fenceMatch = line.match(fenceOpenRegex);
-      if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+      // Closing fence — same character type, at least as long, and
+      // nothing but whitespace after the fence characters.
+      if (token.startsWith(fenceToken[0]) && token.length >= fenceToken.length && afterFence === '') {
         inCodeBlock = false;
         fenceToken = '';
       }
       continue;
     }
+    if (inCodeBlock) continue;
 
     const match = line.match(new RegExp(`^\\s{0,3}(#{1,6})\\s+${escapedAnchor}\\s*$`));
     if (match) {
@@ -260,21 +293,25 @@ export function findSectionContentFromString(content: string, anchor: string): s
   for (let i = startLine + 1; i < lines.length; i++) {
     const line = lines[i];
     // Track code fence toggles before evaluating heading regex
-    if (!inCodeBlock) {
-      const fenceMatch = line.match(fenceOpenRegex);
-      if (fenceMatch) {
+    const fenceMatch = line.match(/^(```+|~~~+)(.*)/);
+    if (fenceMatch) {
+      const token = fenceMatch[1];
+      const afterFence = fenceMatch[2].trim();
+      if (!inCodeBlock) {
+        // Opening fence — language identifier is allowed
         inCodeBlock = true;
-        fenceToken = fenceMatch[1];
+        fenceToken = token;
         continue;
       }
-    } else {
-      const fenceMatch = line.match(fenceOpenRegex);
-      if (fenceMatch && fenceMatch[1].startsWith(fenceToken[0]) && fenceMatch[1].length >= fenceToken.length) {
+      // Closing fence — same character type, at least as long, and
+      // nothing but whitespace after the fence characters.
+      if (token.startsWith(fenceToken[0]) && token.length >= fenceToken.length && afterFence === '') {
         inCodeBlock = false;
         fenceToken = '';
       }
       continue;
     }
+    if (inCodeBlock) continue;
 
     const match = line.match(/^(#{1,6})\s/);
     if (match && match[1].length <= startLevel) {

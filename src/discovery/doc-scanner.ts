@@ -107,8 +107,9 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
   // collectDocFiles() checks entry.isFile() which follows symlinks,
   // so a symlink like docs/secrets.md -> /etc/shadow would pass.
   // Resolve the real path and verify it stays within projectRoot.
+  let realFile: string;
   try {
-    const realFile = fs.realpathSync(absPath);
+    realFile = fs.realpathSync(absPath);
     const root = path.resolve(projectRoot);
     if (!realFile.startsWith(root + path.sep) && realFile !== root) return null;
   } catch { return null; }
@@ -116,7 +117,12 @@ function parseFile(absPath: string, projectRoot: string): ParsedDocSection[] | n
   let content: string;
   let fd: number | undefined;
   try {
-    fd = fs.openSync(absPath, 'r');
+    // F14 (round 3): Open canonical realFile instead of lexical absPath to
+    // close the TOCTOU gap between realpathSync (line above) and openSync.
+    // A concurrent symlink swap at absPath between the two calls could bypass
+    // the containment check. Opening the canonical path ensures we operate on
+    // the same inode that was validated.
+    fd = fs.openSync(realFile, 'r');
     const stat = fs.fstatSync(fd);
     if (!stat.isFile()) return null;
     if (stat.size > MAX_DOC_FILE_SIZE) return null;
@@ -173,7 +179,12 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
         try { realPath = fs.realpathSync(fullPath); } catch { continue; }
         if (seenDirs.has(realPath)) continue;
         seenDirs.add(realPath);
-        stack.push(fullPath);
+        // Push the canonical (real) path, not the lexical path. Between
+        // realpathSync above and readdirSync below (when this path is later
+        // popped from the stack), a concurrent symlink swap at the lexical
+        // path could redirect to a different directory. Using the real path
+        // closes this TOCTOU window.
+        stack.push(realPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (supportedExts.has(ext) && !isIgnored(relPath, projectRoot)) {

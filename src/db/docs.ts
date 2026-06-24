@@ -59,7 +59,7 @@ export function listDocSections(db: Database.Database, filter?: { doc_type?: str
   if (filter?.doc_type) { query += ' AND doc_type = ?'; params.push(filter.doc_type); }
   if (filter?.status) { query += ' AND status = ?'; params.push(filter.status); }
 
-  query += ' ORDER BY file, anchor';
+  query += ' ORDER BY file, anchor LIMIT 50000';
   return db.prepare(query).all(...params) as DocSectionRow[];
 }
 

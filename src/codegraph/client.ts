@@ -4,6 +4,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { validateCommandSafety } from '../utils/command.js';
 
 const CONNECT_TIMEOUT_MS = 5000;
+const TOOL_CALL_TIMEOUT_MS = 300_000; // 5 minutes — large codebases can take time
 
 
 export interface ExploreResult {
@@ -58,10 +59,21 @@ export class CodegraphClient {
       if (this.livenessInProgress) {
         // Another caller is already checking — wait for connectPromise
         if (this.connectPromise) return this.connectPromise;
-        // Create a shared deferred promise so concurrent callers await
-        // one doConnect result instead of recursing into connect().
-        this.connectPromise = this.doConnect();
-        return this.connectPromise;
+        // Liveness check is in progress but no connectPromise exists yet.
+        // Wait for liveness to finish instead of starting a competing
+        // doConnect(). If we start a fresh doConnect() here and the liveness
+        // check succeeds (old client is valid), doConnect() would replace
+        // the valid client, leaking the old StdioClientTransport process.
+        // After liveness completes, re-enter connect() which will either find
+        // the client still valid or proceed to the normal connect path below.
+        await new Promise<void>(resolve => {
+          const poll = () => {
+            if (this.livenessInProgress) { setTimeout(poll, 10); return; }
+            resolve();
+          };
+          setTimeout(poll, 10);
+        });
+        return this.connect();
       }
       this.livenessInProgress = true;
       try {
@@ -75,36 +87,46 @@ export class CodegraphClient {
           const timeout = setTimeout(() => controller.abort(), CONNECT_TIMEOUT_MS);
           // Wrap in Promise.race to enforce a hard timeout even if the MCP
           // SDK/transport does not respect the AbortSignal.
+          let livenessTimer: NodeJS.Timeout | undefined;
           const result = await Promise.race([
             currentClient.callTool(
               { name: 'codegraph_status', arguments: {} },
               undefined,
               { signal: controller.signal },
             ),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS)
-            ),
+            new Promise<never>((_, reject) => {
+              livenessTimer = setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS);
+            }),
           ]);
           clearTimeout(timeout);
+          if (livenessTimer) clearTimeout(livenessTimer);
           if (!result.isError) return;
+          // isError is true — codegraph reported an error even though the
+          // call succeeded. The client is reachable but unhealthy. Treat as
+          // a liveness failure so the catch block handles cleanup and retry.
+          throw new Error('codegraph_status reported an error');
         } catch {
           // One retry before discarding the client — transient errors
           // (protocol timeouts, network hiccups) shouldn't force a full reconnect.
           try {
             const controller2 = new AbortController();
             const timeout2 = setTimeout(() => controller2.abort(), CONNECT_TIMEOUT_MS);
+            let livenessTimer2: NodeJS.Timeout | undefined;
             const result2 = await Promise.race([
               currentClient.callTool(
                 { name: 'codegraph_status', arguments: {} },
                 undefined,
                 { signal: controller2.signal },
               ),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS)
-              ),
+              new Promise<never>((_, reject) => {
+                livenessTimer2 = setTimeout(() => reject(new Error('liveness timeout')), CONNECT_TIMEOUT_MS);
+              }),
             ]);
             clearTimeout(timeout2);
+            if (livenessTimer2) clearTimeout(livenessTimer2);
             if (!result2.isError) return;
+            // isError is true on retry as well — codegraph is unhealthy.
+            throw new Error('codegraph_status reported an error on retry');
           } catch {}
           // Client died — only close and null the field if it still references
           // the same client we tested (a concurrent doConnect may have replaced it).
@@ -158,7 +180,7 @@ export class CodegraphClient {
     let realStat: { ino: number; dev: number } | null = null;
     try {
       const { execFileSync } = await import('node:child_process');
-      cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8' }).trim();
+      cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 5000 }).trim();
       if (!cmd || cmd.includes('\n')) {
         throw new Error(`${this.command ? this.command : 'codegraph'} not found in PATH`);
       }
@@ -287,26 +309,49 @@ export class CodegraphClient {
    *  connecting. Returns a diagnostic string on failure, null on success. */
   async preflight(): Promise<string | null> {
     if (this._preflightResult !== undefined) return this._preflightResult;
-    const cmd = this.command ?? 'codegraph';
+    let cmd = this.command ?? 'codegraph';
     const { execFileSync } = await import('node:child_process');
 
-    // 1. Check if the binary exists on PATH
+    // Validate command safety and resolve the binary path with prefix checks,
+    // matching the defense-in-depth from doConnect(). Without this, a malicious
+    // .docrelay/config.yaml could specify codegraph.command pointing to an
+    // arbitrary binary, and preflight() would execute it via execFileSync.
+
+    // 0a. Reject shell metacharacters / control characters / relative paths
+    if (!validateCommandSafety(cmd, 256)) {
+      return (this._preflightResult = 'Codegraph command rejected — contains unsafe characters');
+    }
+    if ((cmd.includes('/') || cmd.includes('\\')) && !cmd.startsWith('/')) {
+      return (this._preflightResult = 'Codegraph command rejected — relative paths are not allowed');
+    }
+
+    // 0b. Resolve the binary via which and validate its real path prefix
     try {
       const whichOut = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 3000 }).trim();
       if (!whichOut) return (this._preflightResult = `Codegraph binary '${cmd}' not found on PATH — install from https://github.com/colbymchenry/codegraph`);
+      const fs = await import('node:fs');
+      const realBin = fs.realpathSync(whichOut);
+      const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+      if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
+          !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
+        return (this._preflightResult = 'Codegraph resolved to unexpected path — rejected for safety');
+      }
+      // Use the resolved, validated path for subsequent execFileSync calls
+      cmd = realBin;
     } catch {
       return (this._preflightResult = `Codegraph binary '${cmd}' not found on PATH — doc-relay will use the built-in regex extractor instead.`);
     }
 
-    // 2. Check if the binary actually works
+    // 1. Check if the binary actually works
     try {
       execFileSync(cmd, ['--version'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
     } catch (err: any) {
       const stderr = err.stderr || err.message || '';
-      return (this._preflightResult = `Codegraph binary '${cmd}' failed to run: ${stderr.slice(0, 200)}`);
+      // Sanitize: error may contain the resolved binary path
+      return (this._preflightResult = `Codegraph binary failed to run: ${stderr.slice(0, 200)}`);
     }
 
-    // 3. Check if it supports the 'mcp' subcommand
+    // 2. Check if it supports the 'mcp' subcommand
     // Run `codegraph --help`, then look for 'mcp' in the listed commands.
     // We must use --help (not `codegraph mcp --help`) because some codegraph
     // versions redirect unknown subcommands to the main help output instead
@@ -322,7 +367,7 @@ export class CodegraphClient {
     } catch (err: any) {
       const stderr = (err.stderr || err.message || '').toString();
       if (stderr.includes('unknown command') || stderr.includes('Unknown command') || stderr.includes('--help')) {
-        return (this._preflightResult = `Codegraph is installed but does not support the 'mcp' subcommand — update to the latest version for richer symbol data.`);
+        return (this._preflightResult = 'Codegraph is installed but does not support the \'mcp\' subcommand — update to the latest version for richer symbol data.');
       }
     }
 
@@ -380,10 +425,26 @@ export class CodegraphClient {
     return c;
   }
 
-  async explore(query: string, maxFiles = 12): Promise<ExploreResult> {
+  /** Wrap an MCP tool call with a timeout. If the codegraph process hangs or
+   *  becomes unresponsive after the liveness check passed, this prevents the
+   *  caller from blocking indefinitely. */
+  private async callToolWithTimeout(params: { name: string; arguments: Record<string, unknown> }): Promise<any> {
     const client = await this.ensureConnected();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        client.callTool(params) as any,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`callTool '${params.name}' timed out after ${TOOL_CALL_TIMEOUT_MS}ms`)), TOOL_CALL_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
-    const result = await client.callTool({
+  async explore(query: string, maxFiles = 12): Promise<ExploreResult> {
+    const result = await this.callToolWithTimeout({
       name: 'codegraph_explore',
       arguments: { query, maxFiles },
     });
@@ -394,9 +455,7 @@ export class CodegraphClient {
   }
 
   async impact(symbol: string, depth = 2): Promise<ImpactResult> {
-    const client = await this.ensureConnected();
-
-    const result = await client.callTool({
+    const result = await this.callToolWithTimeout({
       name: 'codegraph_impact',
       arguments: { symbol, depth },
     });
@@ -407,12 +466,10 @@ export class CodegraphClient {
   }
 
   async search(query: string, kind?: string): Promise<SearchResult> {
-    const client = await this.ensureConnected();
-
     const args: Record<string, unknown> = { query };
     if (kind) args.kind = kind;
 
-    const result = await client.callTool({
+    const result = await this.callToolWithTimeout({
       name: 'codegraph_search',
       arguments: args,
     });
@@ -427,10 +484,8 @@ export class CodegraphClient {
    *  Extracts the definition line (function/class/const/etc.) from the
    *  returned source code blocks. Returns null if no definition found. */
   async getSymbolSignature(symbolName: string, file?: string): Promise<string | null> {
-    const client = await this.ensureConnected();
-
     const query = file ? `${symbolName} in ${file}` : symbolName;
-    const result = await client.callTool({
+    const result = await this.callToolWithTimeout({
       name: 'codegraph_explore',
       arguments: { query, maxFiles: 1 },
     });
@@ -447,7 +502,13 @@ export class CodegraphClient {
       `(?:async\\s+)?\\b${escaped}\\s*\\(`,
     );
 
-    const lines = content.split('\n');
+    // F24 (round 9): Use truncateLines to bound line count before split.
+    // parseExploreOutput uses MAX_OUTPUT_LINES=100K; apply the same guard
+    // here to prevent unbounded array allocation from unexpected codegraph
+    // responses (e.g., a very large file with maxFiles=1).
+    const MAX_LINES = 100_000;
+    const { boundedContent } = truncateLines(content, MAX_LINES, 'getSymbolSignature');
+    const lines = boundedContent.split('\n');
     // Walk backwards from the end — the most relevant definition is usually
     // the last match (closest to the symbol's actual definition block).
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -485,14 +546,9 @@ export class CodegraphClient {
     if (!content) return { symbols: [], files: [] };
 
     const MAX_OUTPUT_LINES = 100_000;
-    let lines = content.split('\n');
-    if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocRelay: explore output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
-      lines = lines.slice(0, MAX_OUTPUT_LINES);
-      // F5: Signal truncation to callers so they can warn about potential
-      // symbol loss. Continue parsing partial results (better than nothing).
-      truncated = true;
-    }
+    const { boundedContent: bounded, truncated: wasTruncated } = truncateLines(content, MAX_OUTPUT_LINES, 'explore');
+    truncated = wasTruncated;
+    const lines = bounded.split('\n');
     for (const line of lines) {
       // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
       // Allow extensionless files (Makefile, Dockerfile, .gitignore, etc.)
@@ -507,7 +563,7 @@ export class CodegraphClient {
       // Track line numbers from source code blocks if available
       const lineNumMatch = line.match(/^\s*(\d+)\s*[|\|]\s*/);
       if (lineNumMatch) {
-        currentLine = parseInt(lineNumMatch[1]);
+        currentLine = parseInt(lineNumMatch[1], 10);
       }
 
       // Extract symbol definitions with their kind and name.
@@ -551,7 +607,13 @@ export class CodegraphClient {
     // have changed its output format or returned an error message. Log a
     // sample so operators can detect format mismatches.
     if (content && symbols.length === 0 && files.length === 0) {
-      const linesCount = content.split('\n').length;
+      // F24 (round 9): Count newlines via a bounded linear scan instead of
+      // split('\n') which would allocate a multi-million-element array on
+      // unexpected large codegraph responses.
+      let linesCount = 1;
+      for (let i = 0; i < content.length && i < 10_000_000; i++) {
+        if (content[i] === '\n') linesCount++;
+      }
       console.warn(`DocRelay: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
     }
     // F18: Warn when only one of symbols/files is empty — partial parse
@@ -570,13 +632,8 @@ export class CodegraphClient {
     if (!content) return { symbol, affected: [] };
 
     const MAX_OUTPUT_LINES = 100_000;
-    let lines = content.split('\n');
-    let truncated = false;
-    if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocRelay: impact output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
-      lines = lines.slice(0, MAX_OUTPUT_LINES);
-      truncated = true;
-    }
+    const { boundedContent: bounded, truncated } = truncateLines(content, MAX_OUTPUT_LINES, 'impact');
+    const lines = bounded.split('\n');
     const affected: ImpactResult['affected'] = [];
 
     for (const line of lines) {
@@ -597,24 +654,46 @@ export class CodegraphClient {
     if (!content) return { items: [] };
 
     const MAX_OUTPUT_LINES = 100_000;
-    let lines = content.split('\n');
-    let truncated = false;
-    if (lines.length > MAX_OUTPUT_LINES) {
-      console.warn(`DocRelay: search output has ${lines.length} lines — truncating to ${MAX_OUTPUT_LINES}`);
-      lines = lines.slice(0, MAX_OUTPUT_LINES);
-      truncated = true;
-    }
+    const { boundedContent: bounded, truncated } = truncateLines(content, MAX_OUTPUT_LINES, 'search');
+    const lines = bounded.split('\n');
     const items: SearchResult['items'] = [];
 
     for (const line of lines) {
       const match = line.match(/(\w+)\s*\((\w+)\)\s*in\s+(\S+):(\d+)/);
       if (match) {
-        items.push({ name: match[1], kind: match[2], file: match[3], line: parseInt(match[4]) });
+        items.push({ name: match[1], kind: match[2], file: match[3], line: parseInt(match[4], 10) });
       }
     }
 
     return { items, truncated };
   }
+}
+
+/** Truncate a string to at most `maxLines` lines, counting newlines in a
+ *  single pass before splitting. Returns the bounded content and whether
+ *  truncation occurred. Avoids the O(n) array allocation of split('\n')
+ *  on pathologically long codegraph responses (millions of newlines). */
+function truncateLines(content: string, maxLines: number, label: string): { boundedContent: string; truncated: boolean } {
+  let lineCount = 0;
+  for (let i = 0; i < content.length && lineCount <= maxLines; i++) {
+    if (content[i] === '\n') lineCount++;
+  }
+  // lineCount is the number of newlines — a string with N newlines has
+  // at most N+1 lines (fewer if it ends with a newline). We want at most
+  // maxLines lines, so reject when lineCount >= maxLines.
+  if (lineCount < maxLines) return { boundedContent: content, truncated: false };
+
+  console.warn(`DocRelay: ${label} output has ${lineCount} lines — truncating to ${maxLines}`);
+  let nlCount = 0;
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '\n') {
+      nlCount++;
+      if (nlCount >= maxLines) {
+        return { boundedContent: content.slice(0, i), truncated: true };
+      }
+    }
+  }
+  return { boundedContent: content, truncated: true };
 }
 
 /** Safely extract text content from an MCP tool result. Validates that

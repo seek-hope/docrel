@@ -172,6 +172,21 @@ docrelay scan                # Rescan
 
 // ── Append helpers ───────────────────────────────────────────────────
 
+const MAX_RULES_FILE_SIZE = 1_048_576; // 1 MB — rules files are typically < 10 KB
+
+function readFileWithSizeLimit(filePath: string): string | null {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size > MAX_RULES_FILE_SIZE) {
+      console.warn(`DocRelay: ${filePath} exceeds ${MAX_RULES_FILE_SIZE} bytes — skipping integration`);
+      return null;
+    }
+    return fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
 function appendToRulesFile(
   rulesPath: string,
   section: string,
@@ -186,7 +201,9 @@ function appendToRulesFile(
 
   let existing = '';
   if (fs.existsSync(rulesPath)) {
-    existing = fs.readFileSync(rulesPath, 'utf-8');
+    const content = readFileWithSizeLimit(rulesPath);
+    if (content === null) return false;
+    existing = content;
   }
 
   // Idempotent: skip if section marker is already present
@@ -207,12 +224,25 @@ function upsertMcpJson(projectRoot: string): boolean {
   let mcpConfig: { mcpServers?: Record<string, unknown> };
   if (fs.existsSync(mcpPath)) {
     try {
-      mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-    } catch (err: any) {
-      if (fs.existsSync(mcpPath)) {
-        console.warn(`DocRelay: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
+      const stat = fs.statSync(mcpPath);
+      if (stat.size > MAX_RULES_FILE_SIZE) {
+        console.warn(`DocRelay: ${mcpPath} exceeds ${MAX_RULES_FILE_SIZE} bytes — skipping MCP integration`);
+        return false;
       }
-      mcpConfig = {};
+      const raw = fs.readFileSync(mcpPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      // JSON.parse can return null for valid JSON input "null" — reject it.
+      if (typeof parsed !== 'object' || parsed === null) {
+        console.warn(`DocRelay: ${mcpPath} does not contain a JSON object — skipping MCP integration`);
+        return false;
+      }
+      mcpConfig = parsed as { mcpServers?: Record<string, unknown> };
+    } catch (err: any) {
+      // File exists but is not valid JSON — do NOT overwrite it with a
+      // fresh config (that would destroy all other MCP server entries).
+      console.warn(`DocRelay: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
+      console.warn(`DocRelay: skipping MCP integration — fix or remove ${mcpPath} and re-run.`);
+      return false;
     }
   } else {
     mcpConfig = {};
@@ -253,16 +283,25 @@ function integrateClaudeCode(
     if (mcpAdded) files.push(path.join(projectRoot, '.mcp.json'));
   } else {
     // Dry-run: predict what would happen
-    let existing = '';
-    try { existing = fs.readFileSync(rulesPath, 'utf-8'); } catch { /* file does not exist */ }
-    if (!existing.includes(CLAUDE_SECTION_MARKER)) files.push(rulesPath);
+    const existing = readFileWithSizeLimit(rulesPath);
+    if (existing === null || !existing.includes(CLAUDE_SECTION_MARKER)) files.push(rulesPath);
 
     const mcpPath = path.join(projectRoot, '.mcp.json');
     let hasDocrel = false;
-    try {
-      const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docrelay);
-    } catch { /* missing or invalid */ }
+    const mcpContent = readFileWithSizeLimit(mcpPath);
+    if (mcpContent !== null) {
+      try {
+        const m = JSON.parse(mcpContent);
+        // Guard against JSON.parse returning null (valid JSON input "null").
+        // Without this, accessing m.mcpServers on null throws TypeError,
+        // which the catch treats as "missing" — but upsertMcpJson correctly
+        // detects null and skips modification, causing a dry-run vs actual
+        // behavior discrepancy.
+        if (typeof m === 'object' && m !== null) {
+          hasDocrel = !!(m.mcpServers?.docrelay);
+        }
+      } catch { /* missing or invalid */ }
+    }
     if (!hasDocrel) files.push(mcpPath);
   }
 
@@ -288,16 +327,21 @@ function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationRes
     const mcpAdded = upsertMcpJson(projectRoot);
     if (mcpAdded) files.push(path.join(projectRoot, '.mcp.json'));
   } else {
-    let existing = '';
-    try { existing = fs.readFileSync(rulesPath, 'utf-8'); } catch { /* file does not exist */ }
-    if (!existing.includes(SECTION_MARKER)) files.push(rulesPath);
+    const existing = readFileWithSizeLimit(rulesPath);
+    if (existing === null || !existing.includes(SECTION_MARKER)) files.push(rulesPath);
 
     const mcpPath = path.join(projectRoot, '.mcp.json');
     let hasDocrel = false;
-    try {
-      const m = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-      hasDocrel = !!(m.mcpServers?.docrelay);
-    } catch { /* missing or invalid */ }
+    const mcpContent = readFileWithSizeLimit(mcpPath);
+    if (mcpContent !== null) {
+      try {
+        const m = JSON.parse(mcpContent);
+        // Guard against JSON.parse returning null — same rationale as above.
+        if (typeof m === 'object' && m !== null) {
+          hasDocrel = !!(m.mcpServers?.docrelay);
+        }
+      } catch { /* missing or invalid */ }
+    }
     if (!hasDocrel) files.push(mcpPath);
   }
 
@@ -319,9 +363,8 @@ function integrateOhMyPi(projectRoot: string, dryRun: boolean, agentKind: AgentK
     const added = appendToRulesFile(rulesPath, PI_DOCRELAY_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
   } else {
-    let existing = '';
-    try { existing = fs.readFileSync(rulesPath, 'utf-8'); } catch { /* file does not exist */ }
-    if (!existing.includes(SECTION_MARKER)) files.push(rulesPath);
+    const existing = readFileWithSizeLimit(rulesPath);
+    if (existing === null || !existing.includes(SECTION_MARKER)) files.push(rulesPath);
   }
 
   const agentName = agentKind === 'hermes' ? 'Hermes' : 'Oh My Pi';

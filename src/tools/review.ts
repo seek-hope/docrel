@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertDbOpen } from '../db/connection.js';
-import { escapeRegex } from '../utils/fs.js';
+import { escapeRegex, validatePath } from '../utils/fs.js';
 
 export interface ReviewReport {
   unlinkedSymbols: UnlinkedSymbol[];
@@ -61,6 +61,7 @@ function findUnlinked(db: Database.Database): UnlinkedSymbol[] {
     FROM symbols s
     WHERE s.id NOT IN (SELECT DISTINCT symbol_id FROM mappings)
     ORDER BY s.name
+    LIMIT 10000
   `).all() as UnlinkedSymbol[];
 }
 
@@ -71,6 +72,7 @@ function findOrphaned(db: Database.Database): OrphanedSection[] {
     FROM doc_sections d
     WHERE d.id NOT IN (SELECT DISTINCT doc_id FROM mappings)
     ORDER BY d.file, d.anchor
+    LIMIT 10000
   `).all() as OrphanedSection[];
 }
 
@@ -83,27 +85,44 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
   const references: ImpliedReference[] = [];
   const skippedFiles: string[] = [];
 
-  // Get all known symbol names
-  const symRows = db.prepare('SELECT name FROM symbols').all() as { name: string }[];
+  // Get all known symbol names (capped to prevent memory exhaustion on large projects)
+  const symRows = db.prepare('SELECT name FROM symbols LIMIT 50000').all() as { name: string }[];
   const knownNames = new Set(symRows.map((r) => r.name));
 
-  // Get all docs with their content
-  const docRows = db.prepare('SELECT id, file, anchor FROM doc_sections WHERE doc_type = \'standalone\'').all() as
+  // Get all docs with their content (capped to prevent memory exhaustion on large projects)
+  const docRows = db.prepare("SELECT id, file, anchor FROM doc_sections WHERE doc_type = 'standalone' LIMIT 50000").all() as
     { id: string; file: string; anchor: string }[];
 
-  // Get existing mapping pairs
+  // Get existing mapping pairs (capped to prevent memory exhaustion)
   const mapRows = db.prepare(`
     SELECT s.name AS symbol_name, d.file AS doc_file, d.anchor AS doc_anchor
     FROM mappings m
     JOIN symbols s ON s.id = m.symbol_id
     JOIN doc_sections d ON d.id = m.doc_id
+    LIMIT 100000
   `).all() as { symbol_name: string; doc_file: string; doc_anchor: string }[];
   const existingPairs = new Set(mapRows.map((r) => `${r.symbol_name}::${r.doc_file}#${r.doc_anchor}`));
+
+  const MAX_IMPLIED_REFERENCES = 10_000;
 
   for (const doc of docRows) {
     let fd: number | undefined;
     try {
+      // Reject DB-stored absolute paths that would escape projectRoot.
+      // path.resolve returns absolute paths as-is when the second argument
+      // is absolute — e.g. path.resolve('/project', '/etc/passwd') = '/etc/passwd'.
+      // DB paths are populated by the scanner (which enforces containment),
+      // but a corrupted or tampered database could contain traversal paths.
+      const root = path.resolve(projectRoot);
+      if (path.isAbsolute(doc.file) && !doc.file.startsWith(root + path.sep) && doc.file !== root) {
+        skippedFiles.push(`${doc.file} (PATH_TRAVERSAL)`);
+        continue;
+      }
       const fullPath = path.resolve(projectRoot, doc.file);
+      if (!fullPath.startsWith(root + path.sep) && fullPath !== root) {
+        skippedFiles.push(`${doc.file} (PATH_TRAVERSAL)`);
+        continue;
+      }
 
       // Use fd-based approach (same pattern as standalone.ts:openAndValidate
       // and inline.ts:updateInlineDoc) to eliminate the TOCTOU window between
@@ -128,10 +147,26 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
         : content.length;
 
       const sectionContent = content.slice(sectionStart, sectionEnd);
+      // Guard against pathological section content with millions of short lines
+      // (e.g., a 1 MB section of 2-char lines). Content is already bounded at
+      // 1 MB by the stat check above, but split('\n') still allocates ~500 K
+      // string objects without a line-count guard.
+      const MAX_IMPLIED_LINES = 100_000;
+      let impliedLineCount = 1;
+      for (let ci = 0; ci < sectionContent.length && impliedLineCount <= MAX_IMPLIED_LINES; ci++) {
+        if (sectionContent[ci] === '\n') impliedLineCount++;
+      }
+      if (impliedLineCount > MAX_IMPLIED_LINES) continue;
       const sectionLines = sectionContent.split('\n');
 
       for (const symbolName of knownNames) {
         if (symbolName.length < 2) continue;
+
+        // Cap the references array to prevent OOM on large projects where
+        // many symbol names match many section contents. The implied-reference
+        // scan is O(symbols × sections) — without a push cap, a project with
+        // 50 K symbols and 50 K docs could allocate millions of entries.
+        if (references.length >= MAX_IMPLIED_REFERENCES) break;
 
         // Check if symbol name appears in section text (outside code blocks)
         const escaped = escapeRegex(symbolName);
@@ -163,6 +198,8 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
           mentionText: sectionLines[mentionLine]?.trim().slice(0, 120) ?? '',
         });
       }
+
+      if (references.length >= MAX_IMPLIED_REFERENCES) break;
     } catch (err: any) {
       // Collect unreadable files so operators know which docs could not be
       // analyzed. EACCES, EIO, and file-not-found are all treated as skips
@@ -190,6 +227,7 @@ function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
     JOIN doc_sections d ON d.id = m.doc_id
     WHERE m.review_status = 'auto'
     ORDER BY s.name
+    LIMIT 10000
   `).all() as UnreviewedMapping[];
 }
 
@@ -337,7 +375,14 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
     lines.push(`### Unreviewed Mappings (${report.unreviewedMappings.length})`);
     lines.push('');
 
-    for (let i = 0; i < report.unreviewedMappings.length; i++) {
+    // Cap the number of mappings rendered in detail mode. Each mapping triggers
+    // a recursive src/ directory walk via readSourceSnippet(), which for large
+    // codebases (50 K files) can take seconds per mapping. Without a cap, the
+    // full 10,000 unreviewed mappings would render for minutes to hours.
+    const MAX_DETAILED_MAPPINGS = 200;
+    const displayCount = Math.min(report.unreviewedMappings.length, MAX_DETAILED_MAPPINGS);
+
+    for (let i = 0; i < displayCount; i++) {
       const m = report.unreviewedMappings[i];
       lines.push(`#### ${i + 1}. \`${m.symbolName}\` ↔ ${m.docFile}#${m.docAnchor}`);
       lines.push('');
@@ -366,6 +411,11 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
       lines.push(`→ \`docrelay confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docrelay reject --symbol ${m.symbolId} --doc ${m.docId}\``);
       lines.push('');
     }
+
+    if (report.unreviewedMappings.length > MAX_DETAILED_MAPPINGS) {
+      lines.push(`_Showing ${MAX_DETAILED_MAPPINGS} of ${report.unreviewedMappings.length} unreviewed mappings. Use \`docrelay review --format json\` to see all IDs._`);
+      lines.push('');
+    }
   }
 
   // Fallback to standard format for other sections
@@ -388,10 +438,15 @@ function readSourceSnippet(symbolName: string, projectRoot: string): string {
     const srcDir = path.join(projectRoot, 'src');
     if (!fs.existsSync(srcDir)) return `(no src/ directory found)`;
 
+    const MAX_FILES = 5000;
+    let filesChecked = 0;
+
     const walkDir = (dir: string, depth = 0): string | null => {
       // Cap recursion depth to prevent stack overflow from deeply nested or
       // circular directory structures (e.g., symlink loops resolved by isDirectory()).
       if (depth > 20) return null;
+      // Cap file count to prevent resource exhaustion on very large codebases
+      if (filesChecked >= MAX_FILES) return null;
       let entries: fs.Dirent[];
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -399,6 +454,7 @@ function readSourceSnippet(symbolName: string, projectRoot: string): string {
         return null;
       }
       for (const e of entries) {
+        if (filesChecked >= MAX_FILES) return null;
         const full = path.join(dir, e.name);
         if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') {
           // Verify symlink containment for directories before recursing.
@@ -411,13 +467,31 @@ function readSourceSnippet(symbolName: string, projectRoot: string): string {
           const found = walkDir(realDir, depth + 1);
           if (found) return found;
         } else if (e.isFile() && /\.(ts|js|py|rs|go|java)$/.test(e.name)) {
+          filesChecked++;
           // Verify symlink containment for individual files.
           let realFile: string;
           try { realFile = fs.realpathSync(full); } catch { continue; }
           if (!realFile.startsWith(projectRoot + path.sep) && realFile !== projectRoot) continue;
+          // Guard against large files (generated bundles, minified libs) that
+          // would OOM when loaded into a string for snippet extraction.
+          // The review display helper only needs the symbol definition region.
+          const fstat = fs.statSync(realFile);
+          if (fstat.size > 10 * 1024 * 1024) continue; // 10 MB limit
           const content = fs.readFileSync(realFile, 'utf-8');
           if (content.includes(symbolName)) {
             // Extract surrounding lines
+            const MAX_SNIPPET_LINES = 100_000;
+            // F24 (round 9) / Round 14 fix: the original round 9 fix added a
+            // post-split guard here, but content.split('\n') still allocates
+            // the full array before the guard can reject it. Pre-scan newline
+            // count first so we never allocate a multi-million-element array.
+            let snippetLineCount = 1;
+            for (let si = 0; si < content.length && snippetLineCount <= MAX_SNIPPET_LINES + 1; si++) {
+              if (content[si] === '\n') snippetLineCount++;
+            }
+            if (snippetLineCount > MAX_SNIPPET_LINES) {
+              return `(file exceeds ${MAX_SNIPPET_LINES} lines: ${path.relative(projectRoot, full)})`;
+            }
             const lines = content.split('\n');
             const idx = lines.findIndex(l =>
               l.includes(`function ${symbolName}`) ||
@@ -455,11 +529,27 @@ function readSourceSnippet(symbolName: string, projectRoot: string): string {
 
 /** Read a short snippet of a doc section. */
 function readDocSnippet(docFile: string, anchor: string, projectRoot: string): string {
-  try {
-    const fullPath = path.join(projectRoot, docFile);
-    if (!fs.existsSync(fullPath)) return `(file not found: ${docFile})`;
+  // Validate path containment — defense-in-depth against DB-stored paths
+  // that may contain traversal components (path.join normalizes ../).
+  const resolved = validatePath(docFile, projectRoot);
+  if (!resolved) return `(invalid path: ${docFile})`;
 
-    const content = fs.readFileSync(fullPath, 'utf-8');
+  try {
+    // Guard against large doc files that would OOM when loaded into a string.
+    const fstat = fs.statSync(resolved);
+    if (fstat.size > 10 * 1024 * 1024) return `(file too large: ${docFile})`;
+    const content = fs.readFileSync(resolved, 'utf-8');
+    const MAX_SNIPPET_LINES = 100_000;
+    // Round 14 fix: the original round 9 fix added a post-split guard here,
+    // but content.split('\\n') still allocates the full array before the
+    // guard can reject it. Pre-scan newline count first.
+    let snippetLineCount = 1;
+    for (let si = 0; si < content.length && snippetLineCount <= MAX_SNIPPET_LINES + 1; si++) {
+      if (content[si] === '\n') snippetLineCount++;
+    }
+    if (snippetLineCount > MAX_SNIPPET_LINES) {
+      return `(file exceeds ${MAX_SNIPPET_LINES} lines: ${docFile})`;
+    }
     const lines = content.split('\n');
 
     if (!anchor) {
@@ -474,7 +564,16 @@ function readDocSnippet(docFile: string, anchor: string, projectRoot: string): s
     const match = content.match(headingRegex);
     if (!match || match.index === undefined) return `(anchor "${anchor}" not found in ${docFile})`;
 
-    const headingLine = content.slice(0, match.index).split('\n').length;
+    // Count newlines up to the heading position instead of splitting the
+    // substring (content.slice(0, match.index).split('\\n')). The substring
+    // can be up to 10 MB (file size limit) when the heading is near the end,
+    // and split('\\n') would allocate ~500 K string objects without a
+    // pre-scan guard. A simple char loop avoids the allocation entirely.
+    let headingLine = 1;
+    const headingIdx = match.index;
+    for (let hi = 0; hi < headingIdx; hi++) {
+      if (content[hi] === '\n') headingLine++;
+    }
     const start = Math.max(0, headingLine - 1);
     const end = Math.min(lines.length, headingLine + 12);
     const prefix = `// ${docFile}:${headingLine + 1}\n`;

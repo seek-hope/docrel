@@ -12,6 +12,38 @@ export interface GeneratedSyncInput {
 
 const MAX_ARGS = 50;
 
+/**
+ * Scan a JSON string to determine its maximum nesting depth, correctly
+ * skipping string literals and escape sequences. Used as a pre-parse guard
+ * because JSON.parse revivers are post-order and cannot track nesting depth.
+ */
+function scanJsonDepth(raw: string): number {
+  let maxDepth = 0;
+  let currentDepth = 0;
+  let inString: string | null = null;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      // Skip both the backslash and the escaped character so that
+      // an escaped string delimiter (e.g. \" inside "...") is not
+      // mistaken for the closing quote.
+      // i += 1 here — the for-loop's i++ adds 1 more, net skip = 2
+      // (backslash + escaped character). i += 2 would skip 3 characters.
+      if (ch === '\\') { i += 1; continue; }
+      if (ch === inString) { inString = null; }
+      continue;
+    }
+    if (ch === '"' || ch === "'") { inString = ch; continue; }
+    if (ch === '{' || ch === '[') {
+      currentDepth++;
+      if (currentDepth > maxDepth) maxDepth = currentDepth;
+    } else if (ch === '}' || ch === ']') {
+      currentDepth--;
+    }
+  }
+  return maxDepth;
+}
+
 // Only allow documentation generators — NOT general-purpose interpreters.
 // Retaining interpreters (bash, sh, node, tsx, npx, python, python3, make, cargo)
 // would enable arbitrary code execution from package.json scripts, which is a
@@ -42,7 +74,7 @@ const ALLOWED_SCRIPTS = new Set([
  *  @param preferredScripts — checked first before the default ALLOWED_SCRIPTS
  *  order. Use this to ensure type-specific scripts win over generic ones
  *  (e.g., `generate:openapi` for OpenAPI specs, `docs:generate` for TypeDoc). */
-function resolveNpmScript(scripts: Record<string, string>, preferredScripts?: string[]): string | null {
+function resolveNpmScript(scripts: Record<string, unknown>, preferredScripts?: string[]): string | null {
   const order = preferredScripts ? [...preferredScripts, ...ALLOWED_SCRIPTS] : ALLOWED_SCRIPTS;
   for (const scriptName of order) {
     if (typeof scripts[scriptName] === 'string') {
@@ -215,24 +247,31 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
 
   // Use a safe JSON parser with depth limit to prevent stack overflow
   // from deeply nested package.json files within the 1MB size limit.
-  const MAX_JSON_DEPTH = 100;
-  let pkg: any;
+  // JSON.parse reviver runs in post-order and cannot track nesting depth
+  // correctly (depth never decrements). Pre-scan the raw string with
+  // bracket counting (skipping strings) to find the true max nesting depth.
+  const MAX_JSON_DEPTH = 200;
+  const rawDepth = scanJsonDepth(raw);
+  if (rawDepth > MAX_JSON_DEPTH) {
+    console.error(`Warning: ${pkgPath} has nesting depth ${rawDepth}, exceeding limit ${MAX_JSON_DEPTH} — skipping`);
+    return null;
+  }
+  let pkg: Record<string, unknown>;
   try {
-    let depth = 0;
-    pkg = JSON.parse(raw, (_key, value) => {
-      if (typeof value === 'object' && value !== null) {
-        depth++;
-        if (depth > MAX_JSON_DEPTH) {
-          throw new Error(`JSON nesting depth exceeds ${MAX_JSON_DEPTH}`);
-        }
-      }
-      return value;
-    });
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) {
+      console.error(`Warning: ${pkgPath} does not contain a JSON object — skipping`);
+      return null;
+    }
+    pkg = parsed as Record<string, unknown>;
   } catch (err: any) {
     console.error(`Warning: Failed to parse ${pkgPath}: ${err.message}`);
     return null;
   }
-  const scripts = pkg.scripts ?? {};
+  const scripts: Record<string, unknown> =
+    typeof pkg.scripts === 'object' && pkg.scripts !== null
+      ? pkg.scripts as Record<string, unknown>
+      : {};
 
   // Only treat YAML files as OpenAPI specs when there are additional signals:
   // the filename or path includes 'openapi', 'swagger', or the file is inside
@@ -247,12 +286,21 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   // When filename/path heuristics miss (e.g. spec.yaml in a non-standard dir),
   // check the first few non-comment lines for OpenAPI/Swagger version headers.
   if (!isOpenApiFile && (file.endsWith('.yaml') || file.endsWith('.yml'))) {
+    // Containment check: reject DB-sourced file paths that escape projectRoot.
+    // While the scanner populates doc_sections.file with relative paths, a
+    // corrupted or tampered database could contain traversal paths. This
+    // matches the defense-in-depth pattern used in standalone.ts, inline.ts,
+    // and review.ts.
+    const resolved = path.resolve(projectRoot, file);
+    const root = path.resolve(projectRoot);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+
     // Use fd-based read with a fixed-size buffer to avoid loading the entire
     // file into memory. A large OpenAPI spec (e.g., 200 MB) would be fully
     // read and then 99.5% discarded by .slice(0, 1024).
     let fd: number | undefined;
     try {
-      fd = fs.openSync(path.join(projectRoot, file), 'r');
+      fd = fs.openSync(resolved, 'r');
       const buf = Buffer.alloc(1024);
       const bytesRead = fs.readSync(fd, buf, 0, 1024, 0);
       const firstBytes = buf.toString('utf-8', 0, bytesRead);
@@ -261,7 +309,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
         const npmCmd = resolveNpmScript(scripts, ['generate:openapi', 'generate:api']);
         if (npmCmd) return npmCmd;
         const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
-        if (typeof cmd === 'string' && validateCommandSafety(cmd)) return cmd;
+        if (typeof cmd === 'string' && cmd.trim() && validateCommandSafety(cmd)) return cmd;
       }
     } catch { /* file unreadable — not an OpenAPI spec for our purposes */ }
     finally {
@@ -276,7 +324,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     if (npmCmd) return npmCmd;
     // Fall back to direct command for backwards compatibility
     const cmd = scripts['generate:api'] ?? scripts['generate:openapi'];
-    if (typeof cmd !== 'string') return null;
+    if (typeof cmd !== 'string' || !cmd.trim()) return null;
     if (scripts['generate:api'] && scripts['generate:openapi']) {
       console.warn(`DocRelay: Both generate:api and generate:openapi found in package.json — using generate:api for ${file}`);
     }
@@ -292,7 +340,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
     if (npmCmd) return npmCmd;
     // Fall back to direct command for backwards compatibility
     const cmd = scripts['docs:generate'];
-    if (typeof cmd !== 'string') return null;
+    if (typeof cmd !== 'string' || !cmd.trim()) return null;
     if (!validateCommandSafety(cmd)) return null;
     return cmd;
   }

@@ -92,12 +92,13 @@ export async function docrelayHealth(
   // 4. Codegraph availability (with 5s timeout to prevent hangs)
   await run('codegraph', async () => {
     const start = Date.now();
+    let timer: NodeJS.Timeout | undefined;
     try {
       const available = await Promise.race([
         checkCodegraph(),
-        new Promise<boolean>((_, reject) =>
-          setTimeout(() => reject(new Error('timeout')), CODEGRAPH_HEALTH_TIMEOUT_MS)
-        ),
+        new Promise<boolean>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('timeout')), CODEGRAPH_HEALTH_TIMEOUT_MS);
+        }),
       ]);
       const latencyMs = Date.now() - start;
       if (available) {
@@ -107,6 +108,8 @@ export async function docrelayHealth(
     } catch (err: any) {
       const latencyMs = Date.now() - start;
       return { name: 'codegraph', status: 'degraded', code: ErrorCode.CG_UNAVAILABLE, message: `Codegraph check failed: ${err instanceof Error ? err.message : String(err)}`, latencyMs };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   });
 
@@ -161,8 +164,11 @@ export async function docrelayHealth(
   for (const c of failed) {
     errors.push({ code: c.code ?? ErrorCode.INTERNAL_UNEXPECTED, message: c.message });
     // Log structured errors so monitoring/alerting systems can scan for them.
+    // c.code originates from ErrorCode constants in this file, so the cast is
+    // safe at runtime — use ?? to handle the undefined case explicitly.
+    const errorCode: ErrorCode = (c.code ?? ErrorCode.INTERNAL_UNEXPECTED) as ErrorCode;
     logError(docrelayError(
-      (c.code as ErrorCode) ?? ErrorCode.INTERNAL_UNEXPECTED,
+      errorCode,
       c.message,
       `health check: ${c.name}`,
       false,

@@ -7,6 +7,8 @@ export interface GcReport {
   symbolsRemoved: number;
   symbolsMarkedStale: number;
   dryRun: boolean;
+  /** Set when the GC transaction failed — callers should check this. */
+  error?: string;
 }
 
 const STALE_MARKER = '__stale__';
@@ -83,10 +85,12 @@ export function docrelayGc(
         }
       })();
     } catch (err: any) {
-      console.error('DocRelay: GC transaction failed:', err instanceof Error ? err.message : err);
-      // Return partial counts — the transaction is atomic, so on failure
-      // no changes were committed. Report zero mutations.
-      return { symbolsRemoved: 0, symbolsMarkedStale: 0, dryRun: false };
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('DocRelay: GC transaction failed:', msg);
+      // The transaction is atomic — on failure no changes were committed.
+      // Return zero mutations WITH an error field so callers (cli.ts gc command)
+      // can distinguish "nothing to GC" from "GC failed".
+      return { symbolsRemoved: 0, symbolsMarkedStale: 0, dryRun: false, error: msg };
     }
   }
 

@@ -156,7 +156,7 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
         try { realPath = fs.realpathSync(fullPath); } catch { continue; }
         if (seenDirs.has(realPath)) continue;
         seenDirs.add(realPath);
-        stack.push(fullPath);
+        stack.push(realPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
         if (SUPPORTED_EXTS.has(ext)) {
@@ -182,14 +182,26 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
     }
     return [];
   }
+  // Guard against large files (generated bundles, minified vendor libs) that
+  // would OOM when loaded into a string. All other file readers in the codebase
+  // (inline.ts, standalone.ts, doc-scanner.ts, generated.ts, review.ts) cap at 10MB.
   let content: string;
+  let fd: number | undefined;
   try {
-    content = fs.readFileSync(realPath, 'utf-8');
+    // Use fd-based read to avoid TOCTOU between stat and readFileSync
+    fd = fs.openSync(realPath, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return [];
+    content = fs.readFileSync(fd, 'utf-8');
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
       console.warn(`DocRelay: cannot read source file ${realPath}:`, err instanceof Error ? err.message : err);
     }
     return [];
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch { /* best effort */ }
+    }
   }
 
   const ext = path.extname(filePath).toLowerCase();
@@ -198,6 +210,17 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
 
   const language = detectLanguage(filePath);
   const relativePath = path.relative(projectRoot, filePath);
+  // Guard against pathological files with millions of short lines that
+  // would allocate a massive array from split. Pre-scan newline count
+  // before splitting to avoid OOM from the array allocation itself.
+  // (Round 14: the original round 5 fix used a post-split guard which
+  // does not prevent the split from allocating the array.)
+  const MAX_LINES = 100_000;
+  let newlineCount = 1;
+  for (let i = 0; i < content.length && newlineCount <= MAX_LINES + 1; i++) {
+    if (content[i] === '\n') newlineCount++;
+  }
+  if (newlineCount > MAX_LINES) return [];
   const lines = content.split('\n');
   const symbols: ExtractedSymbol[] = [];
   const seen = new Set<string>();

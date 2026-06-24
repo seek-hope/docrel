@@ -572,6 +572,29 @@ program
         exit(1);
       }
       const fullPath = resolved;
+      // Size check before readFileSync: commit message files are expected to
+      // be small (typically < 5 KB). A pathological commit message (e.g., from
+      // a broken tool injecting a multi-MB diff into the message) would OOM.
+      // Reject anything over 1 MB — a real commit message should never be that
+      // large. Git itself limits commit messages to 64 KiB (configurable via
+      // core.commentChar), so 1 MB is extremely generous.
+      const MAX_COMMIT_MSG_SIZE = 1_048_576; // 1 MB
+      try {
+        const st = fs.statSync(fullPath);
+        if (st.size > MAX_COMMIT_MSG_SIZE) {
+          console.error(`Error: commit message file exceeds ${MAX_COMMIT_MSG_SIZE} bytes — skipping annotation.`);
+          // Do NOT exit — the commit should proceed without DocRelay annotation
+          // rather than blocking the developer's git workflow.
+          return;
+        }
+      } catch (err: any) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code && code !== 'ENOENT') {
+          console.error('Failed to annotate commit message:', errMsg(err));
+          exit(1);
+        }
+        // File doesn't exist (ENOENT) — skip, same as empty message
+      }
       let existing = '';
       try {
         existing = fs.readFileSync(fullPath, 'utf-8');

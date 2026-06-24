@@ -24,6 +24,7 @@ export function docrelayCheck(db: Database.Database, strict = false): CheckRepor
       LEFT JOIN mappings m ON m.doc_id = d.id
       WHERE d.status = 'stale'
       ORDER BY d.id
+      LIMIT 10000
     `).all() as Array<{ id: string; file: string; anchor: string; doc_type: string; status: string; symbol_id: string | null }>;
 
     // Group by doc_id to collect linked symbols per doc

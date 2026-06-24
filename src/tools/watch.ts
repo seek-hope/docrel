@@ -7,6 +7,7 @@ import { scanDocs } from '../discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from '../discovery/auto-linker.js';
 import { listSymbols } from '../db/symbols.js';
 import { isIgnored } from '../utils/ignore.js';
+import { escapeLike } from '../utils/fs.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -177,13 +178,69 @@ export async function startWatch(
       watchStatus.eventsProcessed++;
       watchStatus.lastEventAt = new Date().toISOString();
       const now = new Date().toLocaleTimeString();
-      console.log(`[${now}] File removed: ${path.relative(projectRoot, p)}`);
+      const rel = path.relative(projectRoot, p);
+      console.log(`[${now}] File removed: ${rel}`);
+
+      // Mark linked docs as stale when a source file is deleted.
+      // Without this, deleted symbols persist until the next explicit gc run
+      // (two-pass: first gc marks stale, second gc deletes). The watcher
+      // should surface the impact immediately so the developer sees stale docs
+      // in docrelay status and can run gc to clean up.
+      try {
+        // Find symbols whose location starts with this file path.
+        // Cap at 1000 to prevent pathological DB queries from blocking the
+        // event loop — large repos should use explicit gc instead.
+        const affectedSymbols = db.prepare(
+          `SELECT id FROM symbols WHERE location LIKE ? || ':%' ESCAPE '\\' LIMIT 1000`
+        ).all(escapeLike(rel)) as Array<{ id: string }>;
+        if (affectedSymbols.length > 0) {
+          // Mark mappings for affected symbols as stale
+          const markMappingStale = db.prepare(
+            "UPDATE mappings SET review_status = 'auto' WHERE symbol_id = ? AND review_status = 'confirmed'"
+          );
+          const markDocStale = db.prepare(
+            "UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id IN (SELECT doc_id FROM mappings WHERE symbol_id = ?)"
+          );
+          const txn = db.transaction(() => {
+            for (const sym of affectedSymbols) {
+              markMappingStale.run(sym.id);
+              markDocStale.run(sym.id);
+            }
+          });
+          txn();
+          console.log(`[${now}] File removed: ${rel} — ${affectedSymbols.length} symbol(s) affected, docs marked stale`);
+        }
+      } catch (err: any) {
+        watchStatus.errorsEncountered++;
+        watchStatus.lastError = err instanceof Error ? err.message : String(err);
+        console.error(`[${now}] Error processing file removal ${rel}: ${err instanceof Error ? err.message : err}`);
+      }
     });
 
     watcher.on("error", (err: any) => {
       watchStatus.errorsEncountered++;
       watchStatus.lastError = err instanceof Error ? err.message : String(err);
-      console.error(`Watch error: ${err.message}`);
+      console.error(`Watch error: ${err?.message ?? err}`);
+    });
+
+    // Handle chokidar close — the watcher may die after a fatal error
+    // (EMFILE, ENOSPC, filesystem unmount). Log prominently and write a
+    // recovery marker so `docrelay status` can surface the failure.
+    // chokidar's 'close' event is not in the typed FSWatcherEventMap, but
+    // FSWatcher extends EventEmitter and emits it at runtime.
+    (watcher as any).on("close", () => {
+      watchStatus.running = false;
+      watchStatus.lastError = 'Filesystem watcher closed unexpectedly — restart with `docrelay watch`';
+      console.error('DocRelay: filesystem watcher closed unexpectedly. Docs may become stale. Re-run `docrelay watch` to resume.');
+      try {
+        const markerDir = path.join(projectRoot, '.docrelay');
+        fs.mkdirSync(markerDir, { recursive: true });
+        fs.writeFileSync(path.join(markerDir, 'watch-crashed'), JSON.stringify({
+          at: new Date().toISOString(),
+          eventsProcessed: watchStatus.eventsProcessed,
+          errorsEncountered: watchStatus.errorsEncountered,
+        }));
+      } catch { /* best-effort marker */ }
     });
 
     console.log('DocRelay watch is running. Press Ctrl+C to stop.');

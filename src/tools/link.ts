@@ -44,17 +44,20 @@ export function docrelayLink(
         return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:`Constraint violation (diagnostic failed: ${(innerErr as any)?.code ?? 'unknown'})` };
       }
     }
+    console.error(`DocRelay: docrelayLink ${p.action} failed for symbol=${p.symbol_id} doc=${p.doc_id}:`, err instanceof Error ? err.message : err);
     return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:'Internal DB error.' };
   }
 }
 
 export function docrelayConfirm(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+  if (!sid || !did) return { action:'error', symbol_id:sid || '', doc_id:did || '', rel_type:rt, message:'symbol_id and doc_id must not be empty' };
   const row = setReviewStatus(db, sid, did, rt, 'confirmed');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'confirmed', message:'Mapping confirmed.' };
 }
 
 export function docrelayReject(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+  if (!sid || !did) return { action:'error', symbol_id:sid || '', doc_id:did || '', rel_type:rt, message:'symbol_id and doc_id must not be empty' };
   const row = setReviewStatus(db, sid, did, rt, 'rejected');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'rejected', message:'Mapping rejected.' };
