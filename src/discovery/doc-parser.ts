@@ -275,19 +275,12 @@ function extractCodeBlockRefs(text: string, baseLine: number): CodeRef[] {
   const seen = new Set<string>();
   const lines = text.split('\n');
   let inBlock = false;
-  let blockLang = '';
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const fenceMatch = line.match(/^```(\w*)/);
     if (fenceMatch) {
-      if (!inBlock) {
-        inBlock = true;
-        blockLang = fenceMatch[1] || '';
-      } else {
-        inBlock = false;
-        blockLang = '';
-      }
+      inBlock = !inBlock;
       continue;
     }
     if (inBlock) {

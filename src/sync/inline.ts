@@ -331,7 +331,6 @@ function extractPythonDocstring(content: string, symbolName: string): string | n
   // Walk forward through body lines: skip blanks, skip comments,
   // then the first triple-quoted string is the docstring.
   while (i < content.length) {
-    const lineStart = i;
     // Skip leading whitespace
     while (i < content.length && (content[i] === ' ' || content[i] === '\t')) i++;
 

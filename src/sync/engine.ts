@@ -441,8 +441,6 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
       try { fs.closeSync(fd); } catch { /* best effort */ }
     }
   }
-  const lines = content.split('\n');
-
   // Pre-process the full file content with stripAllBlockComments to prevent
   // false positives from function/method definitions inside multi-line /* */
   // block comments. Without this, before the per-line loop, commented-out

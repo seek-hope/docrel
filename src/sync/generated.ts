@@ -10,7 +10,6 @@ export interface GeneratedSyncInput {
   projectRoot: string;
 }
 
-const MAX_COMMAND_LENGTH = 1024;
 const MAX_ARGS = 50;
 
 // Only allow documentation generators — NOT general-purpose interpreters.

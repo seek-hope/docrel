@@ -96,7 +96,8 @@ export async function postCommitHook(
 
     // Always re-scan after a commit, even when git reports an empty diff
     // (merge commits, empty commits, or amended commits can leave docs stale).
-    const diff = await git.diff([`${log.latest.hash}^`, log.latest.hash]);
+    // We fetch the diff to verify git connectivity but always do a full re-scan.
+    void await git.diff([`${log.latest.hash}^`, log.latest.hash]);
 
     // Re-scan affected symbols and mark docs as stale where needed
     await scanProject(extractor, db, config, projectRoot);

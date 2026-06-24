@@ -114,7 +114,6 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
       if (stat.size > 1 * 1024 * 1024) continue; // 1 MB per doc file for review
 
       const content = fs.readFileSync(fd, 'utf-8');
-      const lines = content.split('\n');
 
       // Find the section content
       const headingRegex = new RegExp(`^#{1,6}\\s+${escapeRegex(doc.anchor)}\\s*$`, 'im');

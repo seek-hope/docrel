@@ -17,14 +17,11 @@ import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelLink, docrelConfirm, docrelReject } from './tools/link.js';
 import { docrelDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
-import { exportMappingsJson, listAllMappings } from './db/mappings.js';
+import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
-import { upsertDocSection } from './db/docs.js';
-import { createMapping } from './db/mappings.js';
 import { listSymbols } from './db/symbols.js';
-import { docSectionId, contentHash } from './utils/hash.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCREL_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
@@ -153,6 +150,33 @@ strategies:
       console.log(`\nNext: docrel status   — check documentation health`);
     } catch (err: any) {
       console.error('Init failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('health')
+  .description('Run a comprehensive system health check')
+  .option('--format <format>', 'Output format: json or markdown', 'markdown')
+  .action(async (opts) => {
+    try {
+      const { docrelHealth } = await import('./tools/health.js');
+      const report = await docrelHealth(db, projectRoot, () => extractor.isAvailable(), DOCREL_VERSION);
+      if (opts.format === 'json') {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(`## DocRel Health — ${report.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
+        console.log(`_${report.summary}_`);
+        console.log('');
+        for (const c of report.checks) {
+          const icon = c.status === 'ok' ? '✅' : c.status === 'degraded' ? '⚠️' : '❌';
+          const latency = c.latencyMs !== undefined ? ` (${c.latencyMs}ms)` : '';
+          console.log(`${icon} **${c.name}** — ${c.message}${latency}`);
+        }
+      }
+      if (!report.healthy) exit(1);
+    } catch (err: any) {
+      console.error('Health check failed:', errMsg(err));
       exit(1);
     }
   });

@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { DOCREL_VERSION } from './version.js';
-import { getDb, closeDb, closeAllDbs } from './db/connection.js';
+import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig } from './utils/config.js';
 import type { DocRelConfig } from './utils/config.js';
@@ -22,10 +22,7 @@ import { docrelDiff } from './tools/diff.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
-import { upsertDocSection } from './db/docs.js';
-import { createMapping } from './db/mappings.js';
 import { listSymbols } from './db/symbols.js';
-import { docSectionId, contentHash } from './utils/hash.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
@@ -484,6 +481,24 @@ server.tool(
             autoLink: linkResult,
           }, null, 2),
         }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrel_health ─────────────────────────────────────────────
+server.tool(
+  'docrel_health',
+  'Comprehensive system health check — database, codegraph, filesystem, doc freshness',
+  async () => {
+    try {
+      const { docrelHealth } = await import('./tools/health.js');
+      const report = await docrelHealth(db, projectRoot, () => extractor.isAvailable(), DOCREL_VERSION);
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
+        isError: !report.healthy,
       };
     } catch (err: any) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
