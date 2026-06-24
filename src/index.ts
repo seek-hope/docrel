@@ -313,7 +313,7 @@ server.tool(
         };
       }
 
-      const symbolReport = await scanProject(extractor, db, config, projectRoot);
+      const symbolReport = await scanProject(extractor, db, config, projectRoot, true /* full */);
 
       let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
       let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
@@ -451,7 +451,7 @@ server.tool(
         };
       }
 
-      const symbolReport = await scanProject(extractor, db, config, projectRoot);
+      const symbolReport = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
 
       let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
       let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;

@@ -39,6 +39,7 @@ export async function scanProject(
   db: Database.Database,
   config: DocRelConfig,
   projectRoot: string,
+  fullScan = true,
 ): Promise<ScanReport> {
   assertDbOpen(db);
   const failedDirs: string[] = [];
@@ -47,6 +48,17 @@ export async function scanProject(
     return { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs, scannedIds: [] };
   }
 
+  // Read last scan timestamp for incremental scanning. When fullScan is false,
+  // only re-scan files with mtime > last scan time.
+  const since = fullScan ? undefined : (() => {
+    const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
+    if (row?.value) {
+      const ms = new Date(row.value).getTime();
+      if (!isNaN(ms)) return ms;
+    }
+    return undefined;
+  })();
+
   let newSymbols = 0;
   let updatedSymbols = 0;
   const scannedIds = new Set<string>();
@@ -54,7 +66,7 @@ export async function scanProject(
   for (const codeDir of config.code_dirs) {
     try {
       // Use the pluggable extractor to discover all symbols in each code directory
-      const symbols = await extractor.extract(codeDir, projectRoot);
+      const symbols = await extractor.extract(codeDir, projectRoot, since);
 
       const MAX_SYMBOLS_PER_DIR = 10000;
       let dirSymbolCount = 0;

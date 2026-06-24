@@ -443,6 +443,7 @@ program
   .description('Scan the codebase and discover all symbols and documentation sections')
   .option('--no-docs', 'Skip scanning documentation files')
   .option('--dry-run', 'Preview what would be scanned without writing to the database')
+  .option('--incremental', 'Only scan files modified since last scan (faster)')
   .action(async (opts) => {
     try {
       // Pre-flight config validation
@@ -478,7 +479,7 @@ program
       console.error('Scanning codebase...');
       const symbolReport = opts.dryRun
         ? { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs: [], scannedIds: [] }
-        : await scanProject(scanExtractor, db, config, projectRoot);
+        : await scanProject(scanExtractor, db, config, projectRoot, !opts.incremental);
 
       let docSectionReport: {
         totalFiles: number;

@@ -227,11 +227,18 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
 export class BuiltinExtractor implements SymbolExtractor {
   readonly name = 'builtin';
 
-  async extract(dir: string, projectRoot: string): Promise<ExtractedSymbol[]> {
+  async extract(dir: string, projectRoot: string, since?: number): Promise<ExtractedSymbol[]> {
     const files = collectFiles(dir, projectRoot);
     const allSymbols: ExtractedSymbol[] = [];
 
     for (const file of files) {
+      // Incremental scan: skip files not modified since the last scan.
+      if (since !== undefined) {
+        try {
+          const st = fs.statSync(file);
+          if (st.mtimeMs <= since) continue;
+        } catch { continue; }
+      }
       const syms = extractFromFile(file, projectRoot);
       allSymbols.push(...syms);
     }

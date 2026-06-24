@@ -45,8 +45,10 @@ export class CodegraphExtractor implements SymbolExtractor {
 
   constructor(private client: CodegraphClient, private maxFiles: number = 50) {}
 
-  async extract(dir: string, _projectRoot: string): Promise<ExtractedSymbol[]> {
+  async extract(dir: string, _projectRoot: string, _since?: number): Promise<ExtractedSymbol[]> {
     // Convert relative path (e.g., "src") to a query for codegraph_explore.
+    // Codegraph maintains its own index — incremental filtering is handled by
+    // the codegraph server, not by file-level mtime checks.
     const query = `symbols in ${dir}/`;
     const result = await this.client.explore(query, this.maxFiles);
 
