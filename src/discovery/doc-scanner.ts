@@ -168,7 +168,8 @@ function collectDocFiles(dir: string, projectRoot: string): string[] {
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
+    } catch (err: any) {
+      console.warn(`DocRel: cannot read directory ${path.relative(projectRoot, current)}:`, err instanceof Error ? err.message : err);
       continue;
     }
     for (const entry of entries) {

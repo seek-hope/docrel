@@ -542,7 +542,11 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_FILE_SIZE) return null;
     content = fs.readFileSync(fd, 'utf-8');
-  } catch {
+  } catch (err: any) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code && code !== 'ENOENT') {
+      console.warn(`DocRel: extractDocstring failed for ${resolved}:`, err instanceof Error ? err.message : err);
+    }
     return null;
   } finally {
     if (fd !== undefined) {

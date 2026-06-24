@@ -208,7 +208,10 @@ function upsertMcpJson(projectRoot: string): boolean {
   if (fs.existsSync(mcpPath)) {
     try {
       mcpConfig = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
-    } catch {
+    } catch (err: any) {
+      if (fs.existsSync(mcpPath)) {
+        console.warn(`DocRel: cannot parse ${mcpPath}:`, err instanceof Error ? err.message : err);
+      }
       mcpConfig = {};
     }
   } else {

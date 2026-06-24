@@ -21,8 +21,14 @@ export function validatePath(filePath: string, projectRoot: string): string | nu
     try {
       const lstat = fs.lstatSync(resolved);
       if (lstat.isSymbolicLink()) return null; // dangling symlink — reject
-    } catch {
-      // lstat also failed — path genuinely doesn't exist, trust the resolved path
+    } catch (err: any) {
+      // lstat also failed — treat non-ENOENT errors as unsafe and reject.
+      // EACCES, EIO, etc. indicate we cannot verify this is a safe path.
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code && code !== 'ENOENT') {
+        console.warn(`DocRel: lstat failed for ${resolved}: ${code} — rejecting for safety`);
+      }
+      return null;
     }
   }
   return resolved;

@@ -105,7 +105,10 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   let realDir: string;
   try {
     realDir = fs.realpathSync(absDir);
-  } catch {
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn(`DocRel: cannot resolve code directory ${absDir}:`, err instanceof Error ? err.message : err);
+    }
     return result;
   }
   if (!realDir.startsWith(root + path.sep) && realDir !== root) return result;
@@ -113,8 +116,11 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   try {
     stat = fs.statSync(realDir);
   } catch (err: any) {
-    if (err?.code === 'ENOENT') {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code === 'ENOENT') {
       console.warn(`DocRel: code directory not found: ${absDir}`);
+    } else {
+      console.warn(`DocRel: cannot access code directory ${absDir}: ${err instanceof Error ? err.message : err} (${code ?? 'unknown'})`);
     }
     return result;
   }
@@ -128,7 +134,8 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
+    } catch (err: any) {
+      console.warn(`DocRel: cannot read directory ${current}:`, err instanceof Error ? err.message : err);
       continue;
     }
     for (const entry of entries) {
@@ -161,13 +168,19 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
     realPath = fs.realpathSync(filePath);
     const root = path.resolve(projectRoot);
     if (!realPath.startsWith(root + path.sep) && realPath !== root) return [];
-  } catch {
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn(`DocRel: cannot resolve source file ${filePath}:`, err instanceof Error ? err.message : err);
+    }
     return [];
   }
   let content: string;
   try {
     content = fs.readFileSync(realPath, 'utf-8');
-  } catch {
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn(`DocRel: cannot read source file ${realPath}:`, err instanceof Error ? err.message : err);
+    }
     return [];
   }
 

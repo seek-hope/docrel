@@ -63,24 +63,31 @@ export function docrelGc(
       "SELECT id FROM changelog WHERE symbol_id = ? AND change_type = 'deleted' AND old_sig = ?"
     );
 
-    db.transaction(() => {
-      for (const { id } of allSymbolIds) {
-        if (scannedSet.has(id)) continue;
+    try {
+      db.transaction(() => {
+        for (const { id } of allSymbolIds) {
+          if (scannedSet.has(id)) continue;
 
-        const prevStale = staleCheckStmt.get(id, STALE_MARKER) as { id: number } | undefined;
+          const prevStale = staleCheckStmt.get(id, STALE_MARKER) as { id: number } | undefined;
 
-        if (prevStale) {
-          // Second consecutive miss — delete the symbol.
-          // ON DELETE CASCADE cleans up mappings and changelog entries.
-          deleteStmt.run(id);
-          symbolsRemoved++;
-        } else {
-          // First miss — mark as stale via a changelog entry.
-          insertChangelogStmt.run(id, STALE_MARKER, STALE_MARKER);
-          symbolsMarkedStale++;
+          if (prevStale) {
+            // Second consecutive miss — delete the symbol.
+            // ON DELETE CASCADE cleans up mappings and changelog entries.
+            deleteStmt.run(id);
+            symbolsRemoved++;
+          } else {
+            // First miss — mark as stale via a changelog entry.
+            insertChangelogStmt.run(id, STALE_MARKER, STALE_MARKER);
+            symbolsMarkedStale++;
+          }
         }
-      }
-    })();
+      })();
+    } catch (err: any) {
+      console.error('DocRel: GC transaction failed:', err instanceof Error ? err.message : err);
+      // Return partial counts — the transaction is atomic, so on failure
+      // no changes were committed. Report zero mutations.
+      return { symbolsRemoved: 0, symbolsMarkedStale: 0, dryRun: false };
+    }
   }
 
   return { symbolsRemoved, symbolsMarkedStale, dryRun };

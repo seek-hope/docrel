@@ -168,7 +168,12 @@ export async function scanProject(
     } catch (err: any) {
       const safeName = codeDir.replace(/[\x00-\x1f\x7f]/g, '');
       failedDirs.push(safeName);
-      console.warn(`DocRel: Failed to scan directory '${safeName}': ${err.message}`);
+      // Sanitize error message — extract only the meaningful part (first 200 chars,
+      // with absolute paths stripped) to prevent information disclosure in MCP/CLI
+      // responses that include warnings from this scan.
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const sanitized = rawMsg.replace(/\/[^\s:,)]{20,}/g, '...').slice(0, 200);
+      console.warn(`DocRel: Failed to scan directory '${safeName}': ${sanitized}`);
     }
   }
 

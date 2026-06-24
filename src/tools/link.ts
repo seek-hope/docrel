@@ -39,7 +39,10 @@ export function docrelLink(
         else if (!de) m+='doc section not found.';
         else m+='constraint violation.';
         return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:m };
-      } catch { return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:'Constraint violation.' }; }
+      } catch (innerErr: any) {
+        console.warn('DocRel: diagnostic query during constraint handling failed:', innerErr instanceof Error ? innerErr.message : innerErr);
+        return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:`Constraint violation (diagnostic failed: ${(innerErr as any)?.code ?? 'unknown'})` };
+      }
     }
     return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:'Internal DB error.' };
   }

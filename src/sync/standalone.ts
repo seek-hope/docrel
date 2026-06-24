@@ -45,7 +45,11 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
     }
     const content = fs.readFileSync(fd, 'utf-8');
     return { content };
-  } catch {
+  } catch (err: any) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code && code !== 'ENOENT') {
+      console.warn(`DocRel: openAndValidate failed for ${resolved}:`, err instanceof Error ? err.message : err);
+    }
     return null;
   } finally {
     if (fd !== undefined) {
@@ -93,7 +97,7 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
 
   // Atomic write: use project-local temp directory with restrictive permissions
   const tmpDir = path.join(projectRoot, '.docrel', 'tmp');
-  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch { return { success: false, reason: 'could not create temp directory' }; }
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch (err: any) { return { success: false, reason: `could not create temp directory: ${(err as NodeJS.ErrnoException)?.code ?? 'unknown'}` }; }
   const tmpPath = path.join(tmpDir, `docrel-${crypto.randomUUID()}.tmp`);
   // Capture original file mode before rename replaces the inode
   let originalMode: number | undefined;
@@ -178,7 +182,11 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
     }
     const content = fs.readFileSync(fd, 'utf-8');
     return findSectionContentFromString(content, anchor);
-  } catch {
+  } catch (err: any) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code && code !== 'ENOENT') {
+      console.warn(`DocRel: findSectionContent failed for ${file}:`, err instanceof Error ? err.message : err);
+    }
     return null;
   } finally {
     if (fd !== undefined) {

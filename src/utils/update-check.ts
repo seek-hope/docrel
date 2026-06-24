@@ -43,10 +43,15 @@ function readCache(): CacheEntry | null {
     const entry = validateCacheEntry(parsed);
     if (entry) return entry;
     return null;
-  } catch {
+  } catch (err: any) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      console.warn('DocRel: cannot read update-check cache:', err instanceof Error ? err.message : err);
+    }
     return null;
   }
 }
+
+let cacheWriteFailed = false;
 
 function writeCache(entry: CacheEntry): void {
   try {
@@ -54,8 +59,11 @@ function writeCache(entry: CacheEntry): void {
     // The original 'wx' (exclusive creation) flag would fail EEXIST on every
     // subsequent call, leaving the cache permanently stale.
     fs.writeFileSync(cachePath(), JSON.stringify(entry), { encoding: 'utf-8', flag: 'w', mode: 0o600 });
-  } catch {
-    // best-effort
+  } catch (err: any) {
+    if (!cacheWriteFailed) {
+      cacheWriteFailed = true;
+      console.warn('DocRel: cannot write update-check cache:', err instanceof Error ? err.message : err);
+    }
   }
 }
 
