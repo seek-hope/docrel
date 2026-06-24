@@ -1,6 +1,6 @@
 {
-  "name": "docsync",
-  "version": "0.1.0",
+  "name": "@seek_hope/docsync",
+  "version": "0.1.1",
   "description": "Code-Documentation Relational Sync System",
   "type": "module",
   "main": "dist/index.js",
