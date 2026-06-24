@@ -31,11 +31,15 @@ function openAndValidate(resolved: string, projectRoot: string): { content: stri
     // Re-validate real path using the actual open file descriptor instead of
     // the filesystem path. This eliminates the TOCTOU gap where an attacker
     // could swap a symlink between openSync and realpathSync.
-    const real = fs.realpathSync(`/proc/self/fd/${fd}`);
+    // /proc/self/fd is Linux-only — fall back to path-based validation on
+    // other platforms (macOS, Windows), matching the pattern in findSectionContent.
     const root = path.resolve(projectRoot);
-    if (!real.startsWith(root + path.sep) && real !== root) {
-      fs.closeSync(fd);
-      return null;
+    if (process.platform === 'linux') {
+      const fdReal = fs.realpathSync(`/proc/self/fd/${fd}`);
+      if (!fdReal.startsWith(root + path.sep) && fdReal !== root) {
+        fs.closeSync(fd);
+        return null;
+      }
     }
     const content = fs.readFileSync(fd, 'utf-8');
     return { content };

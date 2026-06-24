@@ -179,7 +179,7 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
   return { references, skippedFiles };
 }
 
-/** Find mappings with confidence below threshold (default < 0.8). */
+/** Find mappings with review_status = 'auto' (not yet confirmed or rejected by human/AI). */
 function findUnreviewed(db: Database.Database): UnreviewedMapping[] {
   return db.prepare(`
     SELECT m.symbol_id AS symbolId, s.name AS symbolName,
@@ -282,7 +282,7 @@ export function formatReview(report: ReviewReport): string {
   }
 
   if (report.unreviewedMappings.length > 0) {
-    lines.push(`### Low-Confidence Mappings (${report.unreviewedMappings.length})`);
+    lines.push(`### Unreviewed Mappings (${report.unreviewedMappings.length})`);
     lines.push('');
     lines.push('These mappings were auto-generated and need review:');
     lines.push('');

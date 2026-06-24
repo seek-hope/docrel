@@ -215,11 +215,11 @@ server.tool(
     symbol_id: z.string(),
     doc_id: z.string(),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']),
-    confidence: z.number().min(0).max(1).optional().describe('Confidence 0.0-1.0. Required for update, optional for create (defaults to 1.0).'),
+    review_status: z.enum(['auto', 'confirmed', 'rejected']).optional().describe('Review status: auto (default), confirmed (human/AI verified), or rejected'),
   },
-  async ({ action, symbol_id, doc_id, rel_type }) => {
+  async ({ action, symbol_id, doc_id, rel_type, review_status }) => {
     try {
-      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type });
+      const result = docrelLink(db, { action, symbol_id, doc_id, rel_type, review_status: review_status ?? 'auto' });
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -232,7 +232,7 @@ server.tool(
 // ── docrel_confirm ─────────────────────────────────────────────
 server.tool(
   'docrel_confirm',
-  'Confirm a low-confidence mapping as correct — sets confidence to 1.0 (human/AI verified)',
+  'Confirm an auto-generated mapping as correct — sets review_status to confirmed (human/AI verified)',
   {
     symbol_id: z.string(),
     doc_id: z.string(),
@@ -354,7 +354,7 @@ server.tool(
 // ── docrel_review ──────────────────────────────────────────────
 server.tool(
   'docrel_review',
-  'Audit code-doc mappings: find unlinked symbols, orphaned sections, implied references, low-confidence mappings',
+  'Audit code-doc mappings: find unlinked symbols, orphaned sections, implied references, and unreviewed (auto-generated) mappings',
   {
     format: z.enum(['json', 'markdown']).optional().default('markdown').describe('Output format'),
   },
