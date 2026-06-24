@@ -12,25 +12,7 @@ function escFqn(s: string): string {
   return s.replace(/::/g, '%3A%3A');
 }
 
-// ── Progress reporter ──────────────────────────────────────────────────────────
-
-/** Log progress to stderr every `interval` percent. Only active when stderr is
- *  a TTY — no noise when piped or redirected. */
-function createProgressReporter(total: number, label: string, interval: number = 5) {
-  if (!process.stderr.isTTY || total === 0) return () => {};
-
-  let lastReportedPercent = -interval;
-
-  return (current: number) => {
-    const pct = Math.round((current / total) * 100);
-    // Report when pct crosses the next interval threshold (or at 100%).
-    if (pct >= lastReportedPercent + interval || pct >= 100) {
-      lastReportedPercent = Math.floor(pct / interval) * interval;
-      process.stderr.write(`\r${label}... ${current}/${total} (${pct}%)`);
-      if (pct >= 100) process.stderr.write('\n');
-    }
-  };
-}
+import { createProgressReporter } from '../utils/progress.js';
 
 /** Codegraph symbol kind → canonical DocRel kind mapping (module-level). */
 const KIND_MAP: Record<string, ReturnType<typeof mapKind>> = {

@@ -17,6 +17,9 @@ export interface DocRelConfig {
   codegraph?: {
     command?: string;
     mcpServerName?: string;
+    /** Maximum number of files to request per directory from codegraph_explore.
+     *  Default 50. Increase for large codebases (e.g. 200 for monorepos). */
+    maxFiles?: number;
   };
 }
 
@@ -33,6 +36,7 @@ const userConfigSchema = z.object({
   codegraph: z.object({
     command: z.string().optional(),
     mcpServerName: z.string().optional(),
+    maxFiles: z.number().int().min(1).max(500).optional(),
   }).optional(),
 });
 

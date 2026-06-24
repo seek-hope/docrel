@@ -3,7 +3,8 @@ import type Database from 'better-sqlite3';
 import type { SymbolRow } from '../db/symbols.js';
 import type { ParsedDocSection } from './doc-parser.js';
 import { createMapping } from '../db/mappings.js';
-import { docSectionId } from '../utils/hash.js';
+import { upsertDocSection } from '../db/docs.js';
+import { docSectionId, contentHash } from '../utils/hash.js';
 import { escapeRegex } from '../utils/fs.js';
 
 export interface AutoLinkResult {
@@ -174,7 +175,33 @@ function scorePair(
     }
   }
 
+  // 6. Body-text word match (confidence 0.4) — for identifiers that appear
+  // in running text without backticks or code markup. Only match identifiers
+  // that look like code symbols (CamelCase, PascalCase, snake_case) to avoid
+  // false positives on common English words like 'get', 'set', 'data'.
+  // Minimum 4 characters — shorter names are overwhelmingly false positives.
+  if (symNameClean.length >= 4 && isCodeLikeIdentifier(symNameClean)) {
+    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
+    if (wordBoundaryRe.test(content) || wordBoundaryRe.test(heading)) {
+      return { confidence: 0.4, matched: 0.4 >= minConfidence };
+    }
+  }
+
   return { confidence: 0, matched: false };
+}
+
+/** Check if a symbol name looks like a code identifier rather than a common
+ *  English word. Matches CamelCase, PascalCase, or snake_case names.
+ *  All-lowercase single words (even long ones like 'authentication') are
+ *  rejected — they produce too many false positives in body-text matching. */
+function isCodeLikeIdentifier(name: string): boolean {
+  // CamelCase/PascalCase: at least one uppercase letter
+  if (/[A-Z]/.test(name)) return true;
+  // snake_case: underscore with letters on both sides
+  if (/[a-zA-Z]_[a-zA-Z]/.test(name)) return true;
+  // Leading underscore (e.g., _privateMethod)
+  if (name.startsWith('_') && name.length > 1) return true;
+  return false;
 }
 
 // ── Fast pass-1 scoring ──────────────────────────────────────────────────────
@@ -355,4 +382,56 @@ export function autoLink(
     mediumConfidence: counters.medium,
     lowConfidence: counters.low,
   };
+}
+
+export interface IngestResult {
+  newDocSections: number;
+  newMappings: number;
+}
+
+/**
+ * Ingest parsed doc sections into the database: upsert doc_sections rows and
+ * create mappings for code references that match known symbols. This is the
+ * shared pipeline used by MCP scan, MCP refresh, CLI scan, and file watcher.
+ *
+ * Extracted from the 3 duplicate implementations in index.ts (docrel_scan,
+ * docrel_refresh) and cli.ts (scan command) — now a single source of truth.
+ */
+export function ingestDocSections(
+  db: Database.Database,
+  sections: ParsedDocSection[],
+): IngestResult {
+  let newDocs = 0;
+  let newMappings = 0;
+
+  for (const section of sections) {
+    const id = docSectionId(section.file, section.anchor);
+    if (!id) continue;
+
+    const hash = contentHash(section.content);
+    const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+    upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+    if (!existing) newDocs++;
+
+    for (const ref of section.codeRefs) {
+      const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
+      const matched = db.prepare(
+        'SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1'
+      ).get(cleanName, ref.symbolName) as { id: string } | undefined;
+
+      if (matched) {
+        try {
+          createMapping(db, {
+            symbol_id: matched.id,
+            doc_id: id,
+            rel_type: 'describes',
+            review_status: 'auto',
+          });
+          newMappings++;
+        } catch { /* skip duplicates */ }
+      }
+    }
+  }
+
+  return { newDocSections: newDocs, newMappings };
 }

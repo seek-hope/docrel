@@ -4,9 +4,7 @@ import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelConfig } from '../utils/config.js';
 import { scanProject } from '../discovery/scanner.js';
 import { scanDocs } from '../discovery/doc-scanner.js';
-import { autoLink } from '../discovery/auto-linker.js';
-import { upsertDocSection } from '../db/docs.js';
-import { docSectionId, contentHash } from '../utils/hash.js';
+import { autoLink, ingestDocSections } from '../discovery/auto-linker.js';
 import { listSymbols } from '../db/symbols.js';
 import { isIgnored } from '../utils/ignore.js';
 import fs from 'node:fs';
@@ -85,29 +83,13 @@ export async function startWatch(
             // Auto-link against existing docs
             const symbols = listSymbols(db);
             const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
-            for (const section of docs) {
-              upsertDocSection(db, {
-                id: docSectionId(section.file, section.anchor),
-                file: section.file,
-                anchor: section.anchor,
-                content_hash: contentHash(section.content),
-                doc_type: 'standalone',
-              });
-            }
+            ingestDocSections(db, docs);
             const linkResult = autoLink(db, symbols, docs);
             console.log(`[${now}] Re-scanned: ${report.newSymbols} new symbols, ${linkResult.totalMatched} new mappings`);
           } else {
             console.log(`[${now}] Doc change: ${rel} — re-scanning docs...`);
             const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
-            for (const section of docs) {
-              upsertDocSection(db, {
-                id: docSectionId(section.file, section.anchor),
-                file: section.file,
-                anchor: section.anchor,
-                content_hash: contentHash(section.content),
-                doc_type: 'standalone',
-              });
-            }
+            ingestDocSections(db, docs);
             const symbols = listSymbols(db);
             const linkResult = autoLink(db, symbols, docs);
             console.log(`[${now}] Re-scanned: ${docs.length} doc sections, ${linkResult.totalMatched} new mappings`);

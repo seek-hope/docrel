@@ -43,12 +43,12 @@ function mapKind(kind: string): ExtractedSymbol['kind'] {
 export class CodegraphExtractor implements SymbolExtractor {
   readonly name = 'codegraph';
 
-  constructor(private client: CodegraphClient) {}
+  constructor(private client: CodegraphClient, private maxFiles: number = 50) {}
 
   async extract(dir: string, _projectRoot: string): Promise<ExtractedSymbol[]> {
     // Convert relative path (e.g., "src") to a query for codegraph_explore.
     const query = `symbols in ${dir}/`;
-    const result = await this.client.explore(query, 50);
+    const result = await this.client.explore(query, this.maxFiles);
 
     return result.symbols.map((sym) => ({
       name: sym.name,

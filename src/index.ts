@@ -21,7 +21,7 @@ import { docrelLink } from './tools/link.js';
 import { docrelDiff } from './tools/diff.js';
 import { scanProject } from './discovery/scanner.js';
 import { scanDocs } from './discovery/doc-scanner.js';
-import { autoLink } from './discovery/auto-linker.js';
+import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { upsertDocSection } from './db/docs.js';
 import { createMapping } from './db/mappings.js';
 import { listSymbols } from './db/symbols.js';
@@ -65,7 +65,7 @@ try {
   db = getDb(projectRoot);
   runMigrations(db);
   codegraph = new CodegraphClient(config.codegraph?.command);
-  const codegraphExtractor = new CodegraphExtractor(codegraph);
+  const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
   const builtinExtractor = new BuiltinExtractor();
   // Try codegraph; fall back to builtin regex-based extraction
   extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
@@ -323,33 +323,13 @@ server.tool(
 
       if (docs) {
         const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
-        let newDocs = 0;
-        let newMappings = 0;
-
-        for (const section of sections) {
-          const id = docSectionId(section.file, section.anchor);
-          if (!id) continue;
-          const hash = contentHash(section.content);
-          const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
-          upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
-          if (!existing) newDocs++;
-          for (const ref of section.codeRefs) {
-            const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
-            const matched = db.prepare('SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1').get(cleanName, ref.symbolName) as { id: string } | undefined;
-            if (matched) {
-              try {
-                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', review_status: 'auto' });
-                newMappings++;
-              } catch { /* skip duplicates */ }
-            }
-          }
-        }
+        const ingestResult = ingestDocSections(db, sections);
 
         docReport = {
           totalFiles: report.totalFiles,
           totalSections: report.totalSections,
-          newDocSections: newDocs,
-          newMappings,
+          newDocSections: ingestResult.newDocSections,
+          newMappings: ingestResult.newMappings,
           failedFiles: report.failedFiles,
         };
 
@@ -481,33 +461,13 @@ server.tool(
 
       if (full) {
         const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
-        let newDocs = 0;
-        let newMappings = 0;
-
-        for (const section of sections) {
-          const id = docSectionId(section.file, section.anchor);
-          if (!id) continue;
-          const hash = contentHash(section.content);
-          const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
-          upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
-          if (!existing) newDocs++;
-          for (const ref of section.codeRefs) {
-            const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
-            const matched = db.prepare('SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1').get(cleanName, ref.symbolName) as { id: string } | undefined;
-            if (matched) {
-              try {
-                createMapping(db, { symbol_id: matched.id, doc_id: id, rel_type: 'describes', review_status: 'auto' });
-                newMappings++;
-              } catch { /* skip duplicates */ }
-            }
-          }
-        }
+        const ingestResult = ingestDocSections(db, sections);
 
         docReport = {
           totalFiles: report.totalFiles,
           totalSections: report.totalSections,
-          newDocSections: newDocs,
-          newMappings,
+          newDocSections: ingestResult.newDocSections,
+          newMappings: ingestResult.newMappings,
           failedFiles: report.failedFiles,
         };
 
