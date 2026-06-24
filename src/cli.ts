@@ -332,14 +332,37 @@ program
 
 program
   .command('confirm')
-  .description('Confirm an auto-generated mapping as correct — sets review_status to confirmed')
+  .description('Confirm auto-generated mappings as correct — sets review_status to confirmed')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
+  .option('--all', 'Confirm ALL unreviewed (auto) mappings in bulk')
   .action((opts) => {
     try {
-      if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
-      if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
+      if (opts.all) {
+        const { findUnreviewed } = require('./tools/review.js');
+        // Query unreviewed mappings directly
+        const unreviewed = db.prepare(`
+          SELECT m.symbol_id, m.doc_id, m.rel_type
+          FROM mappings m
+          WHERE m.review_status = 'auto'
+        `).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
+
+        if (unreviewed.length === 0) {
+          console.log('No unreviewed mappings to confirm.');
+          return;
+        }
+
+        let confirmed = 0;
+        for (const m of unreviewed) {
+          const result = docrelConfirm(db, m.symbol_id, m.doc_id, m.rel_type);
+          if (result.action === 'updated') confirmed++;
+        }
+        console.log(JSON.stringify({ confirmed, total: unreviewed.length }, null, 2));
+        return;
+      }
+      if (!opts.symbol) { console.error('Error: --symbol <id> is required (or use --all)'); exit(1); }
+      if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all)'); exit(1); }
       const result = docrelConfirm(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
       if (result.action === 'error') exit(1);
@@ -351,14 +374,60 @@ program
 
 program
   .command('reject')
-  .description('Reject an auto-generated mapping as incorrect — sets review_status to rejected')
+  .description('Reject auto-generated mappings as incorrect — sets review_status to rejected')
   .option('--symbol <id>', 'Symbol ID')
   .option('--doc <id>', 'Document section ID')
   .option('--type <type>', 'Relationship type', 'describes')
+  .option('--all', 'Reject ALL unreviewed (auto) mappings in bulk')
+  .option('--pattern <pattern>', 'Reject mappings where symbol name matches this substring')
   .action((opts) => {
     try {
-      if (!opts.symbol) { console.error('Error: --symbol <id> is required'); exit(1); }
-      if (!opts.doc) { console.error('Error: --doc <id> is required'); exit(1); }
+      if (opts.all) {
+        const unreviewed = db.prepare(`
+          SELECT m.symbol_id, m.doc_id, m.rel_type
+          FROM mappings m
+          WHERE m.review_status = 'auto'
+        `).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
+
+        if (unreviewed.length === 0) {
+          console.log('No unreviewed mappings to reject.');
+          return;
+        }
+
+        let rejected = 0;
+        for (const m of unreviewed) {
+          const result = docrelReject(db, m.symbol_id, m.doc_id, m.rel_type);
+          if (result.action === 'updated') rejected++;
+        }
+        console.log(JSON.stringify({ rejected, total: unreviewed.length }, null, 2));
+        return;
+      }
+
+      if (opts.pattern) {
+        const matched = db.prepare(`
+          SELECT m.symbol_id, m.doc_id, m.rel_type, s.name
+          FROM mappings m
+          JOIN symbols s ON s.id = m.symbol_id
+          WHERE m.review_status = 'auto' AND s.name LIKE ?
+        `).all(`%${opts.pattern}%`) as Array<{ symbol_id: string; doc_id: string; rel_type: string; name: string }>;
+
+        if (matched.length === 0) {
+          console.log(`No unreviewed mappings matching pattern '${opts.pattern}'.`);
+          return;
+        }
+
+        let rejected = 0;
+        for (const m of matched) {
+          const result = docrelReject(db, m.symbol_id, m.doc_id, m.rel_type);
+          if (result.action === 'updated') rejected++;
+        }
+        console.log(JSON.stringify({ rejected, total: matched.length, pattern: opts.pattern,
+          names: matched.map(m => m.name) }, null, 2));
+        return;
+      }
+
+      if (!opts.symbol) { console.error('Error: --symbol <id> is required (or use --all/--pattern)'); exit(1); }
+      if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all/--pattern)'); exit(1); }
       const result = docrelReject(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
       if (result.action === 'error') exit(1);
@@ -832,6 +901,99 @@ program
       }
     } catch (err: any) {
       console.error('GC failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('backup')
+  .description('Backup the DocRel database to a timestamped file')
+  .option('--output <path>', 'Output path (default: .docrel/backup-<timestamp>.db)')
+  .action((opts) => {
+    try {
+      const dbPath = path.join(projectRoot, '.docrel', 'docrel.db');
+      if (!fs.existsSync(dbPath)) {
+        // Check .git/docrel.db as fallback
+        const gitDbPath = path.join(projectRoot, '.git', 'docrel.db');
+        if (!fs.existsSync(gitDbPath)) {
+          console.error('No DocRel database found. Run docrel init first.');
+          exit(1);
+        }
+      }
+      const srcPath = fs.existsSync(path.join(projectRoot, '.docrel', 'docrel.db'))
+        ? path.join(projectRoot, '.docrel', 'docrel.db')
+        : path.join(projectRoot, '.git', 'docrel.db');
+
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const destPath = opts.output ?? path.join(projectRoot, '.docrel', `backup-${ts}.db`);
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`Backed up to ${path.relative(projectRoot, destPath)}`);
+    } catch (err: any) {
+      console.error('Backup failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('restore')
+  .description('Restore the DocRel database from a backup file')
+  .argument('<backup-path>', 'Path to the backup .db file')
+  .option('--force', 'Skip confirmation prompt')
+  .action(async (backupPath, opts) => {
+    try {
+      const srcPath = path.resolve(projectRoot, backupPath);
+      if (!fs.existsSync(srcPath)) {
+        console.error(`Backup file not found: ${backupPath}`);
+        exit(1);
+      }
+      if (!srcPath.endsWith('.db')) {
+        console.error('Backup file must have .db extension');
+        exit(1);
+      }
+
+      if (!opts.force) {
+        console.error('WARNING: This will replace the current DocRel database.');
+        console.error('All current data will be lost.');
+        console.error('');
+
+        const readline = await import('node:readline');
+        const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+        const answer = await new Promise<string>((resolve) => {
+          rl.question('Type "yes" to confirm: ', (a) => { rl.close(); resolve(a); });
+        });
+        if (answer.trim() !== 'yes') {
+          console.error('Restore cancelled.');
+          exit(0);
+        }
+      }
+
+      // Determine target path
+      const docrelDbPath = path.join(projectRoot, '.docrel', 'docrel.db');
+      const gitDbPath = path.join(projectRoot, '.git', 'docrel.db');
+      const destPath = fs.existsSync(docrelDbPath) ? docrelDbPath
+        : fs.existsSync(gitDbPath) ? gitDbPath
+        : docrelDbPath;
+
+      // Close existing connections before replacing the file
+      closeAllDbs();
+
+      // Backup the current DB before restoring (safety net)
+      if (fs.existsSync(destPath)) {
+        const safetyBackup = destPath + '.pre-restore';
+        fs.copyFileSync(destPath, safetyBackup);
+        console.error(`Pre-restore backup saved to ${path.relative(projectRoot, safetyBackup)}`);
+      }
+
+      fs.copyFileSync(srcPath, destPath);
+      fs.chmodSync(destPath, 0o600);
+
+      // Re-open the restored database
+      db = getDb(projectRoot);
+      runMigrations(db);
+
+      console.log(`Restored database from ${path.relative(projectRoot, srcPath)}`);
+    } catch (err: any) {
+      console.error('Restore failed:', errMsg(err));
       exit(1);
     }
   });
