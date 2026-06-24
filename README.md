@@ -33,7 +33,7 @@ When you refactor code, DocRelay tells your AI agent (or you) exactly which docu
 | CHECK constraint | Git hooks prevent commits with stale documentation |
 | WAL Log | Full changelog tracking every symbol mutation |
 
-DocRelay uses [Codegraph](https://github.com/codegraph-ai/CodeGraph) to track symbols across renames and file moves — documentation links survive refactoring.
+DocRelay uses [Codegraph](https://github.com/colbymchenry/codegraph) to track symbols across renames and file moves — documentation links survive refactoring.
 
 ## Quick Start
 
@@ -192,19 +192,19 @@ src/
 | Language | TypeScript (ES2023, NodeNext, ESM) |
 | MCP Server | `@modelcontextprotocol/sdk` |
 | Database | SQLite via `better-sqlite3` |
-| Symbol Backend | Codegraph MCP Server (`codegraph-ai/CodeGraph`) |
+| Symbol Backend | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
 | Git | `simple-git` + native hooks |
 | Tests | `vitest` (50 tests, 9 suites) |
 
 ## Codegraph Integration
 
-DocRelay uses [Codegraph](https://github.com/codegraph-ai/CodeGraph) as its symbol intelligence backend:
+DocRelay uses [Codegraph](https://github.com/colbymchenry/codegraph) as its symbol intelligence backend:
 
 - **Auto-discovery**: Scans codegraph index to populate the `symbols` table
 - **Change tracking**: Detects signature changes via codegraph's symbol identity
 - **Impact analysis**: Uses `codegraph_analyze_impact` to find affected docs
-- **`doc_refs` field**: A [lightweight PR](https://github.com/codegraph-ai/CodeGraph/pull/6) adds `doc_refs` to CodeGraph's impact response — reads `.docrelay/mappings.json` if present
+- **`doc_refs` field**: A [lightweight PR](https://github.com/colbymchenry/codegraph/pull/6) adds `doc_refs` to CodeGraph's impact response — reads `.docrelay/mappings.json` if present
 
 ```bash
 # Generate the file CodeGraph reads:

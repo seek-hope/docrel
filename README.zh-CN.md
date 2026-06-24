@@ -22,7 +22,7 @@
 | CHECK 约束 | Git hooks 在提交/推送前校验文档同步状态 |
 | WAL 日志 | 完整的变更日志追踪每次符号修改 |
 
-DocRelay 使用 [Codegraph](https://github.com/codegraph-ai/CodeGraph) 追踪符号的重命名和文件移动——文档关联在重构后依然存活。
+DocRelay 使用 [Codegraph](https://github.com/colbymchenry/codegraph) 追踪符号的重命名和文件移动——文档关联在重构后依然存活。
 
 ## 快速开始
 
@@ -156,19 +156,19 @@ pre-commit hook: docrelay_check --strict
 | 语言 | TypeScript (ES2023, NodeNext, ESM) |
 | MCP Server | `@modelcontextprotocol/sdk` |
 | 数据库 | SQLite via `better-sqlite3` |
-| 符号后端 | Codegraph MCP Server (`codegraph-ai/CodeGraph`) |
+| 符号后端 | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
 | Git | `simple-git` + 原生 hooks |
 | 测试 | `vitest`（50 测试，9 套件，~4700 行源码） |
 
 ## Codegraph 集成
 
-DocRelay 使用 [Codegraph](https://github.com/codegraph-ai/CodeGraph) 作为符号智能后端：
+DocRelay 使用 [Codegraph](https://github.com/colbymchenry/codegraph) 作为符号智能后端：
 
 - **自动发现**：通过 codegraph 索引扫描并填充 `symbols` 表
 - **变更追踪**：通过 codegraph 的符号身份检测签名变化
 - **影响分析**：使用 `codegraph_analyze_impact` 查找受影响的文档
-- **`doc_refs` 字段**：已向 CodeGraph 提交[轻量 PR](https://github.com/codegraph-ai/CodeGraph/pull/6)，在 impact 响应中新增 `doc_refs` 字段
+- **`doc_refs` 字段**：已向 CodeGraph 提交[轻量 PR](https://github.com/colbymchenry/codegraph/pull/6)，在 impact 响应中新增 `doc_refs` 字段
 
 ```bash
 # 生成 CodeGraph 读取的文件：
