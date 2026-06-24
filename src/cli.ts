@@ -30,6 +30,9 @@ import { integrate } from './agents/integrate.js';
 import { docrelayGc } from './tools/gc.js';
 import { stringify as stringifyYaml } from 'yaml';
 
+const program = new Command();
+const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
+
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
 function errMsg(e: unknown): string {
@@ -52,9 +55,6 @@ function exit(code: number): never {
 process.on('exit', () => {
   try { closeAllDbs(); } catch { /* best effort */ }
 });
-
-const program = new Command();
-const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
 // ── Lazy CLI context — init only when a command actually needs it ──
 // --help and --version skip config/DB/codegraph entirely.
@@ -113,9 +113,10 @@ program
 
 program
   .command('init')
-  .description('Initialize DocRelay in the current project (config + DB + hooks + scan)')
+  .description('Initialize DocRelay in the current project (config + DB + hooks + agent + scan)')
   .option('--no-hooks', 'Skip installing git hooks')
   .option('--no-scan', 'Skip scanning the codebase (requires codegraph)')
+  .option('--no-integrate', 'Skip auto-detecting and configuring your AI coding agent')
   .option('--force', 'Overwrite existing config and hooks')
   .action(async (opts) => {
     try {
@@ -131,6 +132,7 @@ program
 
       // 2. Write default config if missing (or --force)
       if (!fs.existsSync(configPath) || opts.force) {
+        const existedBefore = fs.existsSync(configPath);
         const defaultConfig = `# DocRelay configuration — https://github.com/seek-hope/docrel
 # Schema version (auto-upgraded on new doc-relay releases)
 version: 1
@@ -163,7 +165,7 @@ strategies:
 #   maxFiles: 20            # max files per explore call
 `;
         fs.writeFileSync(configPath, defaultConfig, 'utf-8');
-        steps.push(`${opts.force && fs.existsSync(configPath) ? 'Overwrote' : 'Created'} .docrelay/config.yaml`);
+        steps.push(`${opts.force && existedBefore ? 'Overwrote' : 'Created'} .docrelay/config.yaml`);
       } else {
         steps.push('.docrelay/config.yaml already exists (use --force to overwrite)');
       }
@@ -181,7 +183,20 @@ strategies:
         steps.push('Skipped git hooks (run \'docrelay install-hooks\' later)');
       }
 
-      // 5. Scan codebase (unless --no-scan)
+      // 5. Auto-detect and configure AI coding agent (unless --no-integrate)
+      if (opts.integrate !== false) {
+        const detected = detectAgent();
+        if (detected.kind !== 'unknown') {
+          const result = await integrate(projectRoot, detected.kind, false);
+          steps.push(`Configured ${detected.name} integration — ${result.summary}`);
+        } else {
+          steps.push('No supported AI coding agent detected — run \'docrelay integrate\' later');
+        }
+      } else {
+        steps.push('Skipped agent integration (run \'docrelay integrate\' later)');
+      }
+
+      // 6. Scan codebase (unless --no-scan)
       if (opts.scan) {
         const available = await extractor.isAvailable();
         if (available) {
@@ -271,8 +286,8 @@ program
       await ensureContext();
       const report = docrelayCheck(db, opts.strict);
       // If the database query itself failed, report.error is set — treat
-      // this as a hard failure regardless of staleDoc count.
-      if (report.error && opts.format === 'json') {
+      // this as a hard failure regardless of staleDoc count or output format.
+      if (report.error) {
         console.error('DocRelay check failed:', report.error);
         exit(1);
       }
@@ -321,7 +336,7 @@ program
   .action(async (paths: string[], opts) => {
     try {
       await ensureContext();
-      const impact = docrelayImpact(db, paths);
+      const impact = docrelayImpact(db, paths, projectRoot);
       if (opts.format === 'markdown') {
         console.log(formatImpactMarkdown(impact));
       } else {
@@ -350,7 +365,7 @@ program
         console.error('Error: --symbol <id> is required (or use --all-stale)');
         exit(1);
       }
-      const result = await syncSymbol(db, config, opts.symbol, projectRoot);
+      const result = await syncSymbol(db, config, opts.symbol, projectRoot, codegraph);
       console.log(JSON.stringify(result, null, 2));
     } catch (err: any) {
       console.error('Sync failed:', errMsg(err));
@@ -372,7 +387,8 @@ program
       if (!['create', 'delete'].includes(action)) {
         console.error(`Error: action must be 'create' or 'delete', got '${action}'`);
         exit(1);
-      }const result = docrelayLink(db, {
+      }
+      const result = docrelayLink(db, {
         action: action as 'create' | 'delete',
         symbol_id: opts.symbol,
         doc_id: opts.doc,
@@ -397,11 +413,13 @@ program
     try {
       await ensureContext();
       if (opts.all) {
-        // Query unreviewed mappings directly
+        // Query unreviewed mappings directly (capped to prevent OOM on large DBs).
+        // If there are more than 50000, subsequent runs will handle the rest.
         const unreviewed = db.prepare(`
           SELECT m.symbol_id, m.doc_id, m.rel_type
           FROM mappings m
           WHERE m.review_status = 'auto'
+          LIMIT 50000
         `).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
 
         if (unreviewed.length === 0) {
@@ -440,10 +458,12 @@ program
     try {
       await ensureContext();
       if (opts.all) {
+        // Query unreviewed mappings (capped to prevent OOM on large DBs)
         const unreviewed = db.prepare(`
           SELECT m.symbol_id, m.doc_id, m.rel_type
           FROM mappings m
           WHERE m.review_status = 'auto'
+          LIMIT 50000
         `).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
 
         if (unreviewed.length === 0) {
@@ -461,11 +481,13 @@ program
       }
 
       if (opts.pattern) {
+        // Query matching mappings (capped to prevent OOM)
         const matched = db.prepare(`
           SELECT m.symbol_id, m.doc_id, m.rel_type, s.name
           FROM mappings m
           JOIN symbols s ON s.id = m.symbol_id
           WHERE m.review_status = 'auto' AND s.name LIKE ?
+          LIMIT 50000
         `).all(`%${opts.pattern}%`) as Array<{ symbol_id: string; doc_id: string; rel_type: string; name: string }>;
 
         if (matched.length === 0) {
@@ -540,12 +562,26 @@ program
     try {
       await ensureContext();
       const summary = prepareCommitMsg(db);
-      const fullPath = path.resolve(projectRoot, commitMsgFile);
+      const resolved = path.resolve(projectRoot, commitMsgFile);
+      // Containment check: reject paths that escape projectRoot.
+      // path.resolve returns absolute paths as-is — a user-supplied absolute
+      // path like /etc/passwd would bypass the projectRoot scope.
+      const root = path.resolve(projectRoot);
+      if (!resolved.startsWith(root + path.sep) && resolved !== root) {
+        console.error('Error: commit message file must be within project root.');
+        exit(1);
+      }
+      const fullPath = resolved;
       let existing = '';
       try {
-        await ensureContext();
         existing = fs.readFileSync(fullPath, 'utf-8');
-      } catch {
+      } catch (err: any) {
+        // ENOENT is expected when git commit runs without -m (file not created yet).
+        // All other errors (EACCES, EIO, etc.) indicate a real problem — surface them.
+        const code = (err as NodeJS.ErrnoException)?.code;
+        if (code && code !== 'ENOENT') {
+          throw err;
+        }
         // File may not exist yet (e.g., git commit without -m); start fresh
       }
       // Append summary after existing message, separated by a blank line
@@ -565,8 +601,10 @@ program
   .action(async (opts) => {
     await ensureContext();
     const { startWatch } = await import('./tools/watch.js');
+    const parsedDebounce = parseInt(opts.debounce, 10);
+    const debounceMs = isNaN(parsedDebounce) ? 500 : parsedDebounce;
     const cleanup = await startWatch(projectRoot, db, extractor, config, {
-      debounceMs: parseInt(opts.debounce, 10) || 500,
+      debounceMs,
       daemon: opts.daemon ?? false,
     });
     // Keep running until SIGINT
@@ -766,12 +804,15 @@ program
       // pattern used in client.ts doConnect() and hooks.ts installHooks().
       let npmBin: string;
       try {
-        await ensureContext();
-        const whichOutput = execFileSync('which', ['npm'], { encoding: 'utf-8' }).trim();
+        const whichOutput = execFileSync('which', ['npm'], { encoding: 'utf-8', timeout: 5000 }).trim();
         if (!whichOutput) throw new Error('npm not found on PATH');
         const realBin = fs.realpathSync(whichOutput);
-        const allowedPrefixes = ['/usr/', '/opt/', '/home/', '/run/current-system/'];
-        if (!allowedPrefixes.some((p) => realBin.startsWith(p))) {
+        // Use specific known installation prefixes plus a user-install regex,
+        // matching the defense-in-depth pattern from codegraph/client.ts:212-215.
+        // Broad /home/ would match any user's home on a shared system.
+        const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+        if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
+            !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
           // F15: Sanitize the path to avoid disclosing full filesystem paths
           // in CI/monitoring logs. Show only the prefix for diagnostics.
           console.error(`Security warning: npm binary resolved to unexpected location (prefix: ${realBin.slice(0, 30)}...)`);
@@ -779,7 +820,6 @@ program
         }
         // Verify the binary actually works before executing
         try {
-          await ensureContext();
           execFileSync(realBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
         } catch {
           console.error(`Resolved npm binary at ${realBin} does not appear to work.`);
@@ -798,8 +838,7 @@ program
       // Validate npm registry before executing install
       let registry: string;
       try {
-        await ensureContext();
-        registry = execFileSync(npmBin, ['config', 'get', 'registry'], { encoding: 'utf-8' }).trim();
+        registry = execFileSync(npmBin, ['config', 'get', 'registry'], { encoding: 'utf-8', timeout: 5000 }).trim();
       } catch {
         registry = 'https://registry.npmjs.org/';
       }
@@ -893,7 +932,8 @@ program
         const readline = await import('node:readline');
         const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
         const answer = await new Promise<string>((resolve) => {
-          rl.question('Type "yes" to confirm: ', (a) => { rl.close(); resolve(a); });
+          const timeout = setTimeout(() => { rl.close(); resolve(''); }, 30_000);
+          rl.question('Type "yes" to confirm: ', (a) => { clearTimeout(timeout); rl.close(); resolve(a); });
         });
         if (answer.trim() !== 'yes') {
           console.error('Reset cancelled.');
@@ -917,11 +957,8 @@ program
       // Delete the database and companion files
       if (dbPath) {
         try { fs.unlinkSync(dbPath); } catch {}
-          await ensureContext();
         try { fs.unlinkSync(dbPath + '-wal'); } catch {}
-          await ensureContext();
         try { fs.unlinkSync(dbPath + '-shm'); } catch {}
-          await ensureContext();
         console.error(`Deleted database: ${dbPath.replace(projectRoot, '<projectRoot>')}`);
       }
 
@@ -953,6 +990,11 @@ program
 
       console.error('Running garbage collection...');
       const gcReport = docrelayGc(db, scanReport, opts.dryRun ?? false);
+
+      if (gcReport.error) {
+        console.error(`GC failed: ${gcReport.error}`);
+        exit(1);
+      }
 
       if (gcReport.dryRun) {
         console.error(`[dry-run] Would remove ${gcReport.symbolsRemoved} symbol(s), would mark ${gcReport.symbolsMarkedStale} symbol(s) as stale`);
@@ -1004,6 +1046,15 @@ program
     try {
       await ensureContext();
       const srcPath = path.resolve(projectRoot, backupPath);
+      // Containment check: reject restore sources that escape projectRoot.
+      // path.resolve returns absolute paths as-is, so a user-supplied
+      // /etc/some.db would bypass project-scoped containment.
+      const root = path.resolve(projectRoot);
+      if (!srcPath.startsWith(root + path.sep) && srcPath !== root) {
+        console.error('Error: backup file must be within project root.');
+        console.error('To restore from an external path, copy it into the project first.');
+        exit(1);
+      }
       if (!fs.existsSync(srcPath)) {
         console.error(`Backup file not found: ${backupPath}`);
         exit(1);
@@ -1021,7 +1072,8 @@ program
         const readline = await import('node:readline');
         const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
         const answer = await new Promise<string>((resolve) => {
-          rl.question('Type "yes" to confirm: ', (a) => { rl.close(); resolve(a); });
+          const timeout = setTimeout(() => { rl.close(); resolve(''); }, 30_000);
+          rl.question('Type "yes" to confirm: ', (a) => { clearTimeout(timeout); rl.close(); resolve(a); });
         });
         if (answer.trim() !== 'yes') {
           console.error('Restore cancelled.');
