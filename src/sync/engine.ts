@@ -95,7 +95,7 @@ async function getCurrentSignature(
   if (!loc) {
     return { signature: null, reason: 'invalid or missing source file location', source: 'none' };
   }
-  const result = extractCurrentSignature(loc.file, symbol.name, projectRoot);
+  const result = extractCurrentSignature(loc.file, symbol.name, projectRoot, loc.line - 1);
   return { signature: result.signature, reason: result.reason, source: result.signature ? 'regex' : 'none' };
 }
 
@@ -156,7 +156,7 @@ export async function syncSymbol(
             db.prepare("UPDATE doc_sections SET file = ?, content_hash = '', status = 'stale', updated_at = datetime('now') WHERE id = ?").run(loc.file, doc.id);
           }
           if (strategy === 'auto_update') {
-            const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot);
+            const oldDocstring = extractDocstring(loc.file, symbol.name, projectRoot, loc.line - 1);
             // F1: If extractDocstring returns null (symbol not found in file,
             // file unreadable, regex mismatch), skip the inline sync instead of
             // converting null to '' with ?? ''. Converting to empty string and
@@ -429,7 +429,7 @@ interface ExtractResult {
  * Returns a structured result with a reason when extraction fails, so
  * callers can provide specific error messages instead of a generic fallback.
  */
-function extractCurrentSignature(file: string, symbolName: string, projectRoot: string): ExtractResult {
+function extractCurrentSignature(file: string, symbolName: string, projectRoot: string, definitionLine?: number): ExtractResult {
   // Use the shared validatePath() for path-traversal defense and dangling
   // symlink detection. This ensures future hardening of validatePath
   // (e.g., TOCTOU hardening, additional checks) propagates here.
@@ -490,7 +490,14 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
   // Use bracket-counting to handle nested parentheses in parameters
   const methodRegex = new RegExp(`(?:async\\s+)?\\b${escaped}(?:<[^>]*>)?\\s*\\(`);
 
-  for (let i = 0; i < processedLines.length; i++) {
+  // When a line hint is provided, start searching from that line
+  // to find the correct occurrence when same-named symbols share a file.
+  const searchStart = (definitionLine !== undefined && definitionLine >= 0 && definitionLine < processedLines.length) ? definitionLine : 0;
+  const passes = searchStart > 0
+    ? [{ start: searchStart, end: processedLines.length }, { start: 0, end: searchStart }]
+    : [{ start: 0, end: processedLines.length }];
+  for (const { start, end } of passes) {
+    for (let i = start; i < end; i++) {
     const line = processedLines[i];
     const trimmed = line.trim();
     // Strip comments and strings before matching keywords to prevent
@@ -673,6 +680,7 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
           }
         }
       }
+    }
     }
   }
   return { signature: null, reason: 'symbol definition not found in source file' };

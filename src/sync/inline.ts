@@ -602,7 +602,7 @@ function replaceRustDocComment(
  * Uses a state-machine approach to strip comments and strings safely,
  * avoiding catastrophic backtracking from monolithic regex.
  */
-export function extractDocstring(file: string, symbolName: string, projectRoot: string): string | null {
+export function extractDocstring(file: string, symbolName: string, projectRoot: string, definitionLine?: number): string | null {
   if (!projectRoot) return null;
   const resolved = validatePath(file, projectRoot);
   if (!resolved) return null;
@@ -665,11 +665,27 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
 
   const symRegex = escapedSymRegex(symbolName);
 
-  const symbolLine = lines.findIndex((l) => {
-    // Strip comments and strings using a simple state machine
-    const codePart = stripCommentsAndStrings(l);
-    return symRegex.test(codePart);
-  });
+  // When a line hint is provided, start searching from that line
+  // to find the correct occurrence when same-named symbols share a file.
+  const searchStart = (definitionLine !== undefined && definitionLine >= 0 && definitionLine < lines.length) ? definitionLine : 0;
+  let symbolLine = -1;
+  for (let i = searchStart; i < lines.length; i++) {
+    const codePart = stripCommentsAndStrings(lines[i]);
+    if (symRegex.test(codePart)) {
+      symbolLine = i;
+      break;
+    }
+  }
+  // Fall back to searching from the beginning if not found near the hint
+  if (symbolLine < 0 && searchStart > 0) {
+    for (let i = 0; i < searchStart; i++) {
+      const codePart = stripCommentsAndStrings(lines[i]);
+      if (symRegex.test(codePart)) {
+        symbolLine = i;
+        break;
+      }
+    }
+  }
 
   if (symbolLine < 0) return null;
 
