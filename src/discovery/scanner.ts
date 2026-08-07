@@ -19,7 +19,7 @@ import { isIgnored } from '../utils/ignore.js';
  * Both are normalized to a timezone-independent instant before being compared
  * against fs mtime (which is already an absolute epoch).
  */
-function parseLastScanAt(value: string): number | undefined {
+export function parseLastScanAt(value: string): number | undefined {
   if (!value || !value.trim()) return undefined;
   const trimmed = value.trim();
   let iso: string;
@@ -98,6 +98,13 @@ export async function scanProject(
   /** key `file\u0000kind` -> Map<`name\u0000kind`, count> */
   const fileDupCounts = new Map<string, Map<string, number>>();
 
+  /** base symbolId -> set of signature hashes seen this scan. Overlapping
+   *  extractor results (e.g. codegraph explore returning a dependency file's
+   *  source section for several code_dirs) report the SAME definition
+   *  multiple times — identical name/kind/signature. Those are skipped, not
+   *  suffixed, so they never multiply into ::#2/::#3 pseudo-duplicates. */
+  const seenSignaturesById = new Map<string, Set<string>>();
+
   for (const codeDir of config.code_dirs) {
     try {
       // Use the pluggable extractor to discover all symbols in each code directory
@@ -137,6 +144,25 @@ export async function scanProject(
             fileDupCounts.set(dupKey, nameCounts);
           }
           const nameKey = `${baseName}\u0000${sym.kind}`;
+
+          // Exact-duplicate guard: same file::name AND same signature as an
+          // earlier occurrence in this scan = the same definition reported
+          // again by overlapping extractor output — skip it. Also skip the
+          // uninformative variant (no signature) when a signed variant of the
+          // same file::name exists (kind guesses without signatures would
+          // otherwise double-list the symbol under a second kind).
+          const baseFqn = `${baseFile}::${baseName}`;
+          const baseId = symbolId(lang, baseFqn, sym.kind);
+          const sigHere = contentHash(sym.signature ?? '');
+          let sigSet = seenSignaturesById.get(baseFqn);
+          if (sigSet?.has(sigHere)) continue;
+          if (sigSet && sigSet.size > 0 && !sym.signature) continue;
+          if (!sigSet) {
+            sigSet = new Set<string>();
+            seenSignaturesById.set(baseFqn, sigSet);
+          }
+          sigSet.add(sigHere);
+
           const occurrence = (nameCounts.get(nameKey) ?? 0) + 1;
           nameCounts.set(nameKey, occurrence);
           const suffix = occurrence > 1 ? `::#${occurrence}` : '';

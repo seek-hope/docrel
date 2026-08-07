@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ErrorCode, logError, docrelayError } from '../utils/error-codes.js';
 import { assertDbOpen } from '../db/connection.js';
+import { parseLastScanAt } from '../discovery/scanner.js';
 
 export interface HealthReport {
   healthy: boolean;
@@ -158,8 +159,12 @@ export async function docrelayHealth(
   await run('last_scan', async () => {
     const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
     if (row?.value) {
-      const scanMs = new Date(row.value.replace(' ', 'T') + 'Z').getTime();
-      if (!isNaN(scanMs)) {
+      // Accept both the legacy SQLite UTC format and ISO-8601 (what the
+      // scanner writes now) — the naive replace(' ','T')+'Z' trick corrupts
+      // ISO input into a double-Z invalid date, falsely reporting 'Never
+      // scanned' right after a successful scan.
+      const scanMs = parseLastScanAt(row.value);
+      if (scanMs !== undefined) {
         const hours = Math.round((Date.now() - scanMs) / 3600000);
         if (hours < 24) return { name: 'last_scan', status: 'ok', message: `Last scan ${hours}h ago` };
         return { name: 'last_scan', status: 'degraded', message: `Last scan ${hours}h ago — consider re-scanning` };

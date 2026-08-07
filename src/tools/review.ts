@@ -377,8 +377,23 @@ export function formatReview(report: ReviewReport): string {
     lines.push('');
     lines.push('These symbols have no documentation mapping:');
     lines.push('');
+    // Group same-name+kind symbols (e.g. a name re-exported from several
+    // files) into one line with all locations, instead of listing near-
+    // identical rows. Locations are always shown to keep entries
+    // distinguishable.
+    const grouped = new Map<string, { name: string; kind: string; locations: string[] }>();
     for (const s of report.unlinkedSymbols) {
-      lines.push(`- \`${s.name}\` (${s.kind}) — ${s.location}`);
+      const key = `${s.name}${s.kind}`;
+      const g = grouped.get(key) ?? { name: s.name, kind: s.kind, locations: [] };
+      if (s.location && !g.locations.includes(s.location)) g.locations.push(s.location);
+      grouped.set(key, g);
+    }
+    const MAX_LOCATIONS_SHOWN = 3;
+    for (const g of grouped.values()) {
+      const shown = g.locations.slice(0, MAX_LOCATIONS_SHOWN).join(', ');
+      const more = g.locations.length > MAX_LOCATIONS_SHOWN ? ` (+${g.locations.length - MAX_LOCATIONS_SHOWN} more)` : '';
+      const where = shown ? shown + more : 'unknown location';
+      lines.push(`- \`${g.name}\` (${g.kind}) — ${where}`);
     }
     lines.push('');
   }
@@ -432,7 +447,7 @@ export function formatReview(report: ReviewReport): string {
       report.unreviewedMappings.length === 0 &&
       report.orphanedSections.length === 0 &&
       report.skippedFiles.length === 0) {
-    lines.push('✅ All clear — no issues found.');
+    lines.push('√ All clear — no issues found.');
     lines.push('');
   }
 

@@ -260,11 +260,11 @@ program
       if (opts.format === 'json') {
         console.log(JSON.stringify(report, null, 2));
       } else {
-        console.log(`## DocRelay Health — ${report.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
+        console.log(`## DocRelay Health — ${report.healthy ? '√ Healthy' : '× Unhealthy'}`);
         console.log(`_${report.summary}_`);
         console.log('');
         for (const c of report.checks) {
-          const icon = c.status === 'ok' ? '✅' : c.status === 'degraded' ? '⚠️' : '❌';
+          const icon = c.status === 'ok' ? '√' : c.status === 'degraded' ? '!' : '×';
           const latency = c.latencyMs !== undefined ? ` (${c.latencyMs}ms)` : '';
           console.log(`${icon} **${c.name}** — ${c.message}${latency}`);
         }
@@ -686,7 +686,7 @@ program
       const configErrors = configIssues.filter(i => i.severity === 'error');
       if (configErrors.length > 0) {
         for (const i of configErrors) {
-          console.error(`❌ ${i.field}: ${i.message}`);
+          console.error(`× ${i.field}: ${i.message}`);
         }
         console.error('Fix the errors above or run `docrelay config validate` for details.');
         exit(1);
@@ -986,16 +986,16 @@ configCommand
     }
     const issues = validateConfig(config, projectRoot);
     if (issues.length === 0) {
-      console.log('✅ Configuration is valid.');
+      console.log('√ Configuration is valid.');
       return;
     }
     const errors = issues.filter(i => i.severity === 'error');
     const warnings = issues.filter(i => i.severity === 'warning');
     for (const i of errors) {
-      console.error(`❌ ${i.field}: ${i.message}`);
+      console.error(`× ${i.field}: ${i.message}`);
     }
     for (const i of warnings) {
-      console.warn(`⚠️  ${i.field}: ${i.message}`);
+      console.warn(`! ${i.field}: ${i.message}`);
     }
     if (errors.length > 0) exit(1);
   });

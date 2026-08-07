@@ -536,13 +536,24 @@ export class CodegraphClient {
   }
 
   private parseExploreOutput(content: string): ExploreResult {
-    // Parse the markdown/code output from codegraph_explore
-    // The output groups symbols by file with "## filename" headers.
-    // We track the current file context and associate symbols with it.
+    // Parse the markdown/code output from codegraph_explore.
+    //
+    // Current codegraph format (verified against codegraph serve --mcp):
+    //   **Exploration: <query>**
+    //   Found N symbols across M files.
+    //   **Blast radius — ...**
+    //   - `Name` (path/file.ts:76) — 1 caller in `...`; ...
+    //   **Relationships** ... (not symbols — ignored)
+    //   **Source Code**
+    //   **`path/file.ts`** — Name(kind), Name2(kind2)
+    //   ```typescript
+    //   76\texport function Name(...) {
+    //   ```
+    //
+    // Older codegraph builds instead used "## path/file.ts" headers — that
+    // layout is still accepted as a fallback below.
     const symbols: ExploreResult['symbols'] = [];
     const files: string[] = [];
-    let currentFile = '';
-    let currentLine = 0;
     let truncated = false;
 
     if (!content) return { symbols: [], files: [] };
@@ -551,59 +562,157 @@ export class CodegraphClient {
     const { boundedContent: bounded, truncated: wasTruncated } = truncateLines(content, MAX_OUTPUT_LINES, 'explore');
     truncated = wasTruncated;
     const lines = bounded.split('\n');
+
+    // ── Pass 1: blast-radius bullets give authoritative name + file:line ────
+    // - `Name` (packages/tui/src/keys.ts:76) — 1 caller in `...`
+    const blastByFileName = new Map<string, number>(); // `${file}${name}` -> line
     for (const line of lines) {
-      // Detect file headers: "## relative/path/file.ts" or "## File: path/file.ts"
-      // Allow extensionless files (Makefile, Dockerfile, .gitignore, etc.)
-      const fileHeader = line.match(/^##\s+(?:File:\s*)?(\S+)/);
-      if (fileHeader) {
-        currentFile = fileHeader[1];
-        currentLine = 0;
-        if (!files.includes(currentFile)) files.push(currentFile);
+      const m = line.match(/^\s*[-*]\s*\x60([^\x60]+)\x60\s*\(([^()]+\.[A-Za-z0-9]+):(\d+)\)/);
+      if (m) {
+        blastByFileName.set(`${m[2]}\0${m[1]}`, parseInt(m[3], 10));
+        if (!files.includes(m[2])) files.push(m[2]);
+      }
+    }
+
+    // ── Pass 2: source-code sections give kinds and line-numbered text ──────
+    // **`path/file.ts`** — Name(kind), Name2(kind2)
+    const NON_DEFINITION_KINDS = new Set(['references', 'reference', 'calls', 'callers', 'instantiates', 'imports']);
+    interface SourceSection {
+      kinds: Array<{ name: string; kind: string }>;
+      codeLines: Map<number, string>;
+    }
+    const sectionByFile = new Map<string, SourceSection>();
+    let curSection: SourceSection | null = null;
+    let inFence = false;
+    for (const line of lines) {
+      const header = line.match(/^\*\*\x60([^\x60]+)\x60\*\*\s*—\s*(.+)$/);
+      if (header) {
+        const file = header[1];
+        // Merge with any earlier section for the same file (large outputs may
+        // repeat a file section rather than extending it in place).
+        let section = sectionByFile.get(file);
+        if (!section) {
+          section = { kinds: [], codeLines: new Map() };
+          sectionByFile.set(file, section);
+        }
+        for (const part of header[2].split(',')) {
+          const km = part.trim().match(/^([\w$]+)\s*\(([^)]+)\)$/);
+          if (!km) continue;
+          const kind = km[2].trim().toLowerCase();
+          // 'references'/'calls' etc. are mention lists, not definitions —
+          // they repeat names defined elsewhere and must not become symbols.
+          if (NON_DEFINITION_KINDS.has(kind)) continue;
+          if (!section.kinds.some((k) => k.name === km[1] && k.kind === kind)) {
+            section.kinds.push({ name: km[1], kind });
+          }
+        }
+        curSection = section;
+        if (!files.includes(file)) files.push(file);
+        inFence = false;
         continue;
       }
-
-      // Track line numbers from source code blocks if available
-      const lineNumMatch = line.match(/^\s*(\d+)\s*[|\|]\s*/);
-      if (lineNumMatch) {
-        currentLine = parseInt(lineNumMatch[1], 10);
+      if (/^\s*```/.test(line)) {
+        inFence = !inFence;
+        continue;
       }
+      if (inFence && curSection) {
+        // Line-numbered source: "76\tcode" or "76 | code" or "76|code"
+        const lm = line.match(/^\s*(\d+)(?:\t|\s*\|\s?)(.*)$/);
+        if (lm) curSection.codeLines.set(parseInt(lm[1], 10), lm[2]);
+      }
+    }
 
-      // Extract symbol definitions with their kind and name.
-      // Matches: async function, export async function, export default function/class, etc.
-      // Also supports Python (def), Rust (fn), Go (func), and C (struct).
-      const symbolMatch = line.match(
-        /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+([\w$]+)/
-      );
-      if (symbolMatch && currentFile) {
-        const kindMatch = line.match(
-          /\b(function|class|interface|type|const|method|enum|fn|def|func|struct)\b/
+    // ── Assemble symbols from sections, preferring blast-radius line numbers ─
+    const seen = new Set<string>();
+    const pushSymbol = (name: string, kind: string, file: string, line: number, signature?: string) => {
+      // Dedup by file+name — one definition per name per file, no matter how
+      // many times the output repeats it (definition + reference listings).
+      const key = `${file}\0${name}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      symbols.push(signature ? { name, kind, file, line, signature } : { name, kind, file, line });
+    };
+
+    const DEF_RE_CACHE = new Map<string, RegExp>();
+    const findDefinitionLine = (codeLines: Map<number, string>, name: string): number => {
+      let re = DEF_RE_CACHE.get(name);
+      if (!re) {
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        re = new RegExp(
+          '(?:^|[\\s({])(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?(?:static\\s+)?' +
+          '(?:function\\*?|class|interface|type|const|let|var|enum|fn|def|func|struct|method)\\s+' + esc + '\\b' +
+          '|(?:^|\\s)' + esc + '\\s*[:=(]'
         );
-        symbols.push({
-          name: symbolMatch[1],
-          kind: kindMatch ? kindMatch[1] : 'function',
-          file: currentFile,
-          line: currentLine,
-        });
+        DEF_RE_CACHE.set(name, re);
+      }
+      const sorted = [...codeLines.keys()].sort((a, b) => a - b);
+      for (const n of sorted) {
+        if (re!.test(codeLines.get(n)!)) return n;
+      }
+      return 0;
+    };
+
+    for (const [file, section] of sectionByFile) {
+      for (const { name, kind } of section.kinds) {
+        const blastLine = blastByFileName.get(`${file}\0${name}`);
+        const line = blastLine ?? findDefinitionLine(section.codeLines, name);
+        const rawText = line > 0 ? section.codeLines.get(line) : undefined;
+        const signature = rawText ? rawText.trim() : undefined;
+        pushSymbol(name, kind, file, line, signature || undefined);
       }
     }
-
-    // Fallback: if no file sections were found, scan all content for symbols
-    if (files.length === 0) {
-      const fileRegex = /^## .*?(\S+\.\w+)/gm;
-      let match: RegExpExecArray | null;
-      while ((match = fileRegex.exec(content)) !== null) {
-        if (!files.includes(match[1])) files.push(match[1]);
-      }
+    // Blast-radius bullets for files WITHOUT a source section in this output
+    // are dependency mentions from other queries' blast radii, not definitions
+    // — skipping them avoids kind-less duplicate rows when overlapping explore
+    // queries return the same symbol with and without its source header.
+    for (const [key, line] of blastByFileName) {
+      const sep = key.indexOf('\0');
+      const file = key.slice(0, sep);
+      const name = key.slice(sep + 1);
+      const section = sectionByFile.get(file);
+      if (!section) continue; // dependency mention only — not a definition here
+      if (section.kinds.some((k) => k.name === name)) continue; // already added
+      // Header list was likely truncated — recover line+signature from the
+      // file's line-numbered source so the scanner's duplicate guard can
+      // match this against any properly-kinded variant from another query.
+      const defLine = findDefinitionLine(section.codeLines, name);
+      const effLine = line > 0 ? line : defLine;
+      const rawText = defLine > 0 ? section.codeLines.get(defLine) : undefined;
+      pushSymbol(name, 'function', file, effLine, rawText?.trim() || undefined);
     }
 
-    // Fallback: if no symbols were associated with files, extract any remaining
+    // ── Legacy fallback: "## path/file.ts" headers from older codegraph ──────
     if (symbols.length === 0) {
-      const symbolRegex = /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+([\w$]+)/g;
-      let match: RegExpExecArray | null;
-      while ((match = symbolRegex.exec(content)) !== null) {
-        symbols.push({ name: match[1], kind: 'function', file: '', line: 0 });
+      let currentFile = '';
+      let currentLine = 0;
+      for (const line of lines) {
+        const fileHeader = line.match(/^##\s+(?:File:\s*)?(\S+)/);
+        if (fileHeader) {
+          currentFile = fileHeader[1];
+          currentLine = 0;
+          if (!files.includes(currentFile)) files.push(currentFile);
+          continue;
+        }
+        const lineNumMatch = line.match(/^\s*(\d+)\s*[|\|]\s*/);
+        if (lineNumMatch) {
+          currentLine = parseInt(lineNumMatch[1], 10);
+        }
+        const symbolMatch = line.match(
+          /(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function|class|interface|type|const|method|enum|fn|def|func|struct)\s+([\w$]+)/
+        );
+        if (symbolMatch && currentFile) {
+          const kindMatch = line.match(
+            /\b(function|class|interface|type|const|method|enum|fn|def|func|struct)\b/
+          );
+          pushSymbol(symbolMatch[1], kindMatch ? kindMatch[1] : 'function', currentFile, currentLine);
+        }
       }
     }
+
+    // NOTE: there is deliberately no "global regex over the whole output"
+    // fallback. The old one produced file-less, line-less duplicate symbols
+    // (location ':0') from relationship lists, silently polluting the DB.
+    // Returning empty here lets the CLI fall back to the builtin extractor.
 
     // If content was returned but parsing produced no symbols, codegraph may
     // have changed its output format or returned an error message. Log a
