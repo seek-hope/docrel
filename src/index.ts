@@ -357,10 +357,16 @@ server.tool(
   'Audit code-doc mappings: find unlinked symbols, orphaned sections, implied references, and unreviewed (auto-generated) mappings',
   {
     format: z.enum(['json', 'markdown']).optional().default('markdown').describe('Output format'),
+    cleanup: z.boolean().optional().default(false).describe('Delete orphaned doc sections (missing files), their cascaded mappings, and rejected mappings older than 30 days'),
   },
-  async ({ format }) => {
+  async ({ format, cleanup }) => {
     try {
-      const { docrelayReview, formatReview } = await import('./tools/review.js');
+      const { docrelayReview, formatReview, cleanupOrphans } = await import('./tools/review.js');
+      if (cleanup) {
+        const cleanupResult = cleanupOrphans(db, projectRoot);
+        const text = JSON.stringify(cleanupResult, null, 2);
+        return { content: [{ type: 'text' as const, text }] };
+      }
       const report = docrelayReview(db, projectRoot);
       const text = format === 'json' ? JSON.stringify(report, null, 2) : formatReview(report);
       return { content: [{ type: 'text' as const, text }] };

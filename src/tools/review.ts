@@ -283,6 +283,85 @@ export function docrelayReview(db: Database.Database, projectRoot: string): Revi
   }
 }
 
+export interface CleanupResult {
+  /** doc_sections deleted because their backing file no longer exists. */
+  orphanedSectionsRemoved: number;
+  /** mappings cascade-deleted together with orphaned doc sections. */
+  cascadedMappingsRemoved: number;
+  /** mappings deleted because review_status = 'rejected' and created_at <= now - 30 days. */
+  rejectedMappingsRemoved: number;
+}
+
+/**
+ * Remove stale/link-rotted state from the database:
+ *  1. doc_sections pointing to files that no longer exist on disk — plus their
+ *     cascaded mappings (the FK on mappings.doc_id has ON DELETE CASCADE).
+ *  2. mappings with review_status = 'rejected' created more than 30 days ago.
+ * The whole cleanup runs in a single transaction, and a per-item detail line is
+ * written to stdout so operators can audit exactly what was removed.
+ */
+export function cleanupOrphans(db: Database.Database, projectRoot: string): CleanupResult {
+  assertDbOpen(db);
+  const result: CleanupResult = { orphanedSectionsRemoved: 0, cascadedMappingsRemoved: 0, rejectedMappingsRemoved: 0 };
+
+  const transaction = db.transaction(() => {
+    // ── 1. Orphaned doc_sections (file no longer exists) ──────────────
+    // Collect the target rows first (before any deletes) so we can count the
+    // mappings that will cascade and print per-item detail.
+    const sectionRows = db.prepare(
+      `SELECT d.id, d.file, d.anchor,
+              (SELECT COUNT(*) FROM mappings m WHERE m.doc_id = d.id) AS mapped
+       FROM doc_sections d`,
+    ).all() as { id: string; file: string; anchor: string; mapped: number }[];
+
+    const deleteSection = db.prepare('DELETE FROM doc_sections WHERE id = ?');
+    const root = path.resolve(projectRoot);
+    for (const row of sectionRows) {
+      // Reject DB-stored absolute paths that escape projectRoot (same guard as
+      // findImplied) — treat them as missing so they get cleaned up.
+      let exists = false;
+      try {
+        if (path.isAbsolute(row.file) && !row.file.startsWith(root + path.sep)) {
+          exists = false;
+        } else {
+          const full = path.resolve(root, row.file);
+          if (full.startsWith(root + path.sep) || full === root) {
+            exists = fs.statSync(full).isFile();
+          }
+        }
+      } catch {
+        exists = false;
+      }
+      if (exists) continue;
+
+      deleteSection.run(row.id);
+      result.orphanedSectionsRemoved++;
+      result.cascadedMappingsRemoved += row.mapped;
+      console.log(`  removed orphaned doc_section ${row.id} (${row.file}#${row.anchor || '(top)'}), cascaded ${row.mapped} mapping(s)`);
+    }
+
+    // ── 2. Rejected mappings older than 30 days ───────────────────────
+    const rejectedRows = db.prepare(
+      `SELECT m.symbol_id AS symbolId, m.doc_id AS docId, m.rel_type AS relType
+       FROM mappings m
+       WHERE m.review_status = 'rejected'
+         AND m.created_at <= datetime('now', '-30 days')`,
+    ).all() as { symbolId: string; docId: string; relType: string }[];
+
+    const deleteMapping = db.prepare(
+      "DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?",
+    );
+    for (const m of rejectedRows) {
+      deleteMapping.run(m.symbolId, m.docId, m.relType);
+      result.rejectedMappingsRemoved++;
+      console.log(`  removed rejected mapping ${m.symbolId} ↔ ${m.docId} (${m.relType})`);
+    }
+  });
+
+  transaction();
+  return result;
+}
+
 /** Format the review as human-readable markdown. */
 export function formatReview(report: ReviewReport): string {
   const lines: string[] = [];

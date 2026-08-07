@@ -400,6 +400,90 @@ function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResu
   };
 }
 
+// ── Generic MCP agent (Cursor, Gemini, Antigravity, Kiro) ────────────
+// These agents support MCP but may not have a standardized rules-file
+// format. We create .mcp.json + a simple instructions block in their
+// rules file if one is known, or just .mcp.json otherwise.
+function integrateMcpAgent(
+  projectRoot: string,
+  dryRun: boolean,
+  agentKind: AgentKind,
+  agentName: string,
+  rulesFileName: string | null,
+): IntegrationResult {
+  const files: string[] = [];
+  const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
+
+  // Write .mcp.json
+  if (!dryRun) {
+    const mcpAdded = upsertMcpJson(projectRoot);
+    if (mcpAdded) files.push(path.join(projectRoot, '.mcp.json'));
+  } else {
+    const mcpPath = path.join(projectRoot, '.mcp.json');
+    let hasDocrel = false;
+    const mcpContent = readFileWithSizeLimit(mcpPath);
+    if (mcpContent !== null) {
+      try {
+        const m = JSON.parse(mcpContent);
+        if (typeof m === 'object' && m !== null) {
+          hasDocrel = !!(m.mcpServers?.docrelay);
+        }
+      } catch { /* missing or invalid */ }
+    }
+    if (!hasDocrel) files.push(mcpPath);
+  }
+
+  // Write rules file if one is known
+  if (rulesFileName) {
+    const rulesPath = path.join(projectRoot, rulesFileName);
+    const section = `
+${SECTION_MARKER}
+
+DocRelay tracks code symbols and their linked documentation, keeping them
+in sync as your codebase evolves. It is already configured as an MCP server
+in \`.mcp.json\`.
+
+### Available MCP Tools
+| Tool | Purpose |
+|------|---------|
+| \`docrelay_status\` | Overall health dashboard |
+| \`docrelay_check\` | Find stale documentation sections |
+| \`docrelay_impact\` | Show docs affected by changed files |
+| \`docrelay_sync\` | Sync docs for a specific symbol |
+| \`docrelay_link\` | Create or delete symbol-to-doc mappings |
+| \`docrelay_diff\` | Show change history for a symbol |
+| \`docrelay_scan\` | Rescan codebase and re-link docs |
+
+### CLI Quick Reference
+\`\`\`
+docrelay status              # Health dashboard
+docrelay check               # Find stale docs
+docrelay check --strict      # Exit 1 if stale (good for CI)
+docrelay impact src/foo.ts   # Impact analysis
+docrelay sync --symbol <id>  # Sync docs
+docrelay scan                # Rescan
+\`\`\`
+`;
+
+    if (!dryRun) {
+      const added = appendToRulesFile(rulesPath, section, SECTION_MARKER);
+      if (added) files.push(rulesPath);
+    } else {
+      const existing = readFileWithSizeLimit(rulesPath);
+      if (existing === null || !existing.includes(SECTION_MARKER)) files.push(rulesPath);
+    }
+  }
+
+  const label = agentName || agentKind;
+  return {
+    agent: agentKind,
+    filesCreated: files,
+    summary: files.length > 0
+      ? `${label} integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
+      : `${label} integration already configured.`,
+  };
+}
+
 // ── Main entry point ─────────────────────────────────────────────────
 
 /**
@@ -426,6 +510,14 @@ export async function integrate(
       return integrateOhMyPi(resolved, dryRun);
     case 'hermes':
       return integrateOhMyPi(resolved, dryRun, 'hermes');
+    case 'cursor':
+      return integrateMcpAgent(resolved, dryRun, 'cursor', 'Cursor', null);
+    case 'gemini':
+      return integrateMcpAgent(resolved, dryRun, 'gemini', 'Gemini CLI', 'GEMINI.md');
+    case 'antigravity':
+      return integrateMcpAgent(resolved, dryRun, 'antigravity', 'Antigravity', 'QAI.md');
+    case 'kiro':
+      return integrateMcpAgent(resolved, dryRun, 'kiro', 'Kiro', 'KIRO.md');
     default:
       return integrateGeneric(resolved, dryRun);
   }

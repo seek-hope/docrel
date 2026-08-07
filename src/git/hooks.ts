@@ -7,6 +7,7 @@ import { docrelayCheck } from '../tools/check.js';
 import { scanProject } from '../discovery/scanner.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export async function preCommitHook(
   projectRoot: string,
@@ -244,20 +245,32 @@ export function installHooks(projectRoot: string, force = false): void {
       throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`);
     }
   } else {
-    // When argv1 is defined (CLI mode), apply the same validation pipeline
-    // used in the PATH-search path above: resolve symlinks, check against
-    // allowed prefixes. An attacker who can influence argv[1] (e.g., via a
-    // crafted shebang, symlink, or PATH manipulation) could otherwise install
-    // hooks that execute an arbitrary binary from an unexpected location.
+    // When argv1 is defined (CLI mode), trust the binary if it is the
+    // currently executing cli.js itself (self-reference): code that is
+    // already running cannot gain anything by spoofing its own path. This
+    // covers npm link / `npm install -g <local folder>` layouts where the
+    // global bin symlinks back into a project checkout whose realpath is
+    // NOT under any conventional install prefix. When the self-reference
+    // cannot be established (bundled builds), fall back to the allowed
+    // prefix validation against PATH-style installs.
     const resolvedArgv = path.resolve(argv1);
     try {
       const realBin = fs.realpathSync(resolvedArgv);
-      const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
-      if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
-          !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
-        throw new Error(`docrelay resolved to unexpected path: ${resolvedArgv}`);
+      let selfCli: string | null = null;
+      try {
+        // This module lives at <pkg>/dist/git/hooks.js; cli.js is one level up.
+        selfCli = fs.realpathSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'cli.js'));
+      } catch { selfCli = null; }
+      if (selfCli && realBin === selfCli) {
+        docrelayBin = realBin;
+      } else {
+        const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
+        if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
+            !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
+          throw new Error(`docrelay resolved to unexpected path: ${resolvedArgv}`);
+        }
+        docrelayBin = realBin;
       }
-      docrelayBin = realBin;
     } catch (err: any) {
       throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`);
     }
@@ -296,10 +309,27 @@ export function installHooks(projectRoot: string, force = false): void {
   }
   const docrelayQuoted = shellQuote(docrelayBin);
 
+
+  // Fail-open guard snippet for every hook. DocRelay is uninitialized when
+  // neither .docrelay/ nor .git/docrelay.db exists — e.g. fresh git worktrees
+  // or pre-init clones. When so, warn and exit 0 so we never block git
+  // operations (defect: hooks used to hard-fail with 'Not initialized').
+  const failOpenGuard = `if [ ! -d \".docrelay\" ] && [ ! -f \".git/docrelay.db\" ]; then
+  echo "DocRelay: project not initialized — skipping \"$HOOK\" check."
+  echo "DocRelay: run 'docrelay init' to enable documentation checks."
+  exit 0
+fi
+`;
+
+  // Additional runtime guard: even when the above sentinel check passes, the
+  // docrelay status command may still fail (e.g. corrupted/missing config or
+  // DB). Treat any docrelay failure as fail-open for non-blocking hooks
+  // (post-commit, prepare-commit-msg) and as a hard gate only where a strict
+  // check is explicitly intended (pre-commit/pre-push).
   const preCommitScript = `#!/bin/sh
 # DocRelay pre-commit hook
-set -e
-${docrelayQuoted} check --strict
+HOOK=pre-commit
+${failOpenGuard}${docrelayQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRelay: Documentation is stale. Run 'docrelay sync' or use --no-verify to skip."
@@ -309,14 +339,19 @@ fi
 
   const postCommitScript = `#!/bin/sh
 # DocRelay post-commit hook
+HOOK=post-commit
 set -e
-git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelayQuoted} impact --
+${failOpenGuard}# Incrementally re-scan so the post-commit DB state reflects the new code.
+${docrelayQuoted} scan --incremental || { echo "DocRelay: post-commit scan failed — run 'docrelay status' to check."; exit 0; }
+# Then surface the docs impacted by the changed files.
+git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelayQuoted} impact -- >/dev/null || true
+exit 0
 `;
 
   const prePushScript = `#!/bin/sh
 # DocRelay pre-push hook
-set -e
-${docrelayQuoted} check --strict
+HOOK=pre-push
+${failOpenGuard}${docrelayQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
   echo "DocRelay: Cannot push with stale documentation."
@@ -326,7 +361,9 @@ fi
 
   const prepareCommitMsgScript = `#!/bin/sh
 # DocRelay prepare-commit-msg hook
-${docrelayQuoted} annotate-commit "$1"
+HOOK=prepare-commit-msg
+${failOpenGuard}${docrelayQuoted} annotate-commit "$1" || true
+exit 0
 `;
 
   const hooks = [

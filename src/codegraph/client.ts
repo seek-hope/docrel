@@ -238,7 +238,7 @@ export class CodegraphClient {
 
     const transport = new StdioClientTransport({
       command: cmd,
-      args: ['mcp'],
+      args: ['serve', '--mcp'],
     });
 
     const client = new Client(
@@ -351,24 +351,26 @@ export class CodegraphClient {
       return (this._preflightResult = `Codegraph binary failed to run: ${stderr.slice(0, 200)}`);
     }
 
-    // 2. Check if it supports the 'mcp' subcommand
-    // Run `codegraph --help`, then look for 'mcp' in the listed commands.
-    // We must use --help (not `codegraph mcp --help`) because some codegraph
-    // versions redirect unknown subcommands to the main help output instead
-    // of returning an error.
+    // 2. Check that it supports MCP mode via `codegraph serve --mcp`.
+    // CodeGraph has never had a standalone 'mcp' subcommand; the correct
+    // invocation is `codegraph serve --mcp` (the 'serve' command is hidden
+    // from the main --help listing). Verify 'serve --help' shows --mcp.
     try {
-      const helpOut = execFileSync(cmd, ['--help'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
-      const hasMcp = /\bmcp\b/.test(helpOut) &&
-        (/\bCommands:/i.test(helpOut) || /\bmcp\b/i.test(helpOut.split('\n').filter(l => /^\s{2,}/.test(l)).join('\n')));
-      if (!hasMcp) {
+      const serveHelpOut = execFileSync(cmd, ['serve', '--help'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' });
+      if (!serveHelpOut.includes('--mcp')) {
         const version = await this.getCodegraphVersion(cmd);
-        return (this._preflightResult = `Codegraph ${version} is installed but does not support the 'mcp' subcommand — update to the latest version for richer symbol data. Doc-relay will use its built-in regex extractor instead.`);
+        return (this._preflightResult = `Codegraph ${version} is installed but 'serve --help' does not show --mcp. Doc-relay will use its built-in regex extractor instead.`);
       }
     } catch (err: any) {
       const stderr = (err.stderr || err.message || '').toString();
+      // 'serve' is a hidden command — if it doesn't exist at all, CodeGraph
+      // may be too old or a different tool. Fall back to builtin extractor.
       if (stderr.includes('unknown command') || stderr.includes('Unknown command') || stderr.includes('--help')) {
-        return (this._preflightResult = 'Codegraph is installed but does not support the \'mcp\' subcommand — update to the latest version for richer symbol data.');
+        const version = await this.getCodegraphVersion(cmd);
+        return (this._preflightResult = `Codegraph ${version} is installed but does not support 'serve --mcp'. Doc-relay will use its built-in regex extractor instead.`);
       }
+      // Some other error — log and fall back
+      return (this._preflightResult = `Codegraph preflight check failed: ${stderr.slice(0, 200)}`);
     }
 
     this._preflightResult = null;
@@ -378,8 +380,8 @@ export class CodegraphClient {
   async isAvailable(timeoutMs = CONNECT_TIMEOUT_MS): Promise<boolean> {
     let timer: NodeJS.Timeout | undefined;
 
-    // Run preflight — if codegraph isn't installed, skip the full connect attempt
-    // (which would produce confusing "unknown command 'mcp'" noise on stderr).
+    // Run preflight — if codegraph isn't available, skip the full connect attempt
+    // (which would produce confusing "unknown command" noise on stderr).
     try {
       const preflightIssue = await this.preflight();
       if (preflightIssue) {

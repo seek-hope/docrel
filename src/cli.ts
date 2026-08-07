@@ -19,6 +19,8 @@ import { docrelayDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
+import type { ScanReport } from './discovery/scanner.js';
+import { shouldFallbackToBuiltin } from './sync/scan-fallback.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { listSymbols } from './db/symbols.js';
@@ -43,7 +45,9 @@ function errMsg(e: unknown): string {
     .replace(/\/(?:home|opt|var|etc|tmp|usr)\/[^\s:,)]*/g, '<path>');
 }
 
-/** Exit with database cleanup — ensures WAL checkpointing completes. */
+/** Exit with database cleanup — ensures WAL checkpointing completes.
+ *  The OS reaps the CodeGraph MCP child process on parent exit;
+ *  error-path exits don't need an explicit async close. */
 function exit(code: number): never {
   try { closeAllDbs(); } catch { /* best effort */ }
   process.exit(code);
@@ -74,6 +78,29 @@ async function createExtractor(cg: CodegraphClient, cfg: ReturnType<typeof loadC
   const codegraphExt = new CodegraphExtractor(cg, cfg.codegraph?.maxFiles);
   if (await codegraphExt.isAvailable()) return codegraphExt;
   return new BuiltinExtractor();
+}
+
+/**
+ * Run a scan but fall back to the builtin regex extractor when the chosen
+ * extractor (codegraph) returns zero symbols while the code directories do
+ * contain source files. The codegraph binary may exist yet produce an
+ * unparseable `explore` output, resulting in a silent tool-wide failure;
+ * this closes that gap by re-scanning with the builtin extractor.
+ * Returns the fallback scan report when a fallback happened.
+ */
+async function scanWithFallback(
+  extractor: SymbolExtractor,
+  cfgDb: ReturnType<typeof getDb>,
+  cfgConfig: ReturnType<typeof loadConfig>,
+  cfgRoot: string,
+  fullScan = true,
+): Promise<ScanReport> {
+  const report = await scanProject(extractor, cfgDb, cfgConfig, cfgRoot, fullScan);
+  if (shouldFallbackToBuiltin(report.totalSymbols, extractor.name, cfgConfig.code_dirs, cfgRoot)) {
+    console.warn('codegraph returned 0 symbols, fell back to builtin extractor');
+    return scanProject(new BuiltinExtractor(), cfgDb, cfgConfig, cfgRoot, fullScan);
+  }
+  return report;
 }
 
 /** Check if doc-relay has been initialized in this project. */
@@ -202,7 +229,7 @@ strategies:
       if (opts.scan) {
         const available = await extractor.isAvailable();
         if (available) {
-          const report = await scanProject(extractor, db, config, projectRoot);
+          const report = await scanWithFallback(extractor, db, config, projectRoot);
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
         } else {
           steps.push('Skipped scan: no extractor available (run \'docrelay scan\' later)');
@@ -551,10 +578,11 @@ program
 program
   .command('install-hooks')
   .description('Install DocRelay git hooks in .git/hooks/')
-  .action(async () => {
+  .option('--force', 'Overwrite existing hook scripts')
+  .action(async (opts: { force?: boolean }) => {
     try {
       await ensureContext();
-      installHooks(projectRoot);
+      installHooks(projectRoot, opts.force ?? false);
       console.log('DocRelay hooks installed successfully.');
     } catch (err: any) {
       console.error('Failed to install hooks:', errMsg(err));
@@ -677,7 +705,7 @@ program
       console.error('Scanning codebase...');
       const symbolReport = opts.dryRun
         ? { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs: [], scannedIds: [] }
-        : await scanProject(scanExtractor, db, config, projectRoot, !opts.incremental);
+        : await scanWithFallback(scanExtractor, db, config, projectRoot, !opts.incremental);
 
       let docSectionReport: {
         totalFiles: number;
@@ -730,11 +758,22 @@ program
   .option('--format <format>', 'Output format: json, markdown, or detailed', 'markdown')
   .option('--json', 'Shortcut for --format json')
   .option('-S, --side-by-side', 'Show code↔doc blocks for unreviewed mappings')
+  .option('--cleanup', 'Delete orphaned doc sections (missing files), their cascaded mappings, and rejected mappings older than 30 days')
   .action(async (opts) => {
     try {
       await ensureContext();
-      const { docrelayReview, formatReview, formatReviewDetailed } = await import('./tools/review.js');
+      const { docrelayReview, formatReview, formatReviewDetailed, cleanupOrphans } = await import('./tools/review.js');
       const report = docrelayReview(db, projectRoot);
+      if (opts.cleanup) {
+        console.log('## DocRelay Review — Cleanup');
+        console.log('');
+        const cleanup = cleanupOrphans(db, projectRoot);
+        console.log('');
+        console.log(`Removed ${cleanup.orphanedSectionsRemoved} orphaned doc_sections, ` +
+          `${cleanup.cascadedMappingsRemoved} cascaded mapping(s), ` +
+          `${cleanup.rejectedMappingsRemoved} rejected mapping(s) (>30 days).`);
+        exit(0);
+      }
       if (opts.json || opts.format === 'json') {
         console.log(JSON.stringify(report, null, 2));
       } else if (opts.sideBySide || opts.format === 'detailed') {
@@ -769,8 +808,9 @@ program
 program
   .command('integrate')
   .description('Generate agent integration configs for DocRelay')
-  .option('--agent <agent>', 'Agent to integrate with (claude-code, codex, opencode, oh-my-pi, hermes)')
+  .option('--agent <agent>', 'Agent to integrate with (claude-code, codex, cursor, opencode, hermes, gemini, antigravity, kiro, oh-my-pi)')
   .option('--dry-run', 'Preview what would be created without writing files')
+  .option('--list', 'List detected/installed agents without integrating')
   .action(async (opts) => {
     try {
       await ensureContext();
@@ -778,19 +818,39 @@ program
       const agentKind: AgentKind | undefined = opts.agent as AgentKind | undefined;
 
       // Validate agent flag if provided
-      const VALID_AGENTS = new Set(['claude-code', 'codex', 'opencode', 'oh-my-pi', 'hermes', 'unknown']);
+      const VALID_AGENTS = new Set([
+        'claude-code', 'codex', 'cursor', 'opencode', 'oh-my-pi',
+        'hermes', 'gemini', 'antigravity', 'kiro', 'unknown',
+      ]);
       if (opts.agent && !VALID_AGENTS.has(opts.agent)) {
-        console.error(`Error: Unknown agent '${opts.agent}'. Valid: ${[...VALID_AGENTS].join(', ')}`);
+        console.error(`Error: Unknown agent '${opts.agent}'. Valid: ${[...VALID_AGENTS].sort().join(', ')}`);
         exit(1);
+      }
+
+      // --list mode: show detected and installed agents
+      if (opts.list) {
+        const { detectInstalledAgents } = await import('./agents/detector.js');
+        const installed = detectInstalledAgents(projectRoot);
+        console.error(`Active session: ${detected.kind !== 'unknown' ? `${detected.name} (${detected.kind}) detected via ${detected.detectionMethod}` : 'none detected'}`);
+        if (installed.length > 0) {
+          console.error(`Installed agents found on disk: ${installed.map((a) => `${a.name} (${a.kind})`).join(', ')}`);
+        } else {
+          console.error('No installed agents found on disk.');
+        }
+        return;
       }
 
       const targetAgent = agentKind ?? detected.kind;
 
+      // Show what was detected and how
+      if (detected.kind !== 'unknown') {
+        console.error(`Detected: ${detected.name} (via ${detected.detectionMethod === 'env' ? 'environment variable' : 'filesystem'})`);
+      }
+      if (agentKind && agentKind !== detected.kind) {
+        console.error(`Overriding: integrating as ${agentKind}`);
+      }
+
       if (opts.dryRun) {
-        console.error(`Detected agent: ${detected.name} (${detected.kind})`);
-        if (agentKind) {
-          console.error(`Overriding with: ${agentKind}`);
-        }
         console.error('Dry run — no files will be written.\n');
       }
 
@@ -1169,4 +1229,12 @@ program
     }
   });
 
-program.parse();
+// parseAsync returns when the command action completes, then we clean up
+// the CodeGraph MCP connection so the event loop can drain and the process
+// exits cleanly. Without this, the stdio transport keeps the process alive
+// indefinitely after every CLI command.
+await program.parseAsync();
+if (codegraph) {
+  try { await codegraph.close(); } catch { /* codegraph may already be closed */ }
+}
+closeAllDbs();

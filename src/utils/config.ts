@@ -14,9 +14,9 @@ export interface DocRelayConfig {
   doc_dirs: string[];
   code_dirs: string[];
   strategies: {
-    inline: 'auto_update' | 'mark_stale';
-    standalone: 'auto_update' | 'mark_stale' | 'prompt';
-    generated: 'auto_update' | 'mark_stale';
+    inline: 'auto_update' | 'mark_stale' | 'ignore';
+    standalone: 'auto_update' | 'mark_stale' | 'prompt' | 'ignore';
+    generated: 'auto_update' | 'mark_stale' | 'ignore';
     architecture: 'mark_stale' | 'ignore';
   };
   codegraph?: {
@@ -34,9 +34,9 @@ const userConfigSchema = z.object({
   doc_dirs: z.array(z.string()).optional(),
   code_dirs: z.array(z.string()).optional(),
   strategies: z.object({
-    inline: z.enum(['auto_update', 'mark_stale']).optional(),
-    standalone: z.enum(['auto_update', 'mark_stale', 'prompt']).optional(),
-    generated: z.enum(['auto_update', 'mark_stale']).optional(),
+    inline: z.enum(['auto_update', 'mark_stale', 'ignore']).optional(),
+    standalone: z.enum(['auto_update', 'mark_stale', 'prompt', 'ignore']).optional(),
+    generated: z.enum(['auto_update', 'mark_stale', 'ignore']).optional(),
     architecture: z.enum(['mark_stale', 'ignore']).optional(),
   }).optional(),
   codegraph: z.object({
