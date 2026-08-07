@@ -11,7 +11,7 @@ import { getDocSection, markDocStale, markDocRelayed, markDocRelayedWithHash } f
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
 import { stripCommentsAndStrings, stripAllBlockComments } from './inline.js';
-import { findSectionContent } from './standalone.js';
+import { findSectionContent, replaceSectionSignature } from './standalone.js';
 import { updateGeneratedDoc, detectGenerator } from './generated.js';
 import { escapeRegex, validatePath } from '../utils/fs.js';
 import path from 'node:path';
@@ -37,6 +37,27 @@ export interface SyncResult {
   /** Structured diff of proposed changes that were NOT applied. Caller (CLI/MCP)
    *  should present these to the user/agent for approval. */
   proposedChanges: ProposedChange[];
+}
+
+/**
+ * Read a doc file's full content (with path containment checks) so its
+ * content_hash can be recomputed after a generated-doc regeneration.
+ * Returns null when the file is missing, unreadable, escaped projectRoot,
+ * or is a directory — in which case the caller should keep the current
+ * synced state without refreshing the hash.
+ */
+function readDocFileContent(file: string, projectRoot: string): string | null {
+  try {
+    const root = path.resolve(projectRoot);
+    if (path.isAbsolute(file) && !file.startsWith(root + path.sep)) return null;
+    const resolved = path.resolve(root, file);
+    if (!resolved.startsWith(root + path.sep) && resolved !== root) return null;
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return null;
+    return fs.readFileSync(resolved, 'utf-8');
+  } catch {
+    return null;
+  }
 }
 
 /** Parse a "file:line" location into { file, line }. Returns null if invalid. */
@@ -126,6 +147,9 @@ export async function syncSymbol(
       if (!doc) continue;
 
       const strategy = config.strategies[doc.doc_type];
+      // 'ignore' is valid for every doc type — skip the doc entirely
+      // (leave its status untouched; it is intentionally unmanaged).
+      if ((strategy as string) === 'ignore') continue;
       if (!strategy) {
         console.warn(`DocRelay: No strategy configured for doc_type '${doc.doc_type}' — marking doc ${doc.id} as stale`);
         if (markDocStale(db, doc.id)) {
@@ -166,14 +190,10 @@ export async function syncSymbol(
               result.warnings.push(`Could not extract existing docstring for ${symbol.name} — skipping inline sync to avoid data loss`);
               continue;
             }
-            // Skip non-JSDoc files (Python, Go, Rust) — generateUpdatedDocstring
-            // produces JSDoc /** ... */ output, which would replace language-specific
-            // docstrings ("""...""", // comments, /// comments) and corrupt the file.
-            const ext = path.extname(loc.file).toLowerCase();
-            if (ext === '.py' || ext === '.pyi' || ext === '.go' || ext === '.rs') {
-              result.warnings.push(`Skipped inline sync for ${symbol.name} — non-JSDoc file type (${ext}) not supported for auto_update. Use mark_stale strategy instead.`);
-              continue;
-            }
+            // Non-JSDoc files (Python, Go, Rust) are handled by inline.ts's
+            // language-specific docstring guards and replacement functions —
+            // do not short-circuit them here (the old blanket skip contradicted
+            // the actual support in inline.ts).
             // Use raw_signature (human-readable) for JSDoc generation, not the hash.
             // If raw_signature is empty, the symbol was created without a raw signature
             // (e.g. manual creation or corrupted state) — we cannot generate meaningful docs.
@@ -225,10 +245,105 @@ export async function syncSymbol(
 
         case 'standalone': {
           if (strategy === 'auto_update') {
-            // Agent already rewrote the doc before calling syncSymbol.
-            // Detect the new hash and record the sync.
+            // Surgical signature replacement: locate the section (including the
+            // empty-anchor preamble) and swap the old documented signature text
+            // for the current one, then write the file back. This fixes the
+            // previous behavior where standalone auto_update only recorded the
+            // status without ever rewriting the document.
             const sectionContent = findSectionContent(doc.file, doc.anchor, projectRoot);
             if (sectionContent) {
+              // Current signature text from the on-disk source (skip the raw
+              // cache so we always read the actual file). The DB's
+              // symbols.signature is a content hash, so we must recover the
+              // human-readable text via getCurrentSignature.
+              const curSig = await getCurrentSignature(symbol, codegraph, projectRoot, true);
+              // Old documented signature text, best-effort candidates:
+              //  1. changelog.old_sig — now stores the pre-change signature TEXT
+              //     (recorded by scan before raw_signature was overwritten).
+              //  2. symbol.raw_signature, when it still holds the pre-change
+              //     signature (pre-scan state).
+              // For each candidate, try both the full form (with trailing
+              // `{`/`=>`/`;`) and the stripped declaration form, since docs
+              // commonly show the signature without the opening brace.
+              const stripTail = (s: string) => s.replace(/\s*(\{|=>|;)\s*$/, '').trim();
+              const pairs: Array<{ oldText: string; newText: string }> = [];
+              const pushPair = (o?: string | null, n?: string | null) => {
+                if (!o || !n || o === n) return;
+                if (!pairs.some((p) => p.oldText === o)) pairs.push({ oldText: o, newText: n });
+                const os = stripTail(o);
+                const ns = stripTail(n);
+                if ((os !== o || ns !== n) && os !== ns && !pairs.some((p) => p.oldText === os)) {
+                  pairs.push({ oldText: os, newText: ns });
+                }
+              };
+              if (curSig.signature) {
+                const chgs = db.prepare(
+                  "SELECT DISTINCT old_sig FROM changelog WHERE symbol_id = ? AND change_type = 'signature_changed' ORDER BY timestamp DESC LIMIT 5"
+                ).all(symbol.id) as Array<{ old_sig: string }>;
+                for (const c of chgs) pushPair(c.old_sig, curSig.signature);
+                pushPair(symbol.raw_signature, curSig.signature);
+              }
+
+              let surgicalAttempted = pairs.length > 0;
+              let genuineFailure: string | null = null;
+              let replacedOk = false;
+              for (const pair of pairs) {
+                const replaced = replaceSectionSignature({
+                  file: doc.file,
+                  anchor: doc.anchor,
+                  oldText: pair.oldText,
+                  newText: pair.newText,
+                }, projectRoot);
+                if (replaced.success && replaced.newSection) {
+                  const newHash = contentHash(replaced.newSection);
+                  const ok = markDocRelayedWithHash(db, doc.id, newHash);
+                  if (!ok) {
+                    result.errors.push(`Standalone doc section ${doc.id} not found — race condition?`);
+                  } else {
+                    result.docsUpdated.push(doc.file);
+                  }
+                  replacedOk = true;
+                  break;
+                }
+                if (replaced.reason && replaced.reason !== 'old signature text not found in section') {
+                  genuineFailure = replaced.reason;
+                  break;
+                }
+                // 'old signature text not found in section' — try the next candidate.
+              }
+
+              if (replacedOk) break;
+
+              if (genuineFailure) {
+                // A genuine write/path failure, not just "old text already
+                // replaced". Surface it and require manual/agent rewrite.
+                result.errors.push(`Cannot auto-rewrite standalone doc in ${relPath(doc.file, projectRoot)} (section '${doc.anchor}'): ${genuineFailure}`);
+                result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: requires manual/agent rewrite.`);
+                if (markDocStale(db, doc.id)) {
+                  result.docsStaled.push(doc.file);
+                } else {
+                  result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
+                }
+                break;
+              }
+
+              if (!surgicalAttempted) {
+                // Cannot determine the old signature text — do NOT silently
+                // succeed. Flag it as requiring a manual/agent rewrite.
+                result.errors.push(`Cannot determine old signature text for standalone auto_update of ${symbol.name} in ${relPath(doc.file, projectRoot)} (section '${doc.anchor}') — requires manual/agent rewrite`);
+                result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: requires manual/agent rewrite (old signature text not recoverable).`);
+                if (markDocStale(db, doc.id)) {
+                  result.docsStaled.push(doc.file);
+                } else {
+                  result.errors.push(`Failed to mark standalone doc ${doc.id} as stale — doc may have been deleted concurrently`);
+                }
+                break;
+              }
+
+              // Either the old text was not found (already rewritten) or no
+              // replacement was necessary — handle the accounting case where an
+              // agent/manual pass already updated the content: detect the new
+              // hash and record the sync.
               const newHash = contentHash(sectionContent);
               if (newHash !== doc.content_hash) {
                 // Atomically update both content_hash and status in a single
@@ -319,8 +434,19 @@ export async function syncSymbol(
             if (generator) {
               const genResult = updateGeneratedDoc({ file: doc.file, generator, projectRoot });
               if (genResult.success) {
-                if (markDocRelayed(db, doc.id)) {
+                // Re-read the generated file and refresh its content_hash so the
+                // next scan doesn't see a spurious change and re-sync unnecessarily.
+                const regeneratedDoc = readDocFileContent(doc.file, projectRoot);
+                const newHash = regeneratedDoc !== null ? contentHash(regeneratedDoc) : null;
+                if (newHash !== null && markDocRelayedWithHash(db, doc.id, newHash)) {
                   result.docsUpdated.push(doc.file);
+                } else if (newHash === null) {
+                  // File unreadable after regeneration — keep doc synced without hash refresh.
+                  if (markDocRelayed(db, doc.id)) {
+                    result.docsUpdated.push(doc.file);
+                  } else {
+                    result.errors.push(`Failed to mark generated doc ${doc.id} as synced — doc may have been deleted concurrently`);
+                  }
                 } else {
                   result.errors.push(`Failed to mark generated doc ${doc.id} as synced — doc may have been deleted concurrently`);
                 }
@@ -375,6 +501,14 @@ export async function syncSymbol(
     console.error(`DocRelay: Catastrophic sync error for ${symbolId}:`, err);
     result.errors.push(`Catastrophic sync error: internal error — check server logs`);
   }
+
+  // Update changelog sync_status to reflect the outcome.
+  // Without this, changelog rows stay 'pending' indefinitely even after
+  // all docs are synced — causing pendingChanges to never reach 0.
+  const newStatus = result.errors.length > 0 ? 'failed' : 'applied';
+  db.prepare(
+    "UPDATE changelog SET sync_status = ? WHERE symbol_id = ? AND sync_status = 'pending'"
+  ).run(newStatus, symbolId);
 
   return result;
 }

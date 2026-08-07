@@ -43,7 +43,11 @@ export function docrelayCheck(db: Database.Database, strict = false): CheckRepor
     }
     const staleDocs = [...docMap.values()];
 
-    const passed = strict ? staleDocs.length === 0 : true;
+    // `passed` reflects the true documentation-health state: it is `true` only
+    // when NO docs are stale, regardless of strict mode. Callers that need
+    // strict-mode-only gating (e.g. CLI/MCP exit codes) use `strict` separately;
+    // this makes `passed` a reliable signal for callers in non-strict mode.
+    const passed = staleDocs.length === 0;
 
     let summary: string;
     if (staleDocs.length === 0) {

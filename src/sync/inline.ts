@@ -1057,6 +1057,10 @@ export function generateUpdatedDocstring(
   const lines: string[] = [];
   let inParamBlock = false;
   let inReturnsBlock = false;
+  // Hand-written @param/@returns descriptions harvested from the old
+  // docstring — reused when regenerating so user docs survive auto-update.
+  const oldParamDescs = new Map<string, string>();
+  let oldReturnsDesc = '';
 
   // Extract user-written narrative lines from the old docstring.
   // Keep lines that are inside /** ... */ but NOT part of @param/@returns tags.
@@ -1086,9 +1090,19 @@ export function generateUpdatedDocstring(
         const trimmed = line.trim();
         // Skip the opening /** and closing */
         if (trimmed === '/**' || trimmed === '*/') continue;
-        // Detect @param and @returns blocks
-        if (/^\*\s*@param\b/.test(trimmed)) { inParamBlock = true; continue; }
-        if (/^\*\s*@returns?\b/.test(trimmed)) { inReturnsBlock = true; continue; }
+        // Detect @param and @returns blocks — harvest descriptions before skipping
+        const paramMatch = trimmed.match(/^\*\s*@param\s+(?:\{[^}]*\}\s*)?([\w$.[\]]+)\??\s*(?:[—–-]\s*)?(.*)$/);
+        if (paramMatch) {
+          inParamBlock = true;
+          if (paramMatch[2]) oldParamDescs.set(paramMatch[1], paramMatch[2].trim());
+          continue;
+        }
+        const returnsMatch = trimmed.match(/^\*\s*@returns?\s+(?:\{[^}]*\}\s*)?(.*)$/);
+        if (returnsMatch) {
+          inReturnsBlock = true;
+          if (returnsMatch[1]) oldReturnsDesc = returnsMatch[1].trim();
+          continue;
+        }
         if (/^\*\s*@\w+/.test(trimmed)) { inParamBlock = false; inReturnsBlock = false; continue; }
         if (inParamBlock || inReturnsBlock) continue;
         // Keep user-written narrative lines (including blank * lines between sections)
@@ -1109,14 +1123,19 @@ export function generateUpdatedDocstring(
     lines.unshift('/**');
   }
 
-  // Append auto-generated @param entries
+  // Append auto-generated @param entries. Preserve a hand-written
+  // description when one exists; a bare type word (left by a previous
+  // auto-generation) is replaced with the fresh type from the signature.
   for (const param of params) {
-    lines.push(` * @param ${param.name} — ${param.type}`);
+    const cleanName = param.name.replace(/\?$/, '').trim();
+    const old = oldParamDescs.get(param.name) ?? oldParamDescs.get(cleanName);
+    const desc = old && !looksLikeBareType(old) ? old : param.type;
+    lines.push(` * @param ${param.name} — ${desc}`);
   }
   if (newSignature.includes('):') || kind === 'function') {
     const returnType = extractReturnType(newSignature);
     if (returnType) {
-      lines.push(` * @returns {${returnType}}`);
+      lines.push(` * @returns {${returnType}}${oldReturnsDesc ? ' ' + oldReturnsDesc : ''}`);
     }
   }
   lines.push(' */');
@@ -1210,6 +1229,11 @@ function extractReturnType(signature: string): string | null {
   let bracketDepth = 0;
   for (; i < signature.length; i++) {
     const ch = signature[i];
+    // A '{' at depth 0 with content already collected is the function-body
+    // opener, not part of the return type (e.g. `): Promise<User> {`). Only
+    // a leading '{' (object literal return type like `: { bar: string }`)
+    // belongs to the type.
+    if (ch === '{' && bracketDepth === 0 && result.trim().length > 0) break;
     if (ch === '<' || ch === '(' || ch === '{' || ch === '[') bracketDepth++;
     else if (ch === '=') { /* noop — '=' inside arrow '=>' is not a bracket */ }
     else if (ch === '>' && i > 0 && signature[i - 1] !== '=' ||
@@ -1219,8 +1243,27 @@ function extractReturnType(signature: string): string | null {
     if (bracketDepth === 0 && (ch === ',' || ch === ';' || ch === '\n' || ch === '\r')) break;
     result += ch;
   }
-  const trimmed = result.trim();
+  // Strip a trailing arrow left over from arrow-function signatures
+  // (`): Promise<User> => {` collected `=>` before the body brace).
+  const trimmed = result.trim().replace(/=>\s*$/, '').trim();
   return trimmed || null;
+}
+
+/** Heuristic: does a preserved @param remainder look like a bare type word
+ *  (left by a previous auto-generation, e.g. `string` / `Promise<User>`) rather
+ *  than a hand-written description? Bare types are refreshed from the new
+ *  signature; prose descriptions are preserved. */
+const PRIMITIVE_TYPE_WORDS = new Set([
+  'string', 'number', 'boolean', 'any', 'void', 'undefined', 'null',
+  'object', 'never', 'unknown', 'bigint', 'symbol',
+]);
+function looksLikeBareType(text: string): boolean {
+  if (!text || /\s/.test(text)) return false;
+  if (PRIMITIVE_TYPE_WORDS.has(text)) return true;
+  // PascalCase / generic containers: User, Promise<User>, Map<K,V>…
+  if (/^[A-Z][\w<>[\], |&{}]*$/.test(text)) return true;
+  if (/^[a-z][\w]*(\[\])+$/.test(text)) return true; // primitive arrays: string[]
+  return false;
 }
 
 /** Find the first colon that is outside brackets, braces, parens, and string

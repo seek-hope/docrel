@@ -175,7 +175,6 @@ export function updateStandaloneDoc(input: StandaloneSyncInput, projectRoot: str
  * @param file Relative or absolute file path (resolved against projectRoot if relative)
  */
 export function findSectionContent(file: string, anchor: string, projectRoot: string): string | null {
-  if (!anchor) return null;
   if (!projectRoot) return null;
 
   const resolved = path.resolve(projectRoot, file);
@@ -254,8 +253,7 @@ export function findSectionContent(file: string, anchor: string, projectRoot: st
 const MAX_ANCHOR_LENGTH = 1000;
 
 export function findSectionContentFromString(content: string, anchor: string): string | null {
-  if (!anchor) return null;
-  if (anchor.length > MAX_ANCHOR_LENGTH) {
+  if (anchor != null && anchor.length > MAX_ANCHOR_LENGTH) {
     console.warn(`DocRelay: anchor rejected — length ${anchor.length} exceeds max ${MAX_ANCHOR_LENGTH}`);
     return null;
   }
@@ -278,6 +276,40 @@ export function findSectionContentFromString(content: string, anchor: string): s
   const lines = content.split('\n');
   let startLine = -1;
   let startLevel = 0;
+
+  // Empty anchor: the preamble section before the first ATX heading.
+  // This is the content the doc-parser emits for text that precedes the first
+  // heading, and auto-link can map it — so it must be locatable and synceable.
+  if (anchor === '') {
+    let inCodeBlock = false;
+    let fenceToken = '';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const fenceMatch = line.match(/^(```+|~~~+)(.*)/);
+      if (fenceMatch) {
+        const token = fenceMatch[1];
+        const afterFence = fenceMatch[2].trim();
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+          fenceToken = token;
+          continue;
+        }
+        if (token.startsWith(fenceToken[0]) && token.length >= fenceToken.length && afterFence === '') {
+          inCodeBlock = false;
+          fenceToken = '';
+        }
+        continue;
+      }
+      if (inCodeBlock) continue;
+      if (/^\s{0,3}(#{1,6})\s/.test(line)) {
+        // First ATX heading — preamble ends here. Exclude the heading line
+        // itself so the preamble is exactly the content before it.
+        return lines.slice(0, i).join('\n');
+      }
+    }
+    // No heading found — whole document is the preamble.
+    return content;
+  }
 
   const escapedAnchor = escapeRegex(anchor);
 
@@ -358,4 +390,109 @@ export function findSectionContentFromString(content: string, anchor: string): s
   }
 
   return lines.slice(startLine, endLine).join('\n');
+}
+
+// -------------------------------------------------------------------------
+// Surgical signature replacement inside a located section (auto_update)
+// -------------------------------------------------------------------------
+
+export interface SignatureReplacementInput {
+  file: string;
+  anchor: string;
+  oldText: string;
+  newText: string;
+}
+
+export interface SignatureReplacementResult {
+  success: boolean;
+  reason?: string;
+  /** The updated section content (for recomputing content_hash). Only set
+   *  when success === true. */
+  newSection?: string;
+}
+
+/**
+ * Replace every occurrence of `oldText` with `newText` within the section
+ * identified by `anchor` (including the empty-anchor preamble), then atomically
+ * write the file back. Returns the updated section so callers can recompute the
+ * content hash and mark the doc in_sync.
+ *
+ * Unlike updateStandaloneDoc (which replaces a single, unique oldContent block
+ * and refuses ambiguity), this replaces ALL occurrences within the section as
+ * required by the standalone auto_update flow.
+ */
+export function replaceSectionSignature(
+  input: SignatureReplacementInput,
+  projectRoot: string,
+): SignatureReplacementResult {
+  const resolved = validatePath(input.file, projectRoot);
+  if (!resolved) {
+    return { success: false, reason: 'invalid file path or path traversal detected' };
+  }
+
+  const validated = openAndValidate(resolved, projectRoot);
+  if (!validated) return { success: false, reason: 'could not read or validate file' };
+
+  const content = validated.content;
+
+  // Locate the section (including empty-anchor preamble).
+  const section = findSectionContentFromString(content, input.anchor);
+  if (section === null) {
+    return { success: false, reason: `section '${input.anchor}' not found in file` };
+  }
+
+  if (!input.oldText || !input.oldText.trim()) {
+    return { success: false, reason: 'empty old signature text' };
+  }
+  if (!input.newText || !input.newText.trim()) {
+    return { success: false, reason: 'empty new signature text' };
+  }
+
+  // Normalize line endings so CRLF/LF mismatches do not abort a valid
+  // replacement (matching updateStandaloneDoc and inline.ts patterns).
+  const normalizedSection = section.replace(/\r\n/g, '\n');
+  const normalizedOld = input.oldText.replace(/\r\n/g, '\n');
+  if (!normalizedSection.includes(normalizedOld)) {
+    return { success: false, reason: 'old signature text not found in section' };
+  }
+
+  // Align old/new to the file's actual line ending style before replacing.
+  const fileUsesCRLF = section.includes('\r\n');
+  const alignedOld = fileUsesCRLF
+    ? input.oldText.replace(/\r?\n/g, '\r\n')
+    : input.oldText.replace(/\r\n/g, '\n');
+  const alignedNew = fileUsesCRLF
+    ? input.newText.replace(/\r?\n/g, '\r\n')
+    : input.newText.replace(/\r\n/g, '\n');
+
+  // Replace ALL occurrences within the section (the surgical requirement).
+  const updatedSection = section.split(alignedOld).join(alignedNew);
+
+  // Splice the updated section back into the full document. The section text
+  // is unique (bounded by headings / file boundaries), so replace() targets
+  // only it. Multi-occurrence oldText replacement above is deliberately
+  // section-scoped; the document-level replace uses the whole section as the
+  // atomic unit.
+  const newContent = content.replace(section, () => updatedSection);
+
+  // Atomic write with the same project-local temp strategy used elsewhere.
+  const tmpDir = path.join(projectRoot, '.docrelay', 'tmp');
+  try { fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); } catch {
+    return { success: false, reason: 'could not create temp directory' };
+  }
+  const tmpPath = path.join(tmpDir, `docrelay-${crypto.randomUUID()}.tmp`);
+  let originalMode: number | undefined;
+  try { originalMode = fs.statSync(resolved).mode; } catch { /* proceed without mode */ }
+  try {
+    fs.writeFileSync(tmpPath, newContent, { encoding: 'utf-8', flag: 'wx' });
+    fs.renameSync(tmpPath, resolved);
+    if (originalMode !== undefined) {
+      try { fs.chmodSync(resolved, originalMode); } catch { /* best effort */ }
+    }
+  } catch {
+    try { fs.unlinkSync(tmpPath); } catch {}
+    return { success: false, reason: 'atomic write failed' };
+  }
+
+  return { success: true, newSection: updatedSection };
 }
