@@ -3,7 +3,7 @@ import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol, type SymbolRow } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
-import { autoLink, type AutoLinkResult } from '../../src/discovery/auto-linker.js';
+import { autoLink, ingestDocSections, type AutoLinkResult } from '../../src/discovery/auto-linker.js';
 import type { ParsedDocSection } from '../../src/discovery/doc-parser.js';
 import { symbolId, docSectionId, contentHash } from '../../src/utils/hash.js';
 import { listAllMappings } from '../../src/db/mappings.js';
@@ -150,26 +150,33 @@ describe('autoLink', () => {
     expect(result.totalMatched).toBe(0);
   });
 
-  // ── Rule 5: File-name convention (confidence 0.5) ─────────────────────────
+  // ── Rule 5: File-name convention (boost only) ─────────────────────────────
+  // Identical file stems are no longer a standalone match — they only +0.1
+  // boost confidence when *other* evidence (name/ref hit) already exists.
 
-  it('matches file-name convention — auth.md ↔ src/auth.ts (confidence 0.5)', () => {
+  it('does NOT link on identical file stem alone when content is unrelated (P1 fix)', () => {
     const sym = makeSymbol('doSomething', 'function', 'src/auth.ts:42');
-    const section = makeDocSection('docs/auth.md', 'Overview', 'Auth docs.');
+    // Same stem (src/auth.ts ↔ docs/auth.md) but nothing in the section
+    // mentions 'doSomething' — must NOT be auto-linked.
+    const section = makeDocSection('docs/auth.md', 'Overview', 'Entirely unrelated content.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(0);
+    expect(listAllMappings(db)).toHaveLength(0);
+  });
+
+  it('boosts a real name match when file stems match', () => {
+    const sym = makeSymbol('doSomething', 'function', 'src/auth.ts:42');
+    // Body-text bare mention (0.4) + matching file stem boost (+0.1) = 0.5.
+    const section = makeDocSection('docs/auth.md', 'Overview', 'We use the doSomething routine here.');
 
     const result = autoLink(db, [sym], [section]);
     expect(result.totalMatched).toBe(1);
     expect(result.mediumConfidence).toBe(1);
 
     const mappings = listAllMappings(db);
+    expect(mappings).toHaveLength(1);
     expect(mappings[0].review_status).toBe('auto');
-  });
-
-  it('matches file-name convention without extensions (confidence 0.5)', () => {
-    const sym = makeSymbol('handler', 'function', 'src/api.ts:10');
-    const section = makeDocSection('docs/api.md', 'Intro', 'API docs.');
-
-    const result = autoLink(db, [sym], [section]);
-    expect(result.mediumConfidence).toBe(1);
   });
 
   it('does not match file-name convention with different stems', () => {
@@ -182,21 +189,20 @@ describe('autoLink', () => {
 
   // ── minConfidence ──────────────────────────────────────────────────────────
 
-  it('respects minConfidence filter', () => {
+  it('respects minConfidence filter — file stem boost alone stays below threshold', () => {
     const sym = makeSymbol('doSomething', 'function', 'src/auth.ts:42');
     const section = makeDocSection('docs/auth.md', 'Overview', 'Auth docs.');
 
-    // File-name match is 0.5, so minConfidence 0.6 should skip it
     const result = autoLink(db, [sym], [section], 0.6);
     expect(result.totalMatched).toBe(0);
   });
 
-  it('default minConfidence 0.5 includes file-name matches', () => {
+  it('file stem alone never reaches default minConfidence 0.5', () => {
     const sym = makeSymbol('doSomething', 'function', 'src/auth.ts:42');
     const section = makeDocSection('docs/auth.md', 'Overview', 'Auth docs.');
 
     const result = autoLink(db, [sym], [section]);
-    expect(result.totalMatched).toBe(1);
+    expect(result.totalMatched).toBe(0);
   });
 
   it('with minConfidence 0.9 only gets exact and backtick matches', () => {
@@ -324,5 +330,119 @@ describe('autoLink', () => {
 
     const result = autoLink(db, [sym], [section]);
     expect(result.mediumConfidence).toBe(1);
+  });
+
+  // ── Rule 7: Bare identifier in prose (bodytext weak ref) ──────────────────
+
+  it('binds a lowercase bare identifier (bodytext) with name evidence to a chain (test ③)', () => {
+    // 'login' is all-lowercase, so rule 6 (which rejects lowercase words) does
+    // not catch it — only a bodytext codeRef can. Combined with the matching
+    // file stem boost (+0.1), the weak 0.4 bodytext hit reaches 0.5.
+    const sym = makeSymbol('login', 'function', 'src/auth.ts:42');
+    const section = makeDocSection('docs/auth.md', 'Login Flow',
+      'The login function is called at startup.', [
+        { symbolName: 'login', refType: 'bodytext', confidence: 0.15, lineInDoc: 2 },
+      ]);
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(1);
+
+    const mappings = listAllMappings(db);
+    expect(mappings).toHaveLength(1);
+    expect(mappings[0].symbol_id).toBe(sym.id);
+  });
+
+  it('bodytext ref alone (no file-stem name evidence) does not reach minConfidence', () => {
+    const sym = makeSymbol('login', 'function', 'src/other.ts:42');
+    // Same doc stem as the symbol? No — different stems, so no +0.1 boost.
+    const section = makeDocSection('docs/api.md', 'Overview',
+      'The login function is called at startup.', [
+        { symbolName: 'login', refType: 'bodytext', confidence: 0.15, lineInDoc: 2 },
+      ]);
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(0);
+  });
+
+  it('does not match a common English word via bodytext', () => {
+    // 'function' is a stopword — never becomes a weak ref, so nothing links.
+    const sym = makeSymbol('function', 'function', 'src/anything.ts:42');
+    const section = makeDocSection('docs/api.md', 'Overview', 'The function is called here.', [
+      { symbolName: 'function', refType: 'bodytext', confidence: 0.15, lineInDoc: 2 },
+    ]);
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(0);
+  });
+});
+
+describe('ingestDocSections disambiguation', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-ingest-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeSymbol(name: string, location: string): SymbolRow {
+    const symId = symbolId('typescript', `${location}::${name}`, 'function');
+    return upsertSymbol(db, { id: symId, name, kind: 'function', location, signature: 'abc' });
+  }
+
+  function makeSection(file: string, anchor: string, content: string, refs: ParsedDocSection['codeRefs']): ParsedDocSection {
+    const section = { file, anchor, content, codeRefs: refs } as ParsedDocSection;
+    const id = docSectionId(file, anchor);
+    upsertDocSection(db, { id, file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
+    return section;
+  }
+
+  it('links when a name is unique (one symbol of that name)', () => {
+    const sym = makeSymbol('login', 'src/auth.ts:42');
+    const section = makeSection('docs/api.md', 'Overview', '', [
+      { symbolName: 'login', refType: 'backtick', confidence: 0.6, lineInDoc: 1 },
+    ]);
+
+    const result = ingestDocSections(db, [section]);
+    expect(result.newMappings).toBe(1);
+  });
+
+  it('disambiguates same-name symbols by unique file stem (test ②)', () => {
+    // Two different modules both export 'login'; only the httpAuth symbol's
+    // source file stem (httpAuth) matches the doc stem.
+    const httpAuthSym = makeSymbol('login', 'src/auth/httpAuth.ts:10');
+    makeSymbol('login', 'src/utils/auth.ts:10');
+
+    const section = makeSection('docs/httpAuth.md', 'Overview', '', [
+      { symbolName: 'login', refType: 'backtick', confidence: 0.6, lineInDoc: 1 },
+    ]);
+
+    const result = ingestDocSections(db, [section]);
+    expect(result.newMappings).toBe(1);
+    const mappings = listAllMappings(db);
+    expect(mappings).toHaveLength(1);
+    expect(mappings[0].symbol_id).toBe(httpAuthSym.id);
+  });
+
+  it('skips (no link) when same-name symbols cannot be disambiguated by stem', () => {
+    // Two same-name symbols but neither file stem matches the doc stem.
+    makeSymbol('login', 'src/auth/login.ts:10');
+    makeSymbol('login', 'src/utils/login.ts:10');
+
+    // docs/general.md — stem 'general' matches no symbol stem → skip.
+    const section = makeSection('docs/general.md', 'Overview', '', [
+      { symbolName: 'login', refType: 'backtick', confidence: 0.6, lineInDoc: 1 },
+    ]);
+
+    const result = ingestDocSections(db, [section]);
+    expect(result.newMappings).toBe(0);
+    expect(listAllMappings(db)).toHaveLength(0);
   });
 });

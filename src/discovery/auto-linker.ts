@@ -104,6 +104,11 @@ function scorePair(
   const heading = section.anchor || '';
   const content = section.content || '';
 
+  // Cumulative confidence from concrete evidence (name/ref matches). The
+  // strongest single piece of evidence wins; we then optionally apply a small
+  // file-name convention boost on top when *other* evidence already exists.
+  let best = 0;
+
   // 1. Exact word match in heading (confidence 1.0).
   // Use word-boundary regex to prevent substring matches like symbol 'get'
   // matching heading 'Getting Started' or 'a' matching any heading.
@@ -112,82 +117,82 @@ function scorePair(
   if (heading.length > 0) {
     const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
     if (wordBoundaryRe.test(heading)) {
-      return { confidence: 1.0, matched: 1.0 >= minConfidence };
-    }
-    // 1b. Substring match in heading (confidence 0.7) — weaker signal,
-    // catches partial-name matches like 'getUser' in 'getUserProfile'.
-    if (containsIgnoreCase(symNameClean, heading) && symNameClean.length >= 3) {
-      return { confidence: 0.7, matched: 0.7 >= minConfidence };
-    }
-  }
-
-  // 2. Backtick match (confidence 0.9) — CodeRef with refType 'backtick'
-  for (const ref of (section.codeRefs ?? [])) {
-    if (ref.refType === 'backtick') {
-      const refClean = ref.symbolName.replace(/\(.*\)$/, '');
-      if (refClean === symNameClean ||
-          refClean === symName ||
-          ref.symbolName === symName ||
-          ref.symbolName === symNameClean) {
-        return { confidence: 0.9, matched: 0.9 >= minConfidence };
-      }
+      best = 1.0;
+    } else if (containsIgnoreCase(symNameClean, heading) && symNameClean.length >= 3) {
+      // 1b. Substring match in heading (confidence 0.7) — weaker signal,
+      // catches partial-name matches like 'getUser' in 'getUserProfile'.
+      best = Math.max(best, 0.7);
     }
   }
 
-  // 3. Code block match (confidence 0.7) — CodeRef with refType 'codeblock'
+  // Code reference matches, weighted by ref type:
+  //   backtick  0.9 — ``name`` / `name()
+  //   codeblock 0.7 — inside a fenced code sample
+  //   heading   0.6 — symbol captured from a heading token
+  //   bodytext  0.4 — bare identifier in prose (weak, e.g. "the login function")
   for (const ref of (section.codeRefs ?? [])) {
-    if (ref.refType === 'codeblock') {
-      const refClean = ref.symbolName.replace(/\(.*\)$/, '');
-      if (refClean === symNameClean ||
-          refClean === symName ||
-          ref.symbolName === symName ||
-          ref.symbolName === symNameClean) {
-        return { confidence: 0.7, matched: 0.7 >= minConfidence };
-      }
+    const refClean = ref.symbolName.replace(/\(.*\)$/, '');
+    const refEq = refClean === symNameClean ||
+      refClean === symName ||
+      ref.symbolName === symName ||
+      ref.symbolName === symNameClean;
+
+    switch (ref.refType) {
+      case 'backtick':
+        if (refEq) best = Math.max(best, 0.9);
+        break;
+      case 'codeblock':
+        if (refEq) best = Math.max(best, 0.7);
+        break;
+      case 'heading':
+        // Also allow fuzzy match against a heading-captured ref.
+        if (refEq || isFuzzySubstring(symNameClean, ref.symbolName)) best = Math.max(best, 0.6);
+        break;
+      case 'bodytext':
+        // Weak evidence from a bare identifier mentioned in prose. Matches
+        // all-lowercase names (e.g. 'login') that other rules reject, but
+        // never dominates on its own.
+        if (refEq) best = Math.max(best, 0.4);
+        break;
+      default:
+        break;
     }
   }
 
   // 4. Fuzzy heading match (confidence 0.6)
   if (heading.length > 0 && isFuzzySubstring(symNameClean, heading)) {
-    return { confidence: 0.6, matched: 0.6 >= minConfidence };
+    best = Math.max(best, 0.6);
   }
 
-  // Also check fuzzy match on heading via CodeRef type 'heading'
-  for (const ref of (section.codeRefs ?? [])) {
-    if (ref.refType === 'heading') {
-      const refClean = ref.symbolName.replace(/\(.*\)$/, '');
-      if (refClean === symNameClean || ref.symbolName === symName ||
-          isFuzzySubstring(symNameClean, ref.symbolName)) {
-        return { confidence: 0.6, matched: 0.6 >= minConfidence };
-      }
-    }
-  }
-
-  // 5. File-name convention (confidence 0.5)
-  // Doc file name matches symbol namespace — e.g. docs/auth.md ↔ src/auth.ts
-  const symLocation = (symbol.location || '').toLowerCase().replace(/\\/g, '/');
-  const docFile = section.file.toLowerCase().replace(/\\/g, '/');
-  if (symLocation && docFile) {
-    const symFileStem = fileStem(symLocation.split('/').pop() || symLocation);
-    const docFileStem = fileStem(docFile.split('/').pop() || docFile);
-    if (symFileStem === docFileStem && symFileStem.length > 0) {
-      return { confidence: 0.5, matched: 0.5 >= minConfidence };
-    }
-  }
-
-  // 6. Body-text word match (confidence 0.4) — for identifiers that appear
-  // in running text without backticks or code markup. Only match identifiers
-  // that look like code symbols (CamelCase, PascalCase, snake_case) to avoid
-  // false positives on common English words like 'get', 'set', 'data'.
-  // Minimum 4 characters — shorter names are overwhelmingly false positives.
+  // 6. Body-text word match (confidence 0.4) — directly scan the section
+  // content for identifiers that look like code symbols (CamelCase,
+  // PascalCase, snake_case). Minimum 4 characters; all-lowercase names are
+  // only reachable via 'bodytext' codeRefs produced by doc-parser so that
+  // plain English prose (which is all-lowercase) stays hard to match.
   if (symNameClean.length >= 4 && isCodeLikeIdentifier(symNameClean)) {
     const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
     if (wordBoundaryRe.test(content) || wordBoundaryRe.test(heading)) {
-      return { confidence: 0.4, matched: 0.4 >= minConfidence };
+      best = Math.max(best, 0.4);
     }
   }
 
-  return { confidence: 0, matched: false };
+  // 5. File-name convention — now a *boost* only, never a standalone match.
+  // When the doc file stem equals the symbol's source file stem (e.g.
+  // docs/auth.md ↔ src/auth.ts) we raise the confidence of an already-matched
+  // pair, but identical stems alone never create a link — that caused massive
+  // false positives where every symbol in a file got linked to every section
+  // of the same-named doc. +0.1, capped at 1.0.
+  const symLocation = (symbol.location || '').toLowerCase().replace(/\\/g, '/');
+  const docFile = section.file.toLowerCase().replace(/\\/g, '/');
+  if (best > 0 && symLocation && docFile) {
+    const symFileStem = fileStem(symLocation.split('/').pop() || symLocation);
+    const docFileStem = fileStem(docFile.split('/').pop() || docFile);
+    if (symFileStem === docFileStem && symFileStem.length > 0) {
+      best = Math.min(1.0, best + 0.1);
+    }
+  }
+
+  return { confidence: best, matched: best >= minConfidence };
 }
 
 /** Check if a symbol name looks like a code identifier rather than a common
@@ -307,11 +312,12 @@ export function autoLink(
 
   // Build a set of existing mappings for fast skip check.
   // Key: "symbol_id::doc_id::rel_type"
+  // Use a lazy iterator (better-sqlite3 iterate()) instead of buffering all
+  // rows into memory to avoid the previous 100000-row LIMIT truncation — the
+  // set must be complete or stale mappings reappear as duplicates.
   const existingKeys = new Set<string>();
-  const existingRows = db.prepare(
-    'SELECT symbol_id, doc_id, rel_type FROM mappings LIMIT 100000'
-  ).all() as Array<{ symbol_id: string; doc_id: string; rel_type: string }>;
-  for (const row of existingRows) {
+  const existingStmt = db.prepare('SELECT symbol_id, doc_id, rel_type FROM mappings');
+  for (const row of existingStmt.iterate() as IterableIterator<{ symbol_id: string; doc_id: string; rel_type: string }>) {
     existingKeys.add(`${row.symbol_id}::${row.doc_id}::${row.rel_type}`);
   }
 
@@ -328,9 +334,12 @@ export function autoLink(
   // fuzzy substring, no codeRef iteration beyond backtick). For a 2000×500
   // project (1M pairs), pass 1 runs in under a second.
 
+  const totalPairs = symbols.length * docSections.length;
+  let evaluatedPairs = 0;
   for (const symbol of symbols) {
     if (timedOut()) {
-      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results.`);
+      const dropped = totalPairs - evaluatedPairs;
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results (${dropped} symbol×section pairs not evaluated).`);
       return {
         totalMatched: counters.high + counters.medium + counters.low,
         highConfidence: counters.high,
@@ -340,6 +349,7 @@ export function autoLink(
     }
 
     for (const section of docSections) {
+      evaluatedPairs++;
       const conf = fastScorePair(symbol, section);
       if (conf === 0) continue;
 
@@ -361,11 +371,13 @@ export function autoLink(
     if (linkedSymbolIds.has(symbol.id)) continue;
 
     if (timedOut()) {
-      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
+      const dropped = totalPairs - evaluatedPairs;
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results (${dropped} symbol×section pairs not evaluated).`);
       break;
     }
 
     for (const section of docSections) {
+      evaluatedPairs++;
       const score = scorePair(symbol, section, minConfidence);
       if (!score.matched) continue;
 
@@ -387,6 +399,25 @@ export function autoLink(
 export interface IngestResult {
   newDocSections: number;
   newMappings: number;
+}
+
+/**
+ * Create a `describes` mapping from a symbol id to the current section
+ * doc id, returning true when a new row was actually inserted. Duplicate
+ * mappings are skipped silently.
+ */
+function createRefMapping(db: Database.Database, symbolId: string, docId: string): boolean {
+  try {
+    createMapping(db, {
+      symbol_id: symbolId,
+      doc_id: docId,
+      rel_type: 'describes',
+      review_status: 'auto',
+    });
+    return true;
+  } catch {
+    return false; // duplicate or other constraint — skip
+  }
 }
 
 /**
@@ -419,20 +450,32 @@ export function ingestDocSections(
 
       for (const ref of section.codeRefs) {
         const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
-        const matched = db.prepare(
-          'SELECT id FROM symbols WHERE name = ? OR name = ? LIMIT 1'
-        ).get(cleanName, ref.symbolName) as { id: string } | undefined;
+        // Disambiguate same-named symbols across modules. A name-only lookup
+        // used to pollute every same-named symbol (different modules) into the
+        // same mapping. Now: if exactly one symbol has this name, link it as
+        // before; if several do, only link when the symbol's source file stem
+        // uniquely equals the doc file stem — otherwise skip (no link).
+        const sameNameRows = db.prepare(
+          'SELECT id, location FROM symbols WHERE name = ? OR name = ?'
+        ).all(cleanName, ref.symbolName) as Array<{ id: string; location: string }>;
 
-        if (matched) {
-          try {
-            createMapping(db, {
-              symbol_id: matched.id,
-              doc_id: id,
-              rel_type: 'describes',
-              review_status: 'auto',
-            });
-            newMappings++;
-          } catch { /* skip duplicates */ }
+        if (sameNameRows.length === 1) {
+          if (createRefMapping(db, sameNameRows[0].id, id)) newMappings++;
+        } else if (sameNameRows.length > 1) {
+          // Compare basename stems only, mirroring the file-name convention in
+          // scorePair (docs/auth/login.md ↔ src/auth/login.ts).
+          const docFileStem = fileStem((section.file.toLowerCase().replace(/\\/g, '/').split('/').pop() || ''));
+          let unique = '';
+          for (const cand of sameNameRows) {
+            const loc = (cand.location || '').toLowerCase().replace(/\\/g, '/');
+            const symFileStem = fileStem(loc.split('/').pop() || loc);
+            if (symFileStem === docFileStem && symFileStem.length > 0) {
+              // Only when exactly one candidate uniquely owns this stem.
+              if (unique && unique !== cand.id) { unique = 'AMBIGUOUS'; break; }
+              unique = cand.id;
+            }
+          }
+          if (unique && unique !== 'AMBIGUOUS' && createRefMapping(db, unique, id)) newMappings++;
         }
       }
     } catch (err: any) {

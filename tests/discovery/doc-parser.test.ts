@@ -527,7 +527,7 @@ describe('DocParser interface compliance', () => {
           expect(Array.isArray(s.codeRefs)).toBe(true);
           for (const ref of s.codeRefs) {
             expect(typeof ref.symbolName).toBe('string');
-            expect(['backtick', 'codeblock', 'link', 'heading']).toContain(ref.refType);
+            expect(['backtick', 'codeblock', 'link', 'heading', 'bodytext']).toContain(ref.refType);
             expect(typeof ref.confidence).toBe('number');
             expect(ref.confidence).toBeGreaterThanOrEqual(0);
             expect(ref.confidence).toBeLessThanOrEqual(1);
@@ -581,6 +581,45 @@ describe('Edge cases', () => {
     const backtickRefs = sections.flatMap((s) => s.codeRefs).filter((r) => r.refType === 'backtick');
     // No backtick-wrapped symbols in the content, so no refs
     expect(backtickRefs).toHaveLength(0);
+  });
+
+  it('extracts a weak bodytext ref for a bare lowercase identifier in prose (test ③)', () => {
+    const p = new MarkdownParser();
+    const content = '## Login\nThe login routine is used at startup.';
+
+    const sections = p.parse('prose.md', content);
+    const bodytextRefs = sections.flatMap((s) => s.codeRefs).filter((r) => r.refType === 'bodytext');
+    // 'login' and 'startup' are non-stopword identifiers; 'The'/'routine'/'used'*
+    // are stopwords and must not appear. 'login' is the case under test.
+    const names = bodytextRefs.map((r) => r.symbolName);
+    expect(names).toContain('login');
+    expect(bodytextRefs[names.indexOf('login')].confidence).toBeLessThan(0.5);
+  });
+
+  it('does not create bodytext refs for common English stopwords', () => {
+    const p = new MarkdownParser();
+    const content = '## Section\nThe function returns this result from the method call.';
+
+    const sections = p.parse('prose.md', content);
+    const names = sections.flatMap((s) => s.codeRefs).filter((r) => r.refType === 'bodytext').map((r) => r.symbolName.toLowerCase());
+    // 'the', 'function', 'returns', 'this', 'result', 'method', 'call' are all
+    // stopwords — none should be emitted as weak refs.
+    for (const stop of ['the', 'function', 'returns', 'this', 'result', 'method', 'call']) {
+      expect(names).not.toContain(stop);
+    }
+  });
+
+  it('does not create a bodytext ref for an identifier already captured as a backtick ref', () => {
+    const p = new MarkdownParser();
+    const content = '## Section\nUse `login` in the app.';
+
+    const sections = p.parse('prose.md', content);
+    const bodytextRefs = sections.flatMap((s) => s.codeRefs).filter((r) => r.refType === 'bodytext');
+    const backtickRefs = sections.flatMap((s) => s.codeRefs).filter((r) => r.refType === 'backtick');
+    // 'login' is already captured as a backtick ref — it must not be duplicated
+    // as a weak bodytext ref (this avoids downgrading a strong match).
+    expect(backtickRefs.map((r) => r.symbolName)).toContain('login');
+    expect(bodytextRefs.map((r) => r.symbolName)).not.toContain('login');
   });
 
   it('handles deeply nested headings', () => {

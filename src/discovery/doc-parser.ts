@@ -2,7 +2,7 @@
 
 export interface CodeRef {
   symbolName: string;
-  refType: 'backtick' | 'codeblock' | 'link' | 'heading';
+  refType: 'backtick' | 'codeblock' | 'link' | 'heading' | 'bodytext';
   confidence: number;
   lineInDoc: number;
 }
@@ -107,6 +107,72 @@ const PLAIN_FUNC_RE = /\b([\w][\w\d_.]+\([^)]*\))/g;
 /** Prefix detector for bracket-counting plain function call extraction. */
 const PLAIN_FUNC_PREFIX_RE = /\b([\w][\w\d_.]*)\(/g;
 
+// ── Bare identifier extraction (body text) ─────────────────────────────────
+
+/** Common English words that would produce false positives if treated as
+ *  code references (e.g. 'the login function' should only match 'login').
+ *  Matched bare identifiers from this set are never treated as weak refs. */
+const BODY_TEXT_STOPWORDS = new Set([
+  'the', 'this', 'that', 'these', 'those', 'there',
+  'function', 'functions', 'method', 'methods', 'class', 'classes',
+  'returns', 'return', 'result', 'results', 'input', 'output',
+  'example', 'below', 'above', 'called', 'call', 'calls',
+  'using', 'used', 'when', 'with', 'from', 'your', 'into',
+  'about', 'through', 'because', 'which', 'where', 'have', 'has',
+  'would', 'should', 'could', 'might', 'more', 'only', 'also',
+  'what', 'will', 'being', 'been', 'were', 'does', 'done',
+  'very', 'much', 'such', 'each', 'any', 'many', 'some', 'most',
+  'other', 'another', 'after', 'before', 'during', 'while',
+]);
+
+/** Conservative detector for bare identifiers mentioned in prose. Matches
+ *  only if the word looks code-like: contains an uppercase letter, an
+ *  underscore, or a dot (member access), OR is a single all-lowercase word
+ *  of at least 4 characters. Common English words are excluded via the
+ *  stopword set. Used to build low-confidence 'bodytext' code refs. */
+const BARE_IDENT_RE = /\b([A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9_]+|_?[A-Za-z][A-Za-z0-9_]*)\b/g;
+
+/** Decide whether a bare prose word should become a weak 'bodytext' ref.
+ *  Returns true only for code-like identifiers that are unlikely to be
+ *  ordinary English prose. */
+function isBareIdentifierCandidate(word: string): boolean {
+  const lower = word.toLowerCase();
+  // Reject common English words even when capitalized (sentence start, e.g.
+  // 'The', 'This', 'Function') — these would be obvious false positives.
+  if (BODY_TEXT_STOPWORDS.has(lower)) return false;
+  // Dotted member access like AuthService.login — clearly code-like.
+  if (word.includes('.')) {
+    const parts = word.split('.');
+    return parts.every((p) => /^[a-zA-Z][a-zA-Z0-9_]*$/.test(p));
+  }
+  // Contains an uppercase letter (CamelCase / PascalCase) — code-like.
+  if (/[A-Z]/.test(word)) return true;
+  // Contains an underscore (snake_case) — code-like.
+  if (word.includes('_')) return true;
+  // All-lowercase single word: only treat as code-like if long enough.
+  if (word.length >= 4) return true;
+  return false;
+}
+
+/** Extract low-confidence 'bodytext' refs for bare identifiers in prose
+ *  (not wrapped in backticks, not inside code blocks, not followed by '(').
+ *  These provide weak evidence that auto-linker can fold into scoring but
+ *  never dominate — a bare mention alone is rarely conclusive.
+ *  Runs on already-seen symbol names to avoid duplicating backtick/backtick()
+ *  refs already extracted for the same line. */
+function extractBodyTextRefs(line: string, lineNum: number, seen: Set<string>): CodeRef[] {
+  const refs: CodeRef[] = [];
+  for (const m of line.matchAll(BARE_IDENT_RE)) {
+    const word = m[1];
+    if (!isBareIdentifierCandidate(word)) continue;
+    // Skip identifiers that already appear as backtick/backtick() refs on
+    // this same section to avoid an empty duplicate 'bodytext' ref.
+    if (seen.has(word)) continue;
+    refs.push({ symbolName: word, refType: 'bodytext', confidence: 0.15, lineInDoc: lineNum });
+  }
+  return refs;
+}
+
 /** Extract symbol names from heading text by splitting on common separators. */
 function extractSymbolsFromHeading(heading: string, lineInDoc: number): CodeRef[] {
   const refs: CodeRef[] = [];
@@ -167,6 +233,11 @@ function extractBodyRefs(body: string, baseLine: number): CodeRef[] {
         refs.push({ symbolName: name, refType: 'backtick', confidence: 0.6, lineInDoc: lineNum });
       }
     }
+
+    // Bare identifiers in prose (weak 'bodytext' refs). Added last so that
+    // any identifier already captured by a stronger rule (backtick, backtick())
+    // on the same line is skipped and never downgraded to a weak ref.
+    refs.push(...extractBodyTextRefs(lines[i], lineNum, seen));
   }
 
   return refs;
