@@ -3,7 +3,13 @@ export interface ExtractedSymbol {
   kind: 'function' | 'class' | 'method' | 'interface' | 'type' | 'variable' | 'module';
   file: string;
   line: number;
+  /** Folded single-line signature (interior whitespace collapsed). */
   signature?: string;
+  /** Original multi-line signature text, when the extractor captured more than one line. */
+  raw_signature?: string;
+  /** Leading documentation comment (or first-statement docstring) attached to the
+   *  symbol, e.g. a JSDoc block for TS/JS. Used to build `inline` doc_sections. */
+  docstring?: string;
   language: string;
 }
 

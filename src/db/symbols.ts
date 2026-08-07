@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { markDocsStaleForSymbol } from './docs.js';
 
 function safeStringify(obj: unknown): string {
   try {
@@ -106,12 +107,41 @@ export function deleteSymbol(db: Database.Database, id: string): void {
   db.prepare('DELETE FROM symbols WHERE id = ?').run(id);
 }
 
+/**
+ * Mark all non-rejected docs mapped to the symbol as 'stale' and insert a
+ * `signature_changed` changelog entry, populating `affected_docs` with the
+ * doc ids that were marked stale. When no docs are affected, sync_status is
+ * 'applied' (the signature was recorded but nothing needs updating); when docs
+ * were marked stale, sync_status is 'pending' so the sync layer processes them.
+ * Returns the list of affected doc ids.
+ */
+export function recordSignatureChange(
+  db: Database.Database,
+  id: string,
+  oldSig: string,
+  newSig: string,
+  rawSigs?: { oldRaw?: string; newRaw?: string },
+): string[] {
+  const affected = markDocsStaleForSymbol(db, id);
+  // Store human-readable signature TEXT in the changelog (not the content
+  // hash) so the sync layer can locate the old documented signature in the
+  // doc and surgically replace it. Fall back to the hash for legacy callers.
+  const oldSigText = rawSigs?.oldRaw || oldSig;
+  const newSigText = rawSigs?.newRaw || newSig;
+  db.prepare(`
+    INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig, affected_docs, sync_status)
+    VALUES (?, 'signature_changed', ?, ?, ?, ?)
+  `).run(id, oldSigText, newSigText, safeStringify(affected), affected.length > 0 ? 'pending' : 'applied');
+  return affected;
+}
+
 export function markSignatureChanged(
   db: Database.Database,
   id: string,
   oldSig: string,
   newSig: string,
   newRawSig?: string,
+  oldRawSig?: string,
 ): boolean {
   // Update both the signature hash and the human-readable raw_signature
   // to keep them synchronized. Without updating raw_signature, callers
@@ -122,16 +152,24 @@ export function markSignatureChanged(
       : "UPDATE symbols SET signature = ?, updated_at = datetime('now') WHERE id = ?"
   ).run(...(newRawSig !== undefined ? [newSig, newRawSig, id] : [newSig, id]));
 
-  // Only insert changelog if the symbol actually exists — avoids orphans
+  // Only insert changelog/cascade if the symbol actually exists — avoids orphans
   if (info.changes === 0) {
     console.warn(`DocRelay: markSignatureChanged called for non-existent symbol: ${id}`);
     return false;
   }
 
-  db.prepare(`
-    INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig)
-    VALUES (?, 'signature_changed', ?, ?)
-  `).run(id, oldSig, newSig);
-
+  recordSignatureChange(db, id, oldSig, newSig, { oldRaw: oldRawSig, newRaw: newRawSig });
   return true;
+}
+
+/**
+ * Insert a `created` changelog entry for a newly discovered symbol. New
+ * symbols normally have no mappings yet, so sync_status is 'applied' and
+ * affected_docs is empty — matching the existing scan style.
+ */
+export function recordSymbolCreated(db: Database.Database, id: string, newSig: string): void {
+  db.prepare(`
+    INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig, affected_docs, sync_status)
+    VALUES (?, 'created', '', ?, '[]', 'applied')
+  `).run(id, newSig);
 }

@@ -2,6 +2,15 @@
 import type Database from 'better-sqlite3';
 import type { ScanReport } from '../discovery/scanner.js';
 import { assertDbOpen } from '../db/connection.js';
+import { markDocsStaleForSymbol } from '../db/docs.js';
+
+function safeStringify(obj: unknown): string {
+  try {
+    return JSON.stringify(obj);
+  } catch {
+    return '{}';
+  }
+}
 
 export interface GcReport {
   symbolsRemoved: number;
@@ -59,7 +68,7 @@ export function docrelayGc(
     // Wrap mutations in a transaction for atomicity.
     const deleteStmt = db.prepare('DELETE FROM symbols WHERE id = ?');
     const insertChangelogStmt = db.prepare(
-      "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig, affected_docs, sync_status) VALUES (?, 'deleted', ?, ?, '[]', 'pending')"
+      "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig, affected_docs, sync_status) VALUES (?, 'deleted', ?, ?, ?, 'pending')"
     );
     const staleCheckStmt = db.prepare(
       "SELECT id FROM changelog WHERE symbol_id = ? AND change_type = 'deleted' AND old_sig = ?"
@@ -78,8 +87,12 @@ export function docrelayGc(
             deleteStmt.run(id);
             symbolsRemoved++;
           } else {
-            // First miss — mark as stale via a changelog entry.
-            insertChangelogStmt.run(id, STALE_MARKER, STALE_MARKER);
+            // First miss — mark as stale via a changelog entry AND also mark
+            // associated (non-rejected) docs stale so a deleted symbol's docs
+            // don't remain in_sync. The affected doc ids are recorded in the
+            // changelog entry's affected_docs.
+            const affected = markDocsStaleForSymbol(db, id);
+            insertChangelogStmt.run(id, STALE_MARKER, STALE_MARKER, safeStringify(affected));
             symbolsMarkedStale++;
           }
         }

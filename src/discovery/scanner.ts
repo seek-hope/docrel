@@ -2,10 +2,36 @@
 import type Database from 'better-sqlite3';
 import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelayConfig } from '../utils/config.js';
-import { upsertSymbol, markSignatureChanged } from '../db/symbols.js';
-import { symbolId, contentHash } from '../utils/hash.js';
+import { upsertSymbol, markSignatureChanged, recordSignatureChange, recordSymbolCreated } from '../db/symbols.js';
+import { upsertDocSection, markInlineStaleForSymbol } from '../db/docs.js';
+import { ensureMapping } from '../db/mappings.js';
+import { symbolId, contentHash, docSectionId } from '../utils/hash.js';
 import { assertDbOpen } from '../db/connection.js';
 import { isIgnored } from '../utils/ignore.js';
+
+/**
+ * Parse a stored `last_scan_at` value into a UTC epoch (ms), or undefined when
+ * it is missing/unparseable.
+ *
+ * Two formats are accepted for backward/forward compatibility:
+ *   - legacy SQLite UTC format:  `YYYY-MM-DD HH:MM:SS` (datetime('now'))
+ *   - ISO-8601:                  `YYYY-MM-DDTHH:MM:SS.sssZ`
+ * Both are normalized to a timezone-independent instant before being compared
+ * against fs mtime (which is already an absolute epoch).
+ */
+function parseLastScanAt(value: string): number | undefined {
+  if (!value || !value.trim()) return undefined;
+  const trimmed = value.trim();
+  let iso: string;
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(trimmed)) {
+    // Legacy SQLite datetime('now') emits UTC without a timezone suffix.
+    iso = trimmed.replace(' ', 'T') + 'Z';
+  } else {
+    iso = trimmed;
+  }
+  const ms = new Date(iso).getTime();
+  return isNaN(ms) ? undefined : ms;
+}
 
 /** Escape :: in FQN components to prevent symbol ID collisions. */
 function escFqn(s: string): string {
@@ -52,16 +78,25 @@ export async function scanProject(
   // only re-scan files with mtime > last scan time.
   const since = fullScan ? undefined : (() => {
     const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
-    if (row?.value) {
-      const ms = new Date(row.value.replace(' ', 'T') + 'Z').getTime();
-      if (!isNaN(ms)) return ms;
-    }
+    if (row?.value) return parseLastScanAt(row.value);
     return undefined;
   })();
+
+  // Whether the configured strategy wants inline doc_sections collected at all.
+  // strategy 'ignore' disables collection; every other value (auto_update,
+  // mark_stale) enables the inline collection path.
+  const inlineEnabled = config.strategies?.inline !== 'ignore';
 
   let newSymbols = 0;
   let updatedSymbols = 0;
   const scannedIds = new Set<string>();
+
+  // Track duplicate occurrences of (file, name, kind) so that same-named
+  // symbols in the same file get deterministic disambiguating suffixes
+  // (::#2, ::#3, ...) instead of being keyed by their line number. This makes
+  // symbol IDs stable under line-number drift (e.g. a comment inserted above).
+  /** key `file\u0000kind` -> Map<`name\u0000kind`, count> */
+  const fileDupCounts = new Map<string, Map<string, number>>();
 
   for (const codeDir of config.code_dirs) {
     try {
@@ -86,23 +121,36 @@ export async function scanProject(
             break;
           }
           const lang = sym.language;
-          // Include line number in the FQN to disambiguate same-named symbols
-          // in different scopes within the same file (e.g., method foo in class A
-          // and method foo in class B, both in src/index.ts).
-          // Escape the :: separator in file and name components to prevent
-          // symbol ID collisions when a file path or symbol name contains ::
-          // (e.g., C++ namespace-qualified names or Rust turbofish expressions).
-          const fqn = `${escFqn(sym.file)}::${sym.line}::${escFqn(sym.name)}`;
+          // Stable FQN: `${file}::${name}` (with :: suppressed via escFqn). Do NOT
+          // include the line number — line-based FQN made every symbol ID drift
+          // when a single line was inserted above, silently dropping mappings.
+          // Same-named same-kind symbols in one file are disambiguated by an
+          // occurrence suffix (::#2, ::#3, ...) computed below, which is
+          // deterministic for the builtin extractor (symbols are emitted in
+          // line order) and does not depend on the absolute line number.
+          const baseFile = escFqn(sym.file);
+          const baseName = escFqn(sym.name);
+          const dupKey = `${sym.file}\u0000${sym.kind}`;
+          let nameCounts = fileDupCounts.get(dupKey);
+          if (!nameCounts) {
+            nameCounts = new Map<string, number>();
+            fileDupCounts.set(dupKey, nameCounts);
+          }
+          const nameKey = `${baseName}\u0000${sym.kind}`;
+          const occurrence = (nameCounts.get(nameKey) ?? 0) + 1;
+          nameCounts.set(nameKey, occurrence);
+          const suffix = occurrence > 1 ? `::#${occurrence}` : '';
+          const fqn = `${baseFile}::${baseName}${suffix}`;
           const id = symbolId(lang, fqn, sym.kind);
           // Skip symbols that produce an empty ID (invalid/missing data from codegraph)
           if (!id) continue;
+          const rawSig = sym.raw_signature ?? sym.signature ?? '';
           const sig = contentHash(sym.signature ?? '');
-          const rawSig = sym.signature ?? '';
 
           scannedIds.add(id);
 
-          const existing = db.prepare('SELECT id, signature FROM symbols WHERE id = ?').get(id) as
-            | { id: string; signature: string }
+          const existing = db.prepare('SELECT id, signature, raw_signature FROM symbols WHERE id = ?').get(id) as
+            | { id: string; signature: string; raw_signature: string }
             | undefined;
 
           if (!existing) {
@@ -115,6 +163,8 @@ export async function scanProject(
               signature: sig,
               raw_signature: rawSig,
             });
+            // Record a 'created' changelog entry for the newly discovered symbol.
+            recordSymbolCreated(db, id, sig);
             newSymbols++;
           } else if (existing.signature !== sig) {
             upsertSymbol(db, {
@@ -128,30 +178,56 @@ export async function scanProject(
             });
             // Record changelog entry so docrelayDiff and the changelog table
             // surface what changed between scans.
-            const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig);
+            const logged = markSignatureChanged(db, id, existing.signature, sig, rawSig, existing.raw_signature || undefined);
             if (logged) {
               updatedSymbols++;
             } else {
               // If markSignatureChanged returned false (0 rows updated), another
               // connection may have deleted the symbol between our SELECT and the
               // UPDATE inside markSignatureChanged. The symbol WAS upserted above
-              // with the new signature — wrap the existence check and INSERT in a
-              // transaction to close the TOCTOU gap between the SELECT and INSERT.
+              // with the new signature — close the TOCTOU gap by re-checking
+              // existence and writing the changelog (with affected_docs) inside
+              // a transaction.
               const inserted = db.transaction(() => {
                 const stillExists = db.prepare('SELECT 1 FROM symbols WHERE id = ?').get(id);
                 if (!stillExists) {
                   console.warn(`DocRelay: markSignatureChanged failed for ${id} — symbol deleted concurrently, changelog entry not created`);
                   return false;
                 }
-                db.prepare(
-                  "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig) VALUES (?, 'signature_changed', ?, ?)"
-                ).run(id, existing.signature, sig);
+                recordSignatureChange(db, id, existing.signature, sig, { oldRaw: existing.raw_signature || undefined, newRaw: rawSig });
                 return true;
               })();
               if (inserted) {
                 updatedSymbols++;
                 console.warn(`DocRelay: markSignatureChanged returned false for ${id} (race condition?) — changelog entry inserted directly`);
               }
+            }
+          }
+
+          // ── Inline doc_section collection ────────────────────────────────
+          // When the extraction produced a docstring and the configured strategy
+          // does not ignore inline docs, capture it as an `inline` doc_section
+          // and link it to the symbol. When a symbol no longer has a docstring
+          // (removed), any previously-collected inline doc_section is marked
+          // stale so the sync layer picks it up for cleanup.
+          if (inlineEnabled) {
+            const doc = sym.docstring;
+            if (doc) {
+              const anchor = 'inline:' + sym.name;
+              const docId = docSectionId(sym.file, anchor);
+              if (docId) {
+                upsertDocSection(db, {
+                  id: docId,
+                  file: sym.file,
+                  anchor,
+                  content_hash: contentHash(doc),
+                  doc_type: 'inline',
+                });
+                ensureMapping(db, { symbol_id: id, doc_id: docId, rel_type: 'describes', review_status: 'auto' });
+              }
+            } else {
+              // No docstring for a still-present symbol — stale its inline docs.
+              markInlineStaleForSymbol(db, id);
             }
           }
         } catch (e: any) {
@@ -193,9 +269,13 @@ export async function scanProject(
   // Record the scan timestamp so status reports show when a scan last ran,
   // not when the last symbol change occurred. Unchanged symbols retain their
   // old updated_at, so MAX(updated_at) can be misleading after no-change scans.
+  // Store an unambiguous ISO-8601 UTC timestamp so `since` parsing has no
+  // timezone ambiguity. (Legacy `datetime('now')` values remain readable via
+  // parseLastScanAt, which normalizes both formats to a UTC epoch.)
+  const scanEndIso = new Date().toISOString();
   db.prepare(
-    "INSERT INTO metadata (key, value, updated_at) VALUES ('last_scan_at', datetime('now'), datetime('now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
-  ).run();
+    "INSERT INTO metadata (key, value, updated_at) VALUES ('last_scan_at', ?, datetime('now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+  ).run(scanEndIso);
 
   return { totalSymbols: existingSymbols.size, newSymbols, updatedSymbols, failedDirs, scannedIds: [...scannedIds] };
 }

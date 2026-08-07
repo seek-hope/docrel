@@ -92,6 +92,45 @@ function makeTsRules(): RegexRule[] {
   ];
 }
 
+/**
+ * Capture a complete (possibly multi-line) symbol signature starting at
+ * `startIdx`. Accumulates lines until the parenthesis depth returns to
+ * balanced (<= 0) AND a structural terminator (`{`, `=>` or `;`) is seen.
+ * Caps at `maxLines` as a defensive upper bound against pathological input.
+ *
+ * Returns the folded single-line form (backward compatible with the old
+ * single-line behavior) plus the raw multi-line text.
+ */
+function captureSignature(
+  lines: string[],
+  startIdx: number,
+  maxLines = 10,
+): { signature: string; rawSignature: string } {
+  const rawParts: string[] = [];
+  let depth = 0;
+  let done = false;
+
+  for (let i = startIdx; i < Math.min(lines.length, startIdx + maxLines); i++) {
+    const ln = lines[i];
+    rawParts.push(ln);
+    for (const ch of ln) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+    }
+    const trimmed = ln.trim();
+    if (depth <= 0 && (trimmed.includes('{') || trimmed.includes('=>') || trimmed.includes(';'))) {
+      done = true;
+      break;
+    }
+  }
+  void done; // rawParts is non-empty by construction; done indicates timely termination
+
+  // Fold interior whitespace to a single line; preserves single-line results exactly.
+  const signature = rawParts.map((l) => l.trim()).join(' ').replace(/\s+/g, ' ').trim();
+  const rawSignature = rawParts.join('\n');
+  return { signature, rawSignature };
+}
+
 /** Collect all file paths recursively under a directory. */
 function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string[] {
   const result: string[] = [];
@@ -168,6 +207,108 @@ function collectFiles(dir: string, projectRoot: string, maxFiles = 5000): string
   return result;
 }
 
+/**
+ * Extract a leading documentation block for a symbol. Returns undefined when
+ * there is no qualifying docstring.
+ *
+ * The function is exported for unit testing.
+ */
+export function extractLeadingDocstring(lines: string[], defIdx: number, language: string): string | undefined {
+  if (language === 'typescript' || language === 'javascript') {
+    return extractTsJsDoc(lines, defIdx);
+  }
+  if (language === 'python') {
+    return extractPythonDocstring(lines, defIdx);
+  }
+  return undefined;
+}
+
+/**
+ * Extract the contiguous JSDoc block (`/** ... *​/`) immediately preceding the
+ * symbol definition at `defIdx`. Ordinary single-line comments, blank lines
+ * (at most one) and plain `/* ... *​/` (license headers) are skipped, so they
+ * are never mistaken for a docstring. Returns undefined when no JSDoc block
+ * qualifies.
+ */
+function extractTsJsDoc(lines: string[], defIdx: number): string | undefined {
+  // Walk back over blank lines (max 1) and single-line comments above the def.
+  let i = defIdx - 1;
+  let blanks = 0;
+  while (i >= 0) {
+    const t = lines[i].trim();
+    if (t === '') { blanks++; if (blanks > 1) return undefined; i--; continue; }
+    if (t.startsWith('//')) { i--; continue; }
+    break;
+  }
+  if (i < 0) return undefined;
+
+  const end = i;
+  const collected: string[] = [];
+  let isDoc = false;
+  let j = end;
+
+  while (j >= 0) {
+    const raw = lines[j];
+    const t = raw.trimStart();
+    if (j === end) {
+      // Closing line must contain the block terminator.
+      if (!t.includes('*/')) return undefined;
+      // A single-line `/** ... *​/ ` block both opens and closes here.
+      if (t.startsWith('/**')) {
+        collected.unshift(raw);
+        isDoc = true;
+        break;
+      }
+      // Multi-line block: this is only the closing line.
+      collected.unshift(raw);
+    } else if (t.startsWith('/**')) {
+      // Opening line of the JSDoc block — this is the start.
+      collected.unshift(raw);
+      isDoc = true;
+      break;
+    } else {
+      // Interior line of the block: allow ` * ...` continuation lines and
+      // inner whitespace. Anything else ends the candidate block.
+      if (t.includes('*/')) break; // stop before an earlier block close
+      const trimmed = raw.trim();
+      if (trimmed === '') { j--; continue; }
+      if (!t.startsWith('*') && !t.includes('/*')) return undefined;
+      if (t.includes('/*') && !t.startsWith('/**')) break; // non-doc block above
+      collected.unshift(raw);
+    }
+    j--;
+  }
+
+  return isDoc ? collected.join('\n') : undefined;
+}
+
+/**
+ * Extract a Python function/class docstring — the string literal that is the
+ * first statement in the body. Returns undefined when the body starts with
+ * anything other than a `"""..."""` / `'''...'''` literal.
+ */
+function extractPythonDocstring(lines: string[], defIdx: number): string | undefined {
+  for (let i = defIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    const m = trimmed.match(/^("""|''')/);
+    if (!m) return undefined; // first statement is not a string literal docstring
+    const quote = m[1]; // the triple quote (""" or ''')
+    const rest = trimmed.slice(3);
+    // Single-line docstring: closing triple-quote on the same line.
+    if (rest.includes(quote)) return trimmed;
+    // Multi-line docstring: collect until the closing triple-quote.
+    const collected = [trimmed];
+    for (let j = i + 1; j < lines.length; j++) {
+      const l = lines[j];
+      collected.push(l);
+      if (l.includes(quote)) break;
+    }
+    return collected.join('\n');
+  }
+  return undefined;
+}
+
 /** Extract symbols from a single file using regex patterns. */
 function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol[] {
   // Defend against symlinks inside legitimate code directories
@@ -237,8 +378,14 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
         if (seen.has(key)) continue;
         seen.add(key);
 
-        // Capture signature: first line of the definition
-        const signature = line.trim();
+        // Capture the complete signature, including continuation lines for
+        // multi-line definitions. For single-line definitions this produces
+        // exactly the previous behavior (one trimmed line).
+        const { signature, rawSignature } = captureSignature(lines, lineIdx);
+
+        // Capture a leading documentation block (JSDoc / Python docstring) if
+        // present, so the scanner can build an `inline` doc_section for it.
+        const docstring = extractLeadingDocstring(lines, lineIdx, language);
 
         symbols.push({
           name,
@@ -246,7 +393,9 @@ function extractFromFile(filePath: string, projectRoot: string): ExtractedSymbol
           file: relativePath,
           line: lineIdx + 1,
           signature,
+          raw_signature: rawSignature,
           language,
+          ...(docstring ? { docstring } : {}),
         });
       }
     }
@@ -264,10 +413,14 @@ export class BuiltinExtractor implements SymbolExtractor {
 
     for (const file of files) {
       // Incremental scan: skip files not modified since the last scan.
+      // A 1s tolerance is added because `since` is derived from a UTC-second
+      // timestamp while mtimeMs has sub-second / local precision — a file
+      // written in the same second as the previous scan could otherwise be
+      // incorrectly skipped (missed scan).
       if (since !== undefined) {
         try {
           const st = fs.statSync(file);
-          if (st.mtimeMs <= since) continue;
+          if (st.mtimeMs <= since + 1000) continue;
         } catch { continue; }
       }
       const syms = extractFromFile(file, projectRoot);

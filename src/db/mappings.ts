@@ -25,6 +25,23 @@ export function createMapping(db: Database.Database, input: MappingInput): Mappi
   return row;
 }
 
+/**
+ * Add a mapping if it does not already exist. Idempotent: when the
+ * (symbol_id, doc_id, rel_type) already has a row, the existing row is
+ * returned unchanged — no duplicate column is created. Unlike createMapping
+ * (which UPSERTs and may update review_status), this helper never mutates an
+ * existing mapping.
+ */
+export function ensureMapping(db: Database.Database, input: MappingInput): MappingRow {
+  const status = input.review_status ?? 'auto';
+  const existing = db.prepare(
+    'SELECT * FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = ?'
+  ).get(input.symbol_id, input.doc_id, input.rel_type) as MappingRow | undefined;
+  if (existing) return existing;
+  return createMapping(db, { ...input, review_status: status });
+}
+
+
 export function getMappingsForSymbol(db: Database.Database, symbolId: string): MappingRow[] {
   if (!symbolId) return [];
   return db.prepare("SELECT * FROM mappings WHERE symbol_id = ?").all(symbolId) as MappingRow[];
