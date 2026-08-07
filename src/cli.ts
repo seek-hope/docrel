@@ -740,9 +740,12 @@ program
         autoLinkReport = autoLink(db, allSymbols, sections);
       }
 
-      // Report full results as a single JSON object
+      // Report full results as a single JSON object.
+      // scannedIds is an internal working set (consumed by gc) — it must not
+      // leak into user-facing output as a huge hash array.
+      const { scannedIds: _scannedIds, ...publicSymbolReport } = symbolReport;
       console.log(JSON.stringify({
-        symbols: symbolReport,
+        symbols: publicSymbolReport,
         docs: docSectionReport,
         autoLink: autoLinkReport,
       }, null, 2));

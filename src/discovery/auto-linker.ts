@@ -12,6 +12,10 @@ export interface AutoLinkResult {
   highConfidence: number;
   mediumConfidence: number;
   lowConfidence: number;
+  /** Candidate pairs that were already mapped before this run (duplicate
+   *  skips). Makes re-scans readable: on a fully-linked project totalMatched
+   *  is 0 but alreadyLinked shows the pairs that were confirmed as existing. */
+  alreadyLinked: number;
 }
 
 // ── Normalization helpers ────────────────────────────────────────────────────
@@ -252,10 +256,13 @@ function tryCreateMapping(
   docId: string,
   confidence: number,
   existingKeys: Set<string>,
-  counters: { high: number; medium: number; low: number },
+  counters: { high: number; medium: number; low: number; alreadyLinked: number },
 ): boolean {
   const mappingKey = `${symbol.id}::${docId}::describes`;
-  if (existingKeys.has(mappingKey)) return false;
+  if (existingKeys.has(mappingKey)) {
+    counters.alreadyLinked++;
+    return false;
+  }
 
   try {
     createMapping(db, {
@@ -308,7 +315,7 @@ export function autoLink(
     throw new Error(`minConfidence must be between 0.0 and 1.0, got ${minConfidence}`);
   }
 
-  const counters = { high: 0, medium: 0, low: 0 };
+  const counters = { high: 0, medium: 0, low: 0, alreadyLinked: 0 };
 
   // Build a set of existing mappings for fast skip check.
   // Key: "symbol_id::doc_id::rel_type"
@@ -345,6 +352,7 @@ export function autoLink(
         highConfidence: counters.high,
         mediumConfidence: counters.medium,
         lowConfidence: counters.low,
+        alreadyLinked: counters.alreadyLinked,
       };
     }
 
@@ -393,6 +401,7 @@ export function autoLink(
     highConfidence: counters.high,
     mediumConfidence: counters.medium,
     lowConfidence: counters.low,
+    alreadyLinked: counters.alreadyLinked,
   };
 }
 
