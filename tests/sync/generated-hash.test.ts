@@ -107,6 +107,38 @@ describe('generated doc sync refresh content_hash', () => {
     expect(doc.content_hash).not.toBe(oldHash);
   });
 
+  it('surfaces the generator output when regeneration fails', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'api.md'), '# API\n', 'utf-8');
+
+    upsertSymbol(db, {
+      id: symId,
+      name: 'ApiClient',
+      kind: 'class',
+      location: 'src/api.ts:1',
+      signature: contentHash('export class ApiClient {}'),
+      raw_signature: 'export class ApiClient {}',
+    });
+    upsertDocSection(db, {
+      id: docId,
+      file: 'docs/api.md',
+      anchor: '',
+      doc_type: 'generated',
+      content_hash: 'stale-hash',
+      status: 'in_sync',
+    });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+
+    mockDetectGenerator.mockReturnValue('npm run docs:generate');
+    mockUpdateGeneratedDoc.mockReturnValue({ success: false, output: 'typedoc exited 1' });
+
+    const result = await syncSymbol(db, autoConfig, symId, tmpDir);
+
+    expect(result.errors.some((e) => e.includes('Failed to regenerate') && e.includes('typedoc exited 1'))).toBe(true);
+    expect(result.docsUpdated).toHaveLength(0);
+    // Doc must not be marked synced on failure.
+    expect(getDocSection(db, docId)!.status).toBe('in_sync');
+  });
+
   it('keeps existing mark_stale behavior when no generator is detected', async () => {
     fs.writeFileSync(path.join(tmpDir, 'docs', 'api.md'), '# API\n', 'utf-8');
 
