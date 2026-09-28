@@ -670,7 +670,8 @@ function readDocSnippet(docFile: string, anchor: string, projectRoot: string): s
     }
     const start = Math.max(0, headingLine - 1);
     const end = Math.min(lines.length, headingLine + 12);
-    const prefix = `// ${docFile}:${headingLine + 1}\n`;
+    // headingLine is already the 1-based line number of the heading.
+    const prefix = `// ${docFile}:${headingLine}\n`;
 
     return prefix + lines.slice(start, end).join('\n');
   } catch (err: any) {

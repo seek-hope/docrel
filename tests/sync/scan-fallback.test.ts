@@ -53,4 +53,22 @@ describe('scan fallback decision (shouldFallbackToBuiltin)', () => {
     fs.writeFileSync(path.join(tmpDir, 'src', 'real.ts'), 'export const y = 2;\n');
     expect(hasSourceFiles(['src'], tmpDir)).toBe(true);
   });
+
+  it('skips code_dirs that are files, not directories', () => {
+    fs.writeFileSync(path.join(tmpDir, 'not-a-dir.ts'), 'export const z = 3;\n');
+    expect(hasSourceFiles(['not-a-dir.ts'], tmpDir)).toBe(false);
+  });
+
+  it('finds source files inside nested subdirectories', () => {
+    fs.mkdirSync(path.join(tmpDir, 'src', 'nested', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'src', 'nested', 'deep', 'x.ts'), 'export const x = 1;\n');
+    expect(hasSourceFiles(['src'], tmpDir)).toBe(true);
+  });
+
+  it('tolerates symlink loops without hanging', () => {
+    fs.mkdirSync(path.join(tmpDir, 'src', 'sub'), { recursive: true });
+    fs.symlinkSync(path.join(tmpDir, 'src'), path.join(tmpDir, 'src', 'sub', 'loop'), 'dir');
+    // No source files anywhere — the loop must not cause infinite traversal.
+    expect(hasSourceFiles(['src'], tmpDir)).toBe(false);
+  });
 });
