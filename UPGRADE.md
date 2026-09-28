@@ -6,11 +6,11 @@
 
 ## Current State (v0.3.1, 2026-09)
 
-- 47 TypeScript source files, ~13,400 lines (ES2023, NodeNext, pure ESM)
-- 64 test files, **1036 tests**, coverage 95.3/88.4/95.0/96.2
+- 49 TypeScript source files, ~14,100 lines (ES2023, NodeNext, pure ESM)
+- 66 test files, **1070 tests**, coverage 95.4/88.7/95.2/96.3
   (stmts/branch/funcs/lines, ratcheting CI gate)
-- MCP server (17 tools, in-process testable via `createDocrelayServer`)
-  + CLI (27 commands, thin shim → `cli-main`)
+- MCP server (18 tools, in-process testable via `createDocrelayServer`)
+  + CLI (28 commands, thin shim → `cli-main`)
 - Git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
 - 4 doc parsers (Markdown, RST, AsciiDoc, HTML)
 - 2 symbol extractors (Codegraph MCP, builtin regex fallback)

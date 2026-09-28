@@ -223,6 +223,42 @@ describe('CLI in-process: link / confirm / reject / history', () => {
     expect(errOut()).toContain('--limit must be a positive integer');
   });
 
+  it('ack transitions a stale doc back to in_sync and reports non-stale docs', async () => {
+    seedProject();
+    seedDb();
+    const db = getDb(tmpDir);
+    db.prepare("UPDATE doc_sections SET status = 'stale' WHERE id = ?").run(docId);
+
+    expect(await runCli(['ack', '--doc', docId])).toBe(0);
+    expect(out()).toContain('"acknowledged"');
+    expect((db.prepare("SELECT status FROM doc_sections WHERE id = ?").get(docId) as { status: string }).status).toBe('in_sync');
+
+    // Second ack is an idempotent no-op reported via notStale.
+    expect(await runCli(['ack', '--doc', docId])).toBe(0);
+    expect(out()).toContain('"notStale"');
+    expect(out()).toContain('in_sync');
+  });
+
+  it('ack requires --doc or --all and fails on unknown ids', async () => {
+    seedProject();
+    expect(await runCli(['ack'])).toBe(1);
+    expect(errOut()).toContain('--doc <id> is required');
+
+    seedDb();
+    expect(await runCli(['ack', '--doc', docSectionId('docs/ghost.md', 'Nope')])).toBe(1);
+    expect(out()).toContain('"notFound"');
+  });
+
+  it('ack --all clears every stale section', async () => {
+    seedProject();
+    seedDb();
+    const db = getDb(tmpDir);
+    db.prepare("UPDATE doc_sections SET status = 'stale'").run();
+    expect(await runCli(['ack', '--all'])).toBe(0);
+    expect(out()).toContain('"acknowledged"');
+    expect((db.prepare("SELECT COUNT(*) AS n FROM doc_sections WHERE status = 'stale'").get() as { n: number }).n).toBe(0);
+  });
+
   it('reports an unknown symbol in diff', async () => {
     seedProject();
     expect(await runCli(['diff', symId])).toBe(1);

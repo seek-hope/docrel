@@ -14,6 +14,11 @@ export interface DocScanReport {
    *  The default `init` config lists `docs`, which many projects don't have;
    *  reporting it as a failure trains users to ignore real failures. */
   skippedMissing: string[];
+  /** Project-relative paths of doc files that parsed SUCCESSFULLY (possibly
+   *  yielding zero sections). Drives ghost-section pruning: rows for files
+   *  NOT in this list (failed reads, ignored files) must be kept, otherwise
+   *  a transient parser failure would mass-delete sections. */
+  parsedFiles: string[];
 }
 
 const MAX_FILES = 5000;
@@ -29,6 +34,7 @@ export async function scanDocs(
   const sections: ParsedDocSection[] = [];
   const failedFiles: string[] = [];
   const skippedMissing: string[] = [];
+  const parsedFiles: string[] = [];
   let totalFiles = 0;
 
   for (const docDir of docDirs) {
@@ -77,9 +83,19 @@ export async function scanDocs(
       const relPath = path.relative(projectRoot, absDir);
       if (!isIgnored(relPath, projectRoot)) {
         totalFiles++;
-        const parsed = parseFile(absDir, projectRoot);
-        if (parsed) {
-          sections.push(...parsed);
+        // Unsupported extensions are skipped silently — matching files in a
+        // directory walk, where a stray non-doc file is not a failure either.
+        if (getParser(path.extname(absDir).toLowerCase())) {
+          const parsed = parseFile(absDir, projectRoot);
+          if (parsed) {
+            sections.push(...parsed);
+            parsedFiles.push(relPath);
+          } else {
+            // A configured doc file that fails to parse IS a failure, same as
+            // one encountered in a directory walk — it was previously
+            // reported nowhere, leaving its stale rows invisible.
+            failedFiles.push(relPath);
+          }
         }
       }
       continue;
@@ -97,6 +113,7 @@ export async function scanDocs(
       const parsed = parseFile(file, projectRoot);
       if (parsed) {
         sections.push(...parsed);
+        parsedFiles.push(path.relative(projectRoot, file));
       } else {
         failedFiles.push(path.relative(projectRoot, file));
       }
@@ -105,7 +122,7 @@ export async function scanDocs(
 
   return {
     sections,
-    report: { totalSections: sections.length, totalFiles, failedFiles, skippedMissing },
+    report: { totalSections: sections.length, totalFiles, failedFiles, skippedMissing, parsedFiles },
   };
 }
 

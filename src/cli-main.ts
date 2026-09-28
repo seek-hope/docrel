@@ -332,6 +332,30 @@ program
   });
 
 program
+  .command('ack')
+  .description('Acknowledge stale doc sections as accurate after manual review — sets status back to in_sync')
+  .option('--doc <id>', 'Doc section ID to acknowledge')
+  .option('--all', 'Acknowledge ALL stale doc sections', false)
+  .action(async (opts) => {
+    try {
+      await ensureContext();
+      if (!opts.all && !opts.doc) {
+        console.error('Error: --doc <id> is required (or use --all)');
+        exit(1);
+      }
+      // Lazy-loaded: keeps the ack module out of the startup path for every
+      // other command, matching the sync engine pattern above.
+      const { docrelayAck } = await import('./tools/ack.js');
+      const report = docrelayAck(db, { docId: opts.doc, all: Boolean(opts.all) });
+      console.log(JSON.stringify(report, null, 2));
+      if (report.notFound.length > 0) exit(1);
+    } catch (err: any) {
+      console.error('Ack failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
   .command('impact')
   .description('Show documentation affected by changed files')
   .argument('<paths...>', 'Changed file paths')

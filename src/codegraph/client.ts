@@ -54,6 +54,10 @@ export class CodegraphClient {
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
   private livenessInProgress = false;
+  /** Last ~20 stderr lines from the codegraph server (see doConnect) — used
+   *  to replace misleading "output format may have changed" warnings with the
+   *  actual cause (e.g. the project has no index). */
+  private serverStderrTail: string[] = [];
 
   /**
    * @param command  codegraph binary name/path (config: codegraph.command).
@@ -260,6 +264,28 @@ export class CodegraphClient {
       // scanned — see the constructor doc. Undefined falls back to the
       // process cwd (legacy behavior).
       cwd: this.cwd,
+      // The codegraph server prints status lines to stderr (e.g. "No
+      // .codegraph/ at or above <root>: no default project, live sync
+      // disabled."). The SDK default ('inherit') leaks them into docrelay's
+      // own stderr on EVERY scan on unindexed projects, where they look like
+      // docrelay errors. Pipe and buffer the tail instead: reprinted only
+      // when the connection fails (where they diagnose why), always visible
+      // under DOCRELAY_DEBUG.
+      stderr: 'pipe',
+    });
+
+    let stderrPartial = '';
+    const debug = process.env.DOCRELAY_DEBUG === '1' || process.env.DOCRELAY_DEBUG === 'true';
+    transport.stderr?.on('data', (chunk: Buffer | string) => {
+      stderrPartial += chunk.toString();
+      const lines = stderrPartial.split('\n');
+      stderrPartial = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        this.serverStderrTail.push(line);
+        if (this.serverStderrTail.length > 20) this.serverStderrTail.shift();
+        if (debug) console.debug('DocRelay: codegraph server:', line);
+      }
     });
 
     const client = new Client(
@@ -296,6 +322,11 @@ export class CodegraphClient {
       this.client = client;
     } catch (err) {
       try { await client.close(); } catch {}
+      // The server's own words usually say why it failed (missing index,
+      // port conflict, crashed on startup) — surface the buffered tail.
+      if (this.serverStderrTail.length > 0) {
+        console.warn(`DocRelay: codegraph server output before connect failure: ${this.serverStderrTail.slice(-5).join(' | ')}`);
+      }
       // If the connect promise resolved with an error (connectErr is set),
       // surface it instead of the timeout error that won the race.
       // On a dual failure (timeout fires just as connect fails), the actual
@@ -744,7 +775,15 @@ export class CodegraphClient {
       for (let i = 0; i < content.length && i < 10_000_000; i++) {
         if (content[i] === '\n') linesCount++;
       }
-      console.warn(`DocRelay: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
+      if (this.serverStderrTail.some((l) => l.includes('No .codegraph'))) {
+        // Known cause (the server said so itself): the project simply has no
+        // index — do not send the user chasing an "output format" theory.
+        // Cause only — the fallback decision belongs to the caller
+        // (scanWithFallback reports its own action).
+        console.warn('DocRelay: codegraph returned no symbols — the project has no .codegraph/ index (run `codegraph init` in the project to build one).');
+      } else {
+        console.warn(`DocRelay: explore parsing produced no results from ${content.length} chars in ${linesCount} lines — codegraph output format may have changed.`);
+      }
     }
     // F18: Warn when only one of symbols/files is empty — partial parse
     // may indicate a codegraph output format change.

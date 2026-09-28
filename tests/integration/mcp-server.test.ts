@@ -85,7 +85,7 @@ describe('MCP server (in-process)', () => {
     const names = tools.map((t) => t.name);
     for (const expected of [
       'docrelay_status', 'docrelay_check', 'docrelay_impact', 'docrelay_sync',
-      'docrelay_sync_all', 'docrelay_link', 'docrelay_confirm', 'docrelay_reject',
+      'docrelay_sync_all', 'docrelay_link', 'docrelay_confirm', 'docrelay_reject', 'docrelay_ack',
       'docrelay_diff', 'docrelay_history', 'docrelay_scan', 'docrelay_review', 'docrelay_integrate',
       'docrelay_watch', 'docrelay_refresh', 'docrelay_watch_status', 'docrelay_health',
     ]) {
@@ -134,6 +134,33 @@ describe('MCP server (in-process)', () => {
     }))) as { passed: boolean; summary: string };
     expect(miss.passed).toBe(true);
     expect(miss.summary).toContain('in sync');
+  });
+
+  it('docrelay_ack acknowledges stale sections individually and in bulk', async () => {
+    await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } });
+    db.prepare("UPDATE doc_sections SET status = 'stale'").run();
+    const staleIds = (db.prepare("SELECT id FROM doc_sections WHERE status = 'stale' ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
+    expect(staleIds.length).toBeGreaterThanOrEqual(2);
+
+    // Single-doc ack via doc_id.
+    const single = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_ack', arguments: { doc_id: staleIds[0] },
+    }))) as { acknowledged: Array<{ id: string }>; notStale: unknown[]; notFound: string[] };
+    expect(single.acknowledged.map((e) => e.id)).toEqual([staleIds[0]]);
+
+    // Re-acking is reported as notStale, not an error.
+    const again = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_ack', arguments: { doc_id: staleIds[0] },
+    }))) as { notStale: Array<{ status: string }> };
+    expect(again.notStale[0].status).toBe('in_sync');
+
+    // The remainder clears via all=true.
+    const rest = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_ack', arguments: { all: true },
+    }))) as { acknowledged: unknown[] };
+    expect(rest.acknowledged).toHaveLength(staleIds.length - 1);
+    const check = JSON.parse(textOf(await client.callTool({ name: 'docrelay_check', arguments: {} }))) as { passed: boolean };
+    expect(check.passed).toBe(true);
   });
 
   it('link → review → confirm round-trip through tool calls', async () => {

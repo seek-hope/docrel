@@ -37,6 +37,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Backup rotation: `doc-relay backup --keep <n>` prunes older `backup-*.db`
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
+- `doc-relay ack --doc <id> | --all` (CLI) and the `docrelay_ack` MCP tool:
+  acknowledge stale doc sections as accurate after manual review, setting
+  their status back to `in_sync`. Sections staled by a linked symbol change
+  they never quoted (loose auto-links, prose mentions) previously had NO
+  resolution path — `sync` deliberately leaves them stale and `confirm`
+  only records mapping review status — so `check --strict` (pre-commit,
+  pre-push, CI) failed forever. The sync "left stale" warning and the
+  check markdown report now point at the command.
+- Ghost doc-section pruning: scans now delete `standalone` doc_sections
+  rows whose anchors vanished from a successfully parsed doc file
+  (renamed/deleted headings) or whose file was deleted from disk while
+  still under a configured `doc_dirs` path. Rows only ever accumulated:
+  ghosts blocked `check --strict` permanently once staled, because sync
+  can neither locate nor hash-match a vanished anchor. Mappings cascade
+  via the foreign key; the deliberately FK-free review_history preserves
+  the audit trail. Files that fail to parse, are `.docrelayignore`d, or
+  sit outside the configured doc_dirs are never pruned (transient-error
+  safety), and neither are `inline`/`generated` rows.
 - Benchmark harness: `scripts/bench.mjs` builds a synthetic repo
   (configurable file/doc counts, 4000 symbols / 500+ sections by default)
   and times init, full/incremental scans, status, check, and review —
@@ -51,7 +69,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (750 new tests, 1047 total):
+  branches (773 new tests, 1070 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -368,6 +386,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   update when the installed build is ahead of npm (e.g. a locally built
   pre-release): the fetch path now applies the same `isNewer()` gate as the
   cached path.
+- The codegraph server's stderr is no longer inherited by docrelay's own
+  stderr: on projects without a `.codegraph/` index the server prints a
+  status line on EVERY scan, which looked like a docrelay error. stderr is
+  now piped into a 20-line tail buffer — surfaced only when the connection
+  fails (where it explains why), echoed under `DOCRELAY_DEBUG=1`, and used
+  to replace the misleading "explore parsing produced no results — output
+  format may have changed" warning with the actual cause ("the project has
+  no .codegraph/ index — run `codegraph init`"). The builtin-extractor
+  fallback warning now carries the standard `DocRelay: ` prefix.
 - Scan and doc-ingest now wrap their per-directory/per-batch database writes
   in a single transaction instead of auto-committing every row — first scan
   of a 10,000-symbol project is ~21% faster (1901ms → 1502ms in
@@ -379,6 +406,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `scan` no longer reports configured-but-nonexistent doc paths (e.g. the
   default `docs` directory) as `failedFiles` — they are now listed separately
   as `skippedMissing`, so real parse failures stay visible.
+- A configured single doc FILE (e.g. `README.md` in `doc_dirs`) that failed
+  to parse was reported nowhere — directory-walk failures were listed but
+  single-file failures vanished silently. They now appear in `failedFiles`
+  like any other parse failure (unsupported extensions stay silently
+  skipped, matching walk behavior).
 - Agent integration (`.mcp.json`, CLAUDE.md/OPENCODE.md/generic instructions)
   referenced `npx docrelay`, which is not a published npm package — generated
   MCP configs could not start the server. Now uses `npx -y doc-relay mcp`.

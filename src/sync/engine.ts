@@ -433,7 +433,7 @@ export async function syncSymbol(
                   // documented text is in a form we cannot recover (or the
                   // section was restructured). Surface that explicitly
                   // instead of leaving the doc stale with no signal.
-                  result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)} (section '${doc.anchor}'): could not locate documented signature text for ${symbol.name} — left stale for manual/agent update`);
+                  result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)} (section '${doc.anchor}'): could not locate documented signature text for ${symbol.name} — left stale for manual/agent update; if the section is already accurate, acknowledge it with \`doc-relay ack --doc ${doc.id}\``);
                 }
               }
             } else {

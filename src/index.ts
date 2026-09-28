@@ -271,6 +271,27 @@ server.tool(
   },
 );
 
+// ── docrelay_ack ─────────────────────────────────────────────────
+server.tool(
+  'docrelay_ack',
+  'Acknowledge stale doc sections as accurate after review — sets status back to in_sync. Use when a section was staled by a linked symbol change but its content does not need edits.',
+  {
+    doc_id: z.string().min(1).optional().describe('Doc section ID to acknowledge'),
+    all: z.boolean().optional().describe('Acknowledge ALL stale doc sections'),
+  },
+  async ({ doc_id, all }) => {
+    try {
+      const { docrelayAck } = await import('./tools/ack.js');
+      const report = docrelayAck(db, { docId: doc_id, all });
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(report, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
 // ── docrelay_reject ──────────────────────────────────────────────
 server.tool(
   'docrelay_reject',

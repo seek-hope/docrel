@@ -3,7 +3,8 @@ import { errMsg, createExtractor, scanWithFallback, isProjectInitialized, runDoc
 import { getDb, closeAllDbs } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/schema.js';
 import { upsertSymbol } from '../src/db/symbols.js';
-import { symbolId } from '../src/utils/hash.js';
+import { upsertDocSection, getDocSection } from '../src/db/docs.js';
+import { symbolId, docSectionId } from '../src/utils/hash.js';
 import { BuiltinExtractor } from '../src/extractors/builtin.js';
 import type { SymbolExtractor } from '../src/extractors/interface.js';
 import type { CodegraphClient } from '../src/codegraph/client.js';
@@ -229,6 +230,112 @@ describe('runDocsPipeline', () => {
     expect(report.autoLink.totalMatched).toBeGreaterThanOrEqual(1);
   });
 
+  it('prunes ghost sections whose headings vanished, cascading their mappings', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+    const ghostId = docSectionId('docs/guide.md', 'Beta Notes');
+    expect(getDocSection(db, ghostId)).toBeDefined();
+    const ghostMappings = () =>
+      (db.prepare('SELECT COUNT(*) AS n FROM mappings WHERE doc_id = ?').get(ghostId) as { n: number }).n;
+    expect(ghostMappings()).toBeGreaterThanOrEqual(1); // `beta()` backtick ref
+
+    // Rename the heading — the 'Beta Notes' row becomes a ghost.
+    writeDoc(DOC.replace('## Beta Notes', '## Beta Guide'));
+    const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    expect(report.docs.prunedDocSections).toBe(1);
+    expect(getDocSection(db, ghostId)).toBeUndefined();
+    expect(ghostMappings()).toBe(0); // cascaded via the foreign key
+    // The renamed heading was ingested as a new section; siblings survived.
+    expect(getDocSection(db, docSectionId('docs/guide.md', 'Beta Guide'))).toBeDefined();
+    expect(getDocSection(db, docSectionId('docs/guide.md', 'Alpha Guide'))).toBeDefined();
+  });
+
+  it('keeps rows for files that fail to parse — a transient error must not mass-delete', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    fs.chmodSync(docPath(), 0o000);
+    try {
+      const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+      expect(report.docs.failedFiles).toContain('docs/guide.md');
+      expect(report.docs.prunedDocSections).toBe(0);
+      expect(getDocSection(db, docSectionId('docs/guide.md', 'Alpha Guide'))).toBeDefined();
+    } finally {
+      fs.chmodSync(docPath(), 0o644);
+    }
+  });
+
+  it('never prunes inline or generated rows — only standalone', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+    const genId = docSectionId('docs/guide.md', 'Generated Ghost');
+    upsertDocSection(db, { id: genId, file: 'docs/guide.md', anchor: 'Generated Ghost', doc_type: 'generated' });
+    const inlineId = docSectionId('docs/guide.md', 'Inline Ghost');
+    upsertDocSection(db, { id: inlineId, file: 'docs/guide.md', anchor: 'Inline Ghost', doc_type: 'inline' });
+
+    const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    expect(report.docs.prunedDocSections).toBe(0);
+    expect(getDocSection(db, genId)).toBeDefined();
+    expect(getDocSection(db, inlineId)).toBeDefined();
+  });
+
+  it('prunes ALL standalone rows of a doc that was emptied of sections', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+    expect(mappingCount()).toBeGreaterThanOrEqual(1);
+
+    // An empty file parses successfully to zero sections — its old rows are ghosts.
+    writeDoc('');
+    const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    expect(report.docs.prunedDocSections).toBe(3); // Alpha Guide, Beta Notes, Gamma Notes
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM doc_sections WHERE file = 'docs/guide.md'").get() as { n: number }).n,
+    ).toBe(0);
+    expect(mappingCount()).toBe(0);
+  });
+
+  it('prunes rows for doc FILES deleted from disk when under a configured doc_dir', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+    expect(getDocSection(db, docSectionId('docs/guide.md', 'Alpha Guide'))).toBeDefined();
+
+    fs.rmSync(docPath());
+    const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    expect(report.docs.prunedDocSections).toBe(3);
+    expect(
+      (db.prepare("SELECT COUNT(*) AS n FROM doc_sections WHERE file = 'docs/guide.md'").get() as { n: number }).n,
+    ).toBe(0);
+  });
+
+  it('keeps rows for deleted files OUTSIDE the configured doc_dirs', async () => {
+    writeDoc();
+    seedSymbols();
+    await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+    // A section tracked back when 'legacy/' was still a configured doc dir —
+    // removing a dir from the config must not wipe its rows.
+    upsertDocSection(db, {
+      id: docSectionId('legacy/old.md', 'Legacy'),
+      file: 'legacy/old.md',
+      anchor: 'Legacy',
+      doc_type: 'standalone',
+    });
+    fs.rmSync(docPath());
+
+    const report = await runDocsPipeline(db, config, tmpDir, undefined, ALL_IDS);
+
+    expect(report.docs.prunedDocSections).toBe(3); // guide.md's rows only
+    expect(getDocSection(db, docSectionId('legacy/old.md', 'Legacy'))).toBeDefined();
+  });
+
   it('limits pass-1 linking to the changed-symbol subset on incremental scans', async () => {
     writeDoc();
     seedSymbols();
@@ -285,4 +392,5 @@ describe('runDocsPipeline', () => {
     expect(report.autoLink.totalMatched).toBe(0);
     expect(mappingCount()).toBe(0);
   });
+
 });

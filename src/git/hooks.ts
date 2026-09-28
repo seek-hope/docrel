@@ -195,7 +195,7 @@ HOOK=pre-commit
 ${failOpenGuard}${docrelayQuoted} check --strict
 if [ $? -ne 0 ]; then
   echo ""
-  echo "DocRelay: Documentation is stale. Run 'docrelay sync' or use --no-verify to skip."
+  echo "DocRelay: Documentation is stale. Run 'doc-relay sync' to update docs, 'doc-relay ack' for sections that are already accurate, or use --no-verify to skip."
   exit 1
 fi
 `;

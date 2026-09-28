@@ -54,6 +54,7 @@ Notes:
 | `docrelay_link` | Create/delete symbol↔doc mappings |
 | `docrelay_confirm` | Confirm auto-generated mappings |
 | `docrelay_reject` | Reject auto-generated mappings |
+| `docrelay_ack` | Acknowledge stale doc sections as accurate |
 | `docrelay_diff` | Change history for a symbol |
 | `docrelay_history` | Audit trail of confirm/reject decisions |
 | `docrelay_scan` | Rescan codebase and docs, re-link |

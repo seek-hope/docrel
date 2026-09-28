@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import { cachedStmt } from './statements.js';
+import { docSectionId } from '../utils/hash.js';
 
 export interface DocSectionRow {
   id: string;
@@ -142,4 +143,53 @@ export function markDocRelayedWithHash(db: Database.Database, id: string, newHas
     return false;
   }
   return true;
+}
+
+/**
+ * Delete 'standalone' doc_sections rows whose anchors no longer appear in a
+ * successfully parsed doc file ("ghost sections").
+ *
+ * The scan pipeline upserts the sections it finds but never removed rows for
+ * renamed or deleted headings, so ghost rows accumulated in_sync until a
+ * later sync pass staled them — after which they could NEVER recover (sync
+ * cannot locate the vanished anchor to rewrite or hash-match it), failing
+ * `check --strict` permanently. Mappings cascade-delete with the row via the
+ * foreign key; the deliberately FK-free review_history table preserves the
+ * audit trail.
+ *
+ * Safety contract (callers uphold it): only files that parsed SUCCESSFULLY
+ * may appear as keys — a file that failed to read/parse must keep its rows,
+ * otherwise a transient parser failure would mass-delete sections. Only
+ * doc_type 'standalone' rows are touched: 'inline' rows belong to code files
+ * (never parsed by scanDocs) and 'generated' rows are managed by the
+ * generated-doc updater.
+ *
+ * @param fileAnchors  map of doc file (project-relative) -> anchors parsed
+ *                     from it in this scan (possibly an empty set).
+ * @returns number of deleted rows.
+ */
+export function pruneVanishedDocSections(
+  db: Database.Database,
+  fileAnchors: Map<string, Set<string>>,
+): number {
+  let pruned = 0;
+  const rowsForFile = db.prepare("SELECT id, anchor FROM doc_sections WHERE file = ? AND doc_type = 'standalone'");
+  const deleteById = db.prepare("DELETE FROM doc_sections WHERE id = ? AND doc_type = 'standalone'");
+  db.transaction(() => {
+    for (const [file, anchors] of fileAnchors) {
+      const keep = new Set<string>();
+      for (const anchor of anchors) {
+        const id = docSectionId(file, anchor);
+        if (id) keep.add(id);
+      }
+      const rows = rowsForFile.all(file) as Array<{ id: string; anchor: string }>;
+      for (const row of rows) {
+        if (keep.has(row.id)) continue;
+        // Deleting by id (not anchor) is collision-safe: docSectionId is the
+        // primary key, so a ghost and a live section can never share it.
+        pruned += deleteById.run(row.id).changes;
+      }
+    }
+  })();
+  return pruned;
 }

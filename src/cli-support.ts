@@ -14,6 +14,7 @@ import type { ScanReport } from './discovery/scanner.js';
 import { shouldFallbackToBuiltin } from './sync/scan-fallback.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
+import { pruneVanishedDocSections } from './db/docs.js';
 import { listSymbols } from './db/symbols.js';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
@@ -54,7 +55,7 @@ export async function scanWithFallback(
 ): Promise<ScanReport> {
   const report = await scanProject(extractor, cfgDb, cfgConfig, cfgRoot, fullScan);
   if (shouldFallbackToBuiltin(report.totalSymbols, extractor.name, cfgConfig.code_dirs, cfgRoot)) {
-    console.warn('codegraph returned 0 symbols, fell back to builtin extractor');
+    console.warn('DocRelay: codegraph returned 0 symbols, fell back to builtin extractor');
     return scanProject(new BuiltinExtractor(), cfgDb, cfgConfig, cfgRoot, fullScan);
   }
   return report;
@@ -75,6 +76,10 @@ export interface DocsPipelineReport {
     newMappings: number;
     failedFiles: string[];
     skippedMissing: string[];
+    /** Ghost sections deleted this run: standalone rows whose anchors no
+     *  longer appear in a successfully parsed doc file (renamed/deleted
+     *  headings). See pruneVanishedDocSections. */
+    prunedDocSections: number;
   };
   autoLink: {
     totalMatched: number;
@@ -120,6 +125,46 @@ export async function runDocsPipeline(
       });
   const ingestResult = ingestDocSections(db, changedSections);
 
+  // Ghost-section pruning: remove standalone rows whose anchors vanished from
+  // their doc file (renamed/deleted headings). Built from ALL parsed files —
+  // not just changedSections — because an unchanged file's anchor set is just
+  // as authoritative, and an incremental run must not resurrect ghosts.
+  // Files that failed to parse are excluded by scanDocs, so a transient
+  // parser failure can never mass-delete sections.
+  const parsedAnchors = new Map<string, Set<string>>();
+  for (const file of docReport.parsedFiles) parsedAnchors.set(file, new Set());
+  for (const section of sections) parsedAnchors.get(section.file)?.add(section.anchor);
+
+  // Deleted doc FILES are a second ghost population: their rows can never be
+  // re-parsed, so parsedFiles alone never covers them. Any standalone row
+  // whose file lives under a configured doc_dir but no longer exists on disk
+  // is pruned with an empty anchor set (= all its rows). Files outside the
+  // configured doc_dirs are left alone — removing a dir from the config must
+  // not wipe its history; neither must an .docrelayignore'd or failed parse.
+  const normalizedDocDirs = config.doc_dirs
+    .map((d) => path.normalize(d).replace(/[\\/]+$/, ''))
+    .filter((d) => d && d !== '.');
+  const isUnderDocDir = (file: string): boolean => {
+    const nf = path.normalize(file);
+    return normalizedDocDirs.some((d) => nf === d || nf.startsWith(d + path.sep));
+  };
+  const knownDocFiles = db.prepare(
+    "SELECT DISTINCT file FROM doc_sections WHERE doc_type = 'standalone'",
+  ).all() as Array<{ file: string }>;
+  for (const { file } of knownDocFiles) {
+    if (parsedAnchors.has(file) || !isUnderDocDir(file)) continue;
+    let exists = false;
+    try {
+      const resolved = path.resolve(projectRoot, file);
+      const root = path.resolve(projectRoot);
+      // Containment first: a pathological DB row (../, absolute) must not
+      // turn the existence check into a filesystem probe outside the project.
+      exists = (resolved === root || resolved.startsWith(root + path.sep)) && fs.existsSync(resolved);
+    } catch { /* treated as missing below */ }
+    if (!exists) parsedAnchors.set(file, new Set());
+  }
+  const prunedDocSections = pruneVanishedDocSections(db, parsedAnchors);
+
   const allSymbols = listSymbols(db);
   const scannedIdSet = new Set(scannedIds);
   const changedSymbols = scannedIdSet.size === allSymbols.length
@@ -147,6 +192,7 @@ export async function runDocsPipeline(
       newMappings: ingestResult.newMappings,
       failedFiles: docReport.failedFiles,
       skippedMissing: docReport.skippedMissing,
+      prunedDocSections,
     },
     autoLink: linkCounters,
   };

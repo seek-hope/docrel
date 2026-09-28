@@ -29,6 +29,30 @@ describe('scanDocs missing-path handling', () => {
     expect(report.failedFiles).toEqual([]);
     expect(sections.length).toBeGreaterThan(0);
   });
+
+  it('lists successfully parsed files in parsedFiles (dirs and single files)', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'docs'));
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'a.md'), '# Title\n\nSome content.\n');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'empty.md'), '');
+    fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Project\n');
+    const { report } = await scanDocs(['docs', 'README.md'], tmpDir);
+    // empty.md parses successfully to zero sections — it must still count as
+    // parsed, otherwise ghost pruning could never clean an emptied doc.
+    expect(report.parsedFiles.sort()).toEqual(['README.md', 'docs/a.md', 'docs/empty.md'].sort());
+    expect(report.failedFiles).toEqual([]);
+  });
+
+  it('reports a configured single doc file that fails to parse as failedFiles', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Project\n');
+    fs.chmodSync(path.join(tmpDir, 'README.md'), 0o000);
+    try {
+      const { report } = await scanDocs(['README.md'], tmpDir);
+      expect(report.failedFiles).toEqual(['README.md']);
+      expect(report.parsedFiles).toEqual([]);
+    } finally {
+      fs.chmodSync(path.join(tmpDir, 'README.md'), 0o644);
+    }
+  });
 });
 
 describe('scanDocs containment & edge cases', () => {

@@ -34,7 +34,9 @@ codegraph availability, scan freshness, and more. Exits 1 when unhealthy.
 List stale documentation sections. `--strict` exits 1 when anything is stale
 (used by the git hooks and CI). `--format shields` prints a shields.io
 endpoint JSON payload for documentation-health badges (see
-[CI/CD integration](ci.md#status-badges)).
+[CI/CD integration](ci.md#status-badges)). Resolve stale sections with
+[`sync`](#sync---symbol-id--sync---all-stale), or with
+[`ack`](#ack---doc-id--ack---all) when the content is already accurate.
 
 ### `impact <paths...> [--format json|markdown|ci]`
 Show which documentation sections are affected by the given changed files.
@@ -79,6 +81,15 @@ Mark auto-generated mappings as human-confirmed.
 ### `reject [--symbol <id> --doc <id> [--type <rel>]] [--all] [--pattern <text>]`
 Mark auto-generated mappings as rejected. `--pattern` rejects every mapping
 whose symbol name contains the given substring.
+
+### `ack --doc <id>` | `ack --all`
+Acknowledge stale doc sections as accurate after manual review — sets their
+status back to `in_sync`. Use this when a section was staled by a linked
+symbol change but its content needs no edits (for example a loose auto-link
+to a symbol the section never quotes). `confirm`/`reject` operate on
+mappings and do not clear section staleness; `ack` is the missing piece of
+the sync workflow: run `sync`, review what it could not rewrite, then `ack`
+the sections that are already accurate.
 
 ### `gc [--dry-run]`
 Garbage-collect symbols no longer found in the codebase. Two-pass: stale

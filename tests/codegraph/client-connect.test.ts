@@ -17,6 +17,7 @@ const sdkMock = vi.hoisted(() => ({
   connectImpl: { current: (_transport: unknown): Promise<void> => Promise.resolve() },
   lastClient: null as { close: ReturnType<typeof vi.fn> } | null,
   lastTransportOpts: null as Record<string, unknown> | null,
+  lastTransport: null as { stderr: import('node:stream').PassThrough } | null,
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -28,9 +29,18 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   },
 }));
 
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: class { constructor(opts: unknown) { sdkMock.lastTransportOpts = opts as Record<string, unknown>; } },
-}));
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', async () => {
+  const { PassThrough } = await import('node:stream');
+  return {
+    StdioClientTransport: class {
+      stderr = new PassThrough();
+      constructor(opts: unknown) {
+        sdkMock.lastTransportOpts = opts as Record<string, unknown>;
+        sdkMock.lastTransport = this;
+      }
+    },
+  };
+});
 
 // client.ts resolves fs via `await import('node:fs')` — spying on the CJS
 // default export does not reach the namespace copy, so statSync is mocked at
@@ -57,6 +67,7 @@ interface Poke {
   connectPromise: Promise<void> | null;
   connectGeneration: number;
   _preflightResult: string | null | undefined;
+  serverStderrTail: string[];
 }
 const poke = (cg: CodegraphClient): Poke => cg as unknown as Poke;
 
@@ -296,6 +307,7 @@ describe('doConnect SDK flow', () => {
     sdkMock.connectImpl.current = () => Promise.resolve();
     sdkMock.lastClient = null;
     sdkMock.lastTransportOpts = null;
+    sdkMock.lastTransport = null;
   });
 
   afterEach(() => {
@@ -332,6 +344,72 @@ describe('doConnect SDK flow', () => {
     const cg = new CodegraphClient('codegraph');
     await expect(cg.connect()).rejects.toThrow('handshake exploded');
     expect(sdkMock.lastClient!.close).toHaveBeenCalled();
+  });
+
+  it('pipes server stderr into a tail buffer surfaced on connect failure', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Reject on setImmediate (not synchronously) so the stderr write below
+    // deterministically lands in the tail buffer before the catch prints it.
+    sdkMock.connectImpl.current = () => new Promise<void>((_, rej) => setImmediate(() => rej(new Error('handshake exploded'))));
+    const cg = new CodegraphClient('codegraph');
+    const pending = cg.connect().catch((e) => e);
+    // doConnect constructs the transport after several awaits — spin until it exists.
+    for (let i = 0; i < 50 && !sdkMock.lastTransport; i++) await new Promise((r) => setImmediate(r));
+    expect(sdkMock.lastTransportOpts?.stderr).toBe('pipe');
+    sdkMock.lastTransport!.stderr.write('[CodeGraph MCP] fatal: index corrupt\n');
+    await pending;
+    // …and the buffered tail surfaces as one diagnostic warning.
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('codegraph server output before connect failure') && String(c[0]).includes('index corrupt'))).toBe(true);
+  });
+
+  it('does not forward server stderr on a successful connect', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cg = new CodegraphClient('codegraph');
+    const pending = cg.connect();
+    for (let i = 0; i < 50 && !sdkMock.lastTransport; i++) await new Promise((r) => setImmediate(r));
+    sdkMock.lastTransport!.stderr.write('[CodeGraph MCP] No .codegraph/ at or above /x: no default project\n');
+    await pending;
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('No .codegraph'))).toBe(false);
+  });
+
+  it('echoes server stderr lines via console.debug under DOCRELAY_DEBUG', async () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const savedDebug = process.env.DOCRELAY_DEBUG;
+    process.env.DOCRELAY_DEBUG = '1';
+    try {
+      const cg = new CodegraphClient('codegraph');
+      const pending = cg.connect();
+      for (let i = 0; i < 50 && !sdkMock.lastTransport; i++) await new Promise((r) => setImmediate(r));
+      sdkMock.lastTransport!.stderr.write('server says hello\n');
+      await pending;
+      expect(debugSpy).toHaveBeenCalledWith('DocRelay: codegraph server:', 'server says hello');
+    } finally {
+      if (savedDebug === undefined) delete process.env.DOCRELAY_DEBUG;
+      else process.env.DOCRELAY_DEBUG = savedDebug;
+    }
+  });
+
+  it('caps the stderr tail at 20 lines, joining partial lines and skipping blanks', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    sdkMock.connectImpl.current = () => new Promise<void>((_, rej) => setImmediate(() => rej(new Error('boom'))));
+    const cg = new CodegraphClient('codegraph');
+    const pending = cg.connect().catch((e) => e);
+    for (let i = 0; i < 50 && !sdkMock.lastTransport; i++) await new Promise((r) => setImmediate(r));
+    const stderr = sdkMock.lastTransport!.stderr;
+    for (let i = 1; i <= 20; i++) stderr.write(`line ${i}\n`);
+    stderr.write('\n'); // blank lines are skipped entirely
+    // A partial line only flushes once a later chunk completes it.
+    stderr.write('partial-line');
+    stderr.write(' completed\n');
+    await pending;
+    expect(poke(cg).serverStderrTail).toHaveLength(20);
+    expect(poke(cg).serverStderrTail[0]).toBe('line 2'); // 'line 1' evicted by the 21st push
+    expect(poke(cg).serverStderrTail[19]).toBe('partial-line completed');
+    // The failure warning shows only the last 5 buffered lines.
+    const warning = warnSpy.mock.calls.map((c) => String(c[0])).find((m) => m.includes('server output before connect failure'));
+    expect(warning).toContain('partial-line completed');
+    expect(warning).toContain('line 17');
+    expect(warning).not.toContain('line 16');
   });
 
   it('times out a hanging connect and closes the half-open client', async () => {
@@ -515,6 +593,15 @@ describe('explore parse edge paths', () => {
     const result = await cg.explore('x');
     expect(result.symbols).toEqual([]);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('produced no results'));
+  });
+
+  it('reports the missing index (not a format change) when the server stderr said so', async () => {
+    const cg = exploring('nothing\nparseable\nhere\n');
+    poke(cg).serverStderrTail = ['[CodeGraph MCP] No .codegraph/ at or above /proj: no default project, live sync disabled.'];
+    const result = await cg.explore('x');
+    expect(result.symbols).toEqual([]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('no .codegraph/ index'));
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining('output format may have changed'));
   });
 
   it('truncates explore output beyond 100k lines', async () => {

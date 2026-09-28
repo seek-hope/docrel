@@ -109,6 +109,10 @@ export function formatCheckMarkdown(report: CheckReport): string {
     lines.push('');
   }
 
+  lines.push('Next steps: run `doc-relay sync` to propagate code changes into the docs;');
+  lines.push('if a section is already accurate, acknowledge it with `doc-relay ack --doc <id>`.');
+  lines.push('');
+
   return lines.join('\n');
 }
 
