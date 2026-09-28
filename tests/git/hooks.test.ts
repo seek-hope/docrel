@@ -163,4 +163,91 @@ describe('installHooks', () => {
 
     expect(() => installHooks(tmpDir)).toThrow(/Cannot locate docrelay binary/);
   });
+
+  it('uses argv[1] directly when it resolves under an allowed prefix', () => {
+    process.argv[1] = fakeBin;
+
+    installHooks(tmpDir);
+
+    const preCommit = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'pre-commit'), 'utf-8');
+    expect(preCommit).toContain(fakeBin);
+    expect(preCommit).toContain('check --strict');
+  });
+
+  it('rejects an argv[1] path outside the allowed install prefixes', () => {
+    const outsideDir = path.join(tmpDir, 'fake-cli');
+    fs.mkdirSync(outsideDir, { recursive: true });
+    const outsideBin = path.join(outsideDir, 'cli.js');
+    fs.writeFileSync(outsideBin, '// not docrelay\n', 'utf-8');
+    process.argv[1] = outsideBin;
+
+    expect(() => installHooks(tmpDir)).toThrow(/Cannot locate docrelay binary.*unexpected path/);
+  });
+
+  it('rejects an argv[1] binary that fails --version', () => {
+    const brokenDir = path.join(tmpDir, '.npm', 'broken');
+    fs.mkdirSync(brokenDir, { recursive: true });
+    const brokenBin = path.join(brokenDir, 'docrelay');
+    fs.writeFileSync(brokenBin, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    process.argv[1] = brokenBin;
+
+    expect(() => installHooks(tmpDir)).toThrow(/Resolved docrelay binary.*does not appear to work/);
+  });
+
+  it('throws when which returns an empty result', () => {
+    const fakeWhich = path.join(binDir, 'which');
+    fs.writeFileSync(fakeWhich, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
+    expect(() => installHooks(tmpDir)).toThrow(/Cannot locate docrelay binary: docrelay not found on PATH/);
+  });
+
+  it('rejects a PATH-resolved binary outside the allowed install prefixes', () => {
+    const evilDir = path.join(tmpDir, 'evil');
+    fs.mkdirSync(evilDir, { recursive: true });
+    const evilBin = path.join(evilDir, 'docrelay');
+    fs.writeFileSync(evilBin, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+    const fakeWhich = path.join(binDir, 'which');
+    fs.writeFileSync(fakeWhich, `#!/bin/sh\necho "${evilBin}"\n`, { mode: 0o755 });
+
+    expect(() => installHooks(tmpDir)).toThrow(/Cannot locate docrelay binary.*unexpected path/);
+  });
+
+  it('rejects a PATH-resolved binary that fails --version', () => {
+    const brokenDir = path.join(tmpDir, '.npm', 'broken');
+    fs.mkdirSync(brokenDir, { recursive: true });
+    const brokenBin = path.join(brokenDir, 'docrelay');
+    fs.writeFileSync(brokenBin, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const fakeWhich = path.join(binDir, 'which');
+    fs.writeFileSync(fakeWhich, `#!/bin/sh\necho "${brokenBin}"\n`, { mode: 0o755 });
+
+    expect(() => installHooks(tmpDir)).toThrow(/Cannot locate docrelay binary.*does not appear to work/);
+  });
+
+  it('uses an in-root gitdir from a worktree .git file verbatim', () => {
+    // Some worktree/submodule layouts keep the real gitdir INSIDE the project
+    // root; in that case it is used directly instead of deriving the main .git.
+    const wt = path.join(tmpDir, 'wt-inner');
+    fs.mkdirSync(wt, { recursive: true });
+    fs.writeFileSync(path.join(wt, '.git'), 'gitdir: inner-git\n', 'utf-8');
+
+    installHooks(wt);
+
+    expect(fs.existsSync(path.join(wt, 'inner-git', 'hooks', 'pre-commit'))).toBe(true);
+  });
+
+  it('throws a clear error when the hooks directory cannot be created', () => {
+    // .git/hooks exists as a plain file — mkdirSync cannot create a dir there.
+    fs.writeFileSync(path.join(tmpDir, '.git', 'hooks'), 'not a directory\n', 'utf-8');
+
+    expect(() => installHooks(tmpDir)).toThrow(/Failed to create hooks directory/);
+  });
+
+  it('rolls back partially installed hooks when a later hook write fails', () => {
+    // post-commit exists as a DIRECTORY: with force=true the write fails with
+    // EISDIR after pre-commit was already written — the rollback must remove it.
+    fs.mkdirSync(path.join(tmpDir, '.git', 'hooks', 'post-commit'), { recursive: true });
+
+    expect(() => installHooks(tmpDir, true)).toThrow(/Removed 1 partially installed hooks/);
+    expect(fs.existsSync(path.join(tmpDir, '.git', 'hooks', 'pre-commit'))).toBe(false);
+  });
 });
