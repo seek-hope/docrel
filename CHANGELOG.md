@@ -14,15 +14,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 59/50/69/62) enforced in CI.
+  (currently 62/51/74/65) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
 - Type-aware linting (typescript-eslint `recommendedTypeChecked`) and a
   `npm run typecheck` gate covering src and tests; both wired into CI.
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
-  `git/hooks`, `extractors/codegraph`, `sync/generated`, and sync-engine
-  strategy branches (94 new tests, 368 total):
+  `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
+  and sync-engine strategy branches (107 new tests, 404 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -32,7 +32,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   OpenAPI/TypeDoc detection heuristics, and engine coverage for
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone
   auto_update failure modes, changelog applied/failed accounting, and
-  syncAllStale dedup).
+  syncAllStale dedup, and the codegraph client's tool-call plumbing
+  (explore/impact/search/signature extraction, liveness-failure reconnect,
+  preflight binary validation matrix)).
 - In-process MCP server tests (`tests/integration/mcp-server.test.ts`):
   drives the real server through the official SDK client — tool listing,
   status/check/scan/link/confirm/review round-trips, check file-filter
