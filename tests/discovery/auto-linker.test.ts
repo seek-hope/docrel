@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type Database from 'better-sqlite3';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol, type SymbolRow } from '../../src/db/symbols.js';
@@ -444,5 +445,173 @@ describe('ingestDocSections disambiguation', () => {
     const result = ingestDocSections(db, [section]);
     expect(result.newMappings).toBe(0);
     expect(listAllMappings(db)).toHaveLength(0);
+  });
+});
+
+describe('autoLink edge paths', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-autolink-edge-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeSymbol(name: string, kind: SymbolRow['kind'] = 'function', location: string = 'src/index.ts:42'): SymbolRow {
+    const symId = symbolId('typescript', `${location}::${name}`, kind);
+    return upsertSymbol(db, { id: symId, name, kind, location, signature: 'abc' });
+  }
+
+  function makeDocSection(
+    file: string,
+    anchor: string,
+    content: string,
+    codeRefs: ParsedDocSection['codeRefs'] = [],
+  ): ParsedDocSection {
+    const section: ParsedDocSection = { file, anchor, content, codeRefs };
+    upsertDocSection(db, { id: docSectionId(file, anchor), file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
+    return section;
+  }
+
+  it('counts sub-0.5 bodytext matches as low confidence', () => {
+    const sym = makeSymbol('login');
+    const section = makeDocSection('docs/guide.md', 'Unrelated', 'prose', [
+      { symbolName: 'login', refType: 'bodytext', confidence: 0.4, lineInDoc: 1 },
+    ]);
+
+    const result = autoLink(db, [sym], [section], 0.4);
+
+    expect(result.lowConfidence).toBe(1);
+    expect(result.totalMatched).toBe(1);
+  });
+
+  it('treats snake_case and leading-underscore names as code-like in body text', () => {
+    const snake = makeSymbol('get_user');
+    const priv = makeSymbol('_privateFn');
+    // Multi-char headings avoid degenerate single-char fuzzy-substring hits.
+    const s1 = makeDocSection('docs/a.md', 'Intro', 'call get_user here');
+    const s2 = makeDocSection('docs/b.md', 'Usage', '_privateFn does things');
+
+    const result = autoLink(db, [snake, priv], [s1, s2], 0.4);
+
+    expect(result.totalMatched).toBe(2);
+    expect(result.lowConfidence).toBe(2);
+    expect(listAllMappings(db)).toHaveLength(2);
+  });
+
+  it('silently skips mappings whose doc section is missing (FK constraint)', () => {
+    const sym = makeSymbol('login');
+    // Deliberately NOT upserted into doc_sections — the INSERT violates the FK.
+    const section: ParsedDocSection = { file: 'docs/ghost.md', anchor: 'Login', content: 'x', codeRefs: [] };
+
+    const result = autoLink(db, [sym], [section]);
+
+    expect(result.totalMatched).toBe(0);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns when mapping creation fails with a non-constraint error', () => {
+    const sym = makeSymbol('login');
+    const section = makeDocSection('docs/guide.md', 'Login', 'x');
+    const proxy = {
+      prepare(sql: string) {
+        if (sql.includes('INSERT INTO mappings')) {
+          return { get: () => { throw new Error('disk I/O error'); } };
+        }
+        return db.prepare(sql);
+      },
+    } as unknown as Database.Database;
+
+    const result = autoLink(proxy, [sym], [section]);
+
+    expect(result.totalMatched).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith('DocRelay: autoLink createMapping failed:', 'disk I/O error');
+  });
+
+  it('returns partial results when pass 1 times out', () => {
+    const sym = makeSymbol('login');
+    const section = makeDocSection('docs/guide.md', 'Login', 'x');
+    let calls = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => (calls++ === 0 ? 1_000 : 100_000));
+
+    const result = autoLink(db, [sym], [section]);
+
+    expect(result.totalMatched).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('timed out after 30000ms during pass 1'));
+  });
+
+  it('returns partial results when pass 2 times out', () => {
+    const sym = makeSymbol('noMatchAnywhere');
+    const section = makeDocSection('docs/guide.md', 'Other', 'unrelated content');
+    let calls = 0;
+    // start, pass-1 timedOut (false), pass-2 timedOut (true)
+    vi.spyOn(Date, 'now').mockImplementation(() => (calls++ < 2 ? 1_000 : 100_000));
+
+    const result = autoLink(db, [sym], [section]);
+
+    expect(result.totalMatched).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('timed out after 30000ms during pass 2'));
+  });
+
+  it('rejects an out-of-range minConfidence', () => {
+    expect(() => autoLink(db, [], [], 1.5)).toThrow(/minConfidence must be between 0.0 and 1.0/);
+    expect(() => autoLink(db, [], [], -0.1)).toThrow(/minConfidence must be between 0.0 and 1.0/);
+  });
+});
+
+describe('ingestDocSections edge paths', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-ingest-edge-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('does not link same-named symbols when the stem match is ambiguous', () => {
+    const a = upsertSymbol(db, { id: symbolId('ts', 'src/auth/login.ts::login', 'function'), name: 'login', kind: 'function', location: 'src/auth/login.ts:1' });
+    upsertSymbol(db, { id: symbolId('ts', 'src/api/login.ts::login', 'function'), name: 'login', kind: 'function', location: 'src/api/login.ts:1' });
+    void a;
+    const sections: ParsedDocSection[] = [{
+      file: 'docs/login.md',
+      anchor: 'Guide',
+      content: 'See `login`.',
+      codeRefs: [{ symbolName: 'login', refType: 'backtick', confidence: 0.9, lineInDoc: 1 }],
+    }];
+
+    ingestDocSections(db, sections);
+
+    // Both candidates own the 'login' stem → AMBIGUOUS → no mapping.
+    expect(listAllMappings(db)).toHaveLength(0);
+  });
+
+  it('skips malformed sections with a warning instead of aborting the batch', () => {
+    const good: ParsedDocSection = { file: 'docs/good.md', anchor: 'Good', content: 'ok', codeRefs: [] };
+    const bad: ParsedDocSection = { file: '', anchor: 'Bad', content: 'no file', codeRefs: [] };
+
+    const result = ingestDocSections(db, [bad, good]);
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('skipping malformed section'));
+    expect(result.newDocSections).toBe(1);
   });
 });
