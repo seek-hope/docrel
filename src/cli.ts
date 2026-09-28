@@ -38,7 +38,9 @@ const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
 function errMsg(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e ?? 'unknown error');
+  // Non-Error throws stringify to '[object Object]' — treat anything that is
+  // not an Error or a string as unknown rather than emitting a useless blob.
+  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : 'unknown error';
   // Sanitize project root paths from error messages
   return raw
     .replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>')

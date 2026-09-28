@@ -1,0 +1,15 @@
+{
+  // Separate project for tests: the root tsconfig builds src/ → dist/ and
+  // intentionally excludes tests. This config gives tests full type-checking
+  // (and powers typescript-eslint's typed rules) without emitting anything.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["./**/*.ts", "../src/**/*.ts"],
+  "exclude": ["../node_modules", "../dist"]
+}

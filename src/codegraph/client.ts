@@ -6,6 +6,13 @@ import { validateCommandSafety } from '../utils/command.js';
 const CONNECT_TIMEOUT_MS = 5000;
 const TOOL_CALL_TIMEOUT_MS = 300_000; // 5 minutes — large codebases can take time
 
+/** Rethrow helper: `only-throw-error` cannot prove a closure-mutated variable
+ *  is an Error at the throw site, so the throw is centralized here where the
+ *  parameter type is unambiguous. */
+function rethrow(err: Error): never {
+  throw err;
+}
+
 
 export interface ExploreResult {
   symbols: Array<{
@@ -252,7 +259,7 @@ export class CodegraphClient {
     let connectErr: Error | null = null;
     try {
       const connectPromise = client.connect(transport).catch((e) => {
-        connectErr = e as Error;
+        connectErr = e instanceof Error ? e : new Error(String(e));
       });
       let timer: NodeJS.Timeout;
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -266,7 +273,7 @@ export class CodegraphClient {
         clearTimeout(timer!);
       }
       // If connect failed (not a timeout), surface the actual error
-      if (connectErr) throw connectErr;
+      if (connectErr) rethrow(connectErr);
       // If a newer generation started while we were connecting, discard
       if (gen !== this.connectGeneration) {
         try { await client.close(); } catch {}
@@ -279,7 +286,7 @@ export class CodegraphClient {
       // surface it instead of the timeout error that won the race.
       // On a dual failure (timeout fires just as connect fails), the actual
       // connection error is more useful for diagnosis than the generic timeout.
-      if (connectErr) throw connectErr;
+      if (connectErr) rethrow(connectErr);
       throw err;
     }
   }
@@ -298,7 +305,7 @@ export class CodegraphClient {
       const out = execFileSync(cmd, ['--version'], { encoding: 'utf-8', timeout: 5000, stdio: 'pipe' }).trim();
       const v = out.match(/(\d+\.\d+\.\d+)/);
       this._cachedVersion = v ? v[1] : out;
-      return this._cachedVersion!;
+      return this._cachedVersion;
     } catch {
       return 'unknown';
     }
@@ -647,7 +654,7 @@ export class CodegraphClient {
       }
       const sorted = [...codeLines.keys()].sort((a, b) => a - b);
       for (const n of sorted) {
-        if (re!.test(codeLines.get(n)!)) return n;
+        if (re.test(codeLines.get(n)!)) return n;
       }
       return 0;
     };

@@ -41,7 +41,7 @@ export function docrelayLink(
         return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:m };
       } catch (innerErr: any) {
         console.warn('DocRelay: diagnostic query during constraint handling failed:', innerErr instanceof Error ? innerErr.message : innerErr);
-        return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:`Constraint violation (diagnostic failed: ${(innerErr as any)?.code ?? 'unknown'})` };
+        return { action:'error', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, message:`Constraint violation (diagnostic failed: ${(innerErr)?.code ?? 'unknown'})` };
       }
     }
     console.error(`DocRelay: docrelayLink ${p.action} failed for symbol=${p.symbol_id} doc=${p.doc_id}:`, err instanceof Error ? err.message : err);

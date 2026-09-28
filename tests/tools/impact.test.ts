@@ -28,7 +28,7 @@ describe('docrelayImpact', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('finds affected docs when a linked symbol file changes', async () => {
+  it('finds affected docs when a linked symbol file changes', () => {
     const symId = symbolId('ts', 'src/auth.ts::login', 'function');
     const docId = docSectionId('docs/api.md', 'auth');
 
@@ -36,7 +36,7 @@ describe('docrelayImpact', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'describes' });
 
-    const impact = await docrelayImpact(db, ['src/auth.ts']);
+    const impact = docrelayImpact(db, ['src/auth.ts']);
     expect(impact.affectedDocs).toHaveLength(1);
     expect(impact.affectedDocs[0].file).toBe('docs/api.md');
   });

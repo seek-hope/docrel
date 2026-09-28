@@ -12,6 +12,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 const testConfig: DocRelayConfig = {
+  version: 1,
   project: 'test',
   doc_dirs: ['docs'],
   code_dirs: ['src'],

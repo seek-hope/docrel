@@ -24,6 +24,7 @@ vi.mock('../../src/sync/generated.js', () => ({
 }));
 
 const autoConfig: DocRelayConfig = {
+  version: 1,
   project: 'test',
   doc_dirs: ['docs'],
   code_dirs: ['src'],

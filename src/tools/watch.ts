@@ -138,10 +138,13 @@ export async function startWatch(
 
       // Debounce by directory group — events in different groups don't cancel each other
       if (debounceTimers.has(key)) {
-        clearTimeout(debounceTimers.get(key)!);
+        clearTimeout(debounceTimers.get(key));
       }
 
-      debounceTimers.set(key, setTimeout(async () => {
+      // The debounced scan runs as a fire-and-forget async task; its body is
+      // fully wrapped in try/catch (errors are recorded in watchStatus), so
+      // the floating promise can never reject unhandled.
+      debounceTimers.set(key, setTimeout(() => { void (async () => {
         debounceTimers.delete(key);
         watchStatus.eventsProcessed++;
         watchStatus.lastEventAt = new Date().toISOString();
@@ -180,7 +183,7 @@ export async function startWatch(
             }));
           } catch { /* best-effort marker */ }
         }
-      }, debounceMs));
+      })(); }, debounceMs));
     };
 
     watcher.on('add', (p: string) => handleChange('add', p));
@@ -257,7 +260,7 @@ export async function startWatch(
     console.log('DocRelay watch is running. Press Ctrl+C to stop.');
 
     return () => {
-      watcher.close();
+      void watcher.close();
       for (const t of debounceTimers.values()) clearTimeout(t);
       // Remove PID file on clean shutdown
       if (pidFile) {

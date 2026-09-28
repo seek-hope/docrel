@@ -15,6 +15,7 @@ import os from 'node:os';
 
 // Strategies used to exercise the standalone auto_update rewrite.
 const autoConfig: DocRelayConfig = {
+  version: 1,
   project: 'test',
   doc_dirs: ['docs'],
   code_dirs: ['src'],

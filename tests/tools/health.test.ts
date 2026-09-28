@@ -22,9 +22,9 @@ describe('health last_scan check', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  function lastScanMessage(): string {
+  function lastScanMessage(): Promise<string> {
     // docrelayHealth needs an availability probe; supply a trivial one.
-    return docrelayHealth(db, tmpDir, async () => false, '0.0.0-test')
+    return docrelayHealth(db, tmpDir, () => Promise.resolve(false), '0.0.0-test')
       .then((r) => r.checks.find((c) => c.name === 'last_scan')!.message);
   }
 

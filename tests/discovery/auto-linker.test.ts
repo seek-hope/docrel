@@ -398,7 +398,7 @@ describe('ingestDocSections disambiguation', () => {
   }
 
   function makeSection(file: string, anchor: string, content: string, refs: ParsedDocSection['codeRefs']): ParsedDocSection {
-    const section = { file, anchor, content, codeRefs: refs } as ParsedDocSection;
+    const section = { file, anchor, content, codeRefs: refs };
     const id = docSectionId(file, anchor);
     upsertDocSection(db, { id, file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
     return section;

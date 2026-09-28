@@ -388,7 +388,7 @@ server.tool(
   async ({ agent, dryRun }) => {
     try {
       const detected = detectAgent();
-      const agentKind: AgentKind | undefined = agent as AgentKind | undefined;
+      const agentKind: AgentKind | undefined = agent;
       const targetAgent = agentKind ?? detected.kind;
       const result = await integrate(projectRoot, targetAgent, dryRun ?? false);
 
@@ -562,21 +562,21 @@ async function shutdown(code: number = 0): Promise<void> {
   setTimeout(() => { process.exit(exitCode); }, 500).unref();
 }
 
-process.on('SIGINT', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
+process.on('SIGINT', () => { void shutdown(0); });
+process.on('SIGTERM', () => { void shutdown(0); });
 process.on('uncaughtException', (err) => {
   console.error('DocRelay: uncaught exception:', err instanceof Error ? err.message : err);
   if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
     console.error('DocRelay: uncaught exception (debug stack):', err.stack);
   }
-  shutdown(1);
+  void shutdown(1);
 });
 process.on('unhandledRejection', (reason) => {
   console.error('DocRelay: unhandled rejection:', reason instanceof Error ? reason.message : reason);
   if (DOCRELAY_DEBUG && reason instanceof Error && reason.stack) {
     console.error('DocRelay: unhandled rejection (debug stack):', reason.stack);
   }
-  shutdown(1);
+  void shutdown(1);
 });
 
 async function main() {
@@ -585,10 +585,10 @@ async function main() {
   console.error('DocRelay MCP Server running on stdio');
 }
 
-main().catch((err) => {
+void main().catch((err) => {
   console.error('Fatal error:', err instanceof Error ? err.message : err);
   if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
     console.error('Fatal error (debug stack):', err.stack);
   }
-  shutdown(1).then(() => process.exit(1));
+  void shutdown(1).then(() => process.exit(1));
 });

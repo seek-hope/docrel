@@ -27,7 +27,7 @@ function makeConfig(projectRoot: string): DocRelayConfig {
     doc_dirs: [],
     code_dirs: ['src'],
     strategies: { inline: 'auto_update', standalone: 'auto_update', generated: 'auto_update', architecture: 'mark_stale' },
-  } as DocRelayConfig;
+  };
 }
 
 function findSymbolId(db: ReturnType<typeof getDb>, report: Awaited<ReturnType<typeof scanProject>>, name: string): string {

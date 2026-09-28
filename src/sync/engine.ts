@@ -483,7 +483,10 @@ export async function syncSymbol(
         }
 
         default:
-          result.errors.push(`Unknown doc_type '${doc.doc_type}' for doc ${doc.id} — cannot sync`);
+          // TS narrows doc_type to `never` here because the union looks
+          // exhausted — but DB rows are external input and may predate the
+          // current union, so this branch is genuinely reachable at runtime.
+          result.errors.push(`Unknown doc_type '${String(doc.doc_type)}' for doc ${doc.id} — cannot sync`);
       }
     } catch (err: any) {
       // Log the error details for server-side diagnosis, but keep the

@@ -131,7 +131,7 @@ describe('core closure: signature change, stable IDs, gc, multi-line signatures'
       expect(hello2).toBe(hello);
 
       // Still the same DB row (mapping/state preserved) — only one symbol row.
-      expect(db.prepare("SELECT COUNT(*) AS c FROM symbols WHERE name = 'hello'").get()!.c).toBe(1);
+      expect((db.prepare("SELECT COUNT(*) AS c FROM symbols WHERE name = 'hello'").get() as { c: number }).c).toBe(1);
     });
   });
 
@@ -152,7 +152,7 @@ describe('core closure: signature change, stable IDs, gc, multi-line signatures'
       const extractor = new BuiltinExtractor();
       const report1 = await scanProject(extractor, db, config, tmpDir, true);
       expect(report1.scannedIds).toHaveLength(3);
-      const rowCount = db.prepare("SELECT COUNT(*) AS c FROM symbols WHERE name = 'util'").get()!;
+      const rowCount = db.prepare("SELECT COUNT(*) AS c FROM symbols WHERE name = 'util'").get()! as { c: number };
       expect(rowCount.c).toBe(3);
     });
   });

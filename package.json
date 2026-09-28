@@ -41,7 +41,8 @@
     "test:watch": "vitest",
     "lint": "eslint src/ tests/",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc --noEmit -p tests/tsconfig.json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Added
+- Type-aware linting (typescript-eslint `recommendedTypeChecked`) and a
+  `npm run typecheck` gate covering src and tests; both wired into CI.
 - `doc-relay mcp` CLI subcommand that starts the MCP server on stdio, so the
   published package can be launched directly from agent MCP configs
   (`npx -y doc-relay mcp`). Previously the MCP server could only be started
@@ -26,6 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- Floating/misused promises in MCP-server signal handlers and the watch
+  daemon's debounce loop; non-Error values could be rethrown by the codegraph
+  client; `errMsg` emitted `[object Object]` for non-Error throws.
 - `scan` no longer reports configured-but-nonexistent doc paths (e.g. the
   default `docs` directory) as `failedFiles` — they are now listed separately
   as `skippedMissing`, so real parse failures stay visible.
