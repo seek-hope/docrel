@@ -97,6 +97,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   equal — the same SQL-level convention `upsertDocSection` uses for
   stale/draft timestamps. The scanner's caller-side skip remains the
   hot path; this closes the gap for the function's other callers.
+- User-facing command suggestions now consistently use the canonical
+  `doc-relay` binary name (README and npm package convention) instead of
+  the `docrelay` compatibility alias — init next-step hints, health and
+  error-code messages, watch/review output, generated git hooks, MCP
+  tool hints, and the agent-integration snippets (AGENTS.md, CLAUDE.md,
+  Cursor/Windsurf rules) all agree. Both names remain registered in
+  `package.json` `bin`, so existing muscle memory keeps working.
+- README, getting-started, and mcp-integration docs no longer describe
+  `health` as an 8-point check — it has been 13 checks since the
+  diagnostics extension.
 
 ### Added
 - `review` markdown output now ends with a **Suggested actions** section
