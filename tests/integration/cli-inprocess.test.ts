@@ -21,6 +21,28 @@ import { createMapping } from '../../src/db/mappings.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import { DOCRELAY_VERSION } from '../../src/version.js';
 
+/* The mcp command boots the server on a mocked stdio transport. */
+vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+  StdioServerTransport: class {
+    onmessage: unknown;
+    onclose: unknown;
+    onerror: unknown;
+    async start(): Promise<void> { /* no real stdio */ }
+    async close(): Promise<void> {}
+    async send(): Promise<void> {}
+  },
+}));
+
+/* restore/reset prompt via readline — answer is controllable per test. */
+const rlAnswer = vi.hoisted(() => ({ current: 'no' }));
+vi.mock('node:readline', () => {
+  const createInterface = () => ({
+    question: (_q: string, cb: (a: string) => void) => cb(rlAnswer.current),
+    close: () => {},
+  });
+  return { default: { createInterface }, createInterface };
+});
+
 class ExitSignal extends Error {
   constructor(public code: number) { super(`process.exit(${code})`); }
 }
@@ -447,5 +469,53 @@ describe('CLI in-process: diff and history formats', () => {
     seedProject();
     expect(await runCli(['config'])).toBe(0);
     expect(out()).toContain('doc_dirs');
+  });
+});
+
+describe('CLI in-process: mcp / restore prompts / integrate dry-run', () => {
+  it('mcp boots the server on the mocked stdio transport', async () => {
+    seedProject();
+    expect(await runCli(['mcp'])).toBe(0);
+    expect(errOut()).toContain('DocRelay MCP Server running on stdio');
+  });
+
+  it('restore cancels when the confirmation is not "yes"', async () => {
+    seedProject();
+    seedDb();
+    expect(await runCli(['backup'])).toBe(0);
+    const backupFile = logs.find((l) => l.includes('Backed up to'))?.replace('Backed up to ', '').trim();
+    rlAnswer.current = 'no';
+    await runCli(['restore', backupFile ?? '']);
+    // The harness's mocked process.exit(0) throws, and the command's own
+    // catch converts that to a failure exit — so the exit code is not
+    // meaningful here. What matters: the prompt ran and nothing restored.
+    expect(errOut()).toContain('Restore cancelled.');
+    expect(out()).not.toContain('Restored');
+  });
+
+  it('restore proceeds when the confirmation is "yes"', async () => {
+    seedProject();
+    seedDb();
+    expect(await runCli(['backup'])).toBe(0);
+    const backupFile = logs.find((l) => l.includes('Backed up to'))?.replace('Backed up to ', '').trim();
+    rlAnswer.current = 'yes';
+    expect(await runCli(['restore', backupFile ?? ''])).toBe(0);
+  });
+
+  it('dry-run integrate reports an already-configured agent (opencode)', async () => {
+    seedProject();
+    fs.writeFileSync(path.join(tmpDir, 'OPENCODE.md'), '# Rules\n\n## DocRelay — Code-Documentation Sync\n\nconfigured\n');
+    fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { docrelay: { command: 'doc-relay', args: ['mcp'] } } }));
+    expect(await runCli(['integrate', '--agent', 'opencode', '--dry-run'])).toBe(0);
+    expect(out()).toContain('No changes needed');
+  });
+
+  it('dry-run integrate reports an already-configured agent (cursor)', async () => {
+    seedProject();
+    fs.mkdirSync(path.join(tmpDir, '.cursor', 'rules'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { docrelay: { command: 'doc-relay', args: ['mcp'] } } }));
+    expect(await runCli(['integrate', '--agent', 'cursor', '--dry-run'])).toBe(0);
+    // .mcp.json is already configured — it must not be listed as a change.
+    expect(out()).not.toContain('.mcp.json');
   });
 });

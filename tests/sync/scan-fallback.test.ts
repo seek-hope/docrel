@@ -65,6 +65,17 @@ describe('scan fallback decision (shouldFallbackToBuiltin)', () => {
     expect(hasSourceFiles(['src'], tmpDir)).toBe(true);
   });
 
+  it('dedupes directories reached through multiple symlinks', () => {
+    const real = path.join(tmpDir, 'src', 'real');
+    fs.mkdirSync(real, { recursive: true });
+    fs.writeFileSync(path.join(real, 'x.ts'), 'export const x = 1;\n');
+    fs.symlinkSync('real', path.join(tmpDir, 'src', 'l1'), 'dir');
+    fs.symlinkSync('real', path.join(tmpDir, 'src', 'l2'), 'dir');
+    // l1/l2 resolve to the already-seen real dir — the scan must not
+    // descend twice (nor hang), and still finds the source file.
+    expect(shouldFallbackToBuiltin(0, 'codegraph', ['src'], tmpDir)).toBe(true);
+  });
+
   it('tolerates symlink loops without hanging', () => {
     fs.mkdirSync(path.join(tmpDir, 'src', 'sub'), { recursive: true });
     fs.symlinkSync(path.join(tmpDir, 'src'), path.join(tmpDir, 'src', 'sub', 'loop'), 'dir');

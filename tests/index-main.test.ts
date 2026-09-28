@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { closeAllDbs } from '../src/db/connection.js';
+import { fileURLToPath } from 'node:url';
 
 class ExitSignal extends Error {
   constructor(public code: number) { super(`process.exit(${code})`); }
@@ -29,6 +30,7 @@ vi.mock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
 
 let tmpDir: string;
 let errs: string[];
+const savedArgv = [...process.argv];
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-idxmain-'));
@@ -53,8 +55,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.argv = savedArgv;
   delete process.env.DOCRELAY_PROJECT_ROOT;
   delete process.env.DOCRELAY_NO_UPDATE_CHECK;
+  delete process.env.DOCRELAY_DEBUG;
   process.exitCode = undefined;
   vi.restoreAllMocks();
   closeAllDbs();
@@ -156,5 +160,39 @@ describe('index main() process wiring', () => {
     const idx = await importIndex();
     await expect(idx.main()).rejects.toThrow('process.exit(1)');
     expect(errs.join('\n')).toContain('Failed to initialize DocRelay');
+  });
+});
+
+describe('index auto-start (invoked directly)', () => {
+  const selfIndex = fileURLToPath(new URL('../src/index.ts', import.meta.url));
+
+  it('starts main() automatically when executed directly', async () => {
+    process.argv[1] = selfIndex;
+    await importIndex();
+    await vi.waitFor(() => {
+      expect(errs.join('\n')).toContain('DocRelay MCP Server running on stdio');
+    }, { timeout: 5000 });
+  });
+
+  it('reports a fatal error and sets exit code 1 when auto-start fails', async () => {
+    fs.mkdirSync(path.join(tmpDir, '.git', 'docrelay.db'), { recursive: true });
+    process.argv[1] = selfIndex;
+    await importIndex();
+    await vi.waitFor(() => {
+      expect(errs.join('\n')).toContain('Fatal error:');
+    }, { timeout: 5000 });
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe('index main() debug logging', () => {
+  it('logs the rejection stack when DOCRELAY_DEBUG is set', async () => {
+    process.env.DOCRELAY_DEBUG = '1';
+    const idx = await importIndex();
+    const rejBefore = listenersOf('unhandledRejection');
+    await idx.main();
+    await fire(newListener('unhandledRejection', rejBefore)!, new Error('async boom'));
+    expect(errs.join('\n')).toContain('debug stack');
+    expect(process.exitCode).toBe(1);
   });
 });
