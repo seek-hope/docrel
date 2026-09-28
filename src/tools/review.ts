@@ -456,7 +456,29 @@ export function formatReview(report: ReviewReport): string {
       report.skippedFiles.length === 0) {
     lines.push('√ All clear — no issues found.');
     lines.push('');
+    return lines.join('\n');
   }
+
+  // Close the loop: every issue category names the exact command that acts
+  // on it, so the report is actionable without a docs lookup.
+  lines.push('### Suggested actions');
+  lines.push('');
+  if (report.unlinkedSymbols.length > 0) {
+    lines.push('- Unlinked symbols: re-run `doc-relay scan` (auto-link), or map pairs manually with `doc-relay link create --symbol <id> --doc <id>`.');
+  }
+  if (report.impliedReferences.length > 0) {
+    lines.push('- Implied references: inspect with `doc-relay review --side-by-side`, then create mappings with `doc-relay link create --symbol <id> --doc <id>`.');
+  }
+  if (report.unreviewedMappings.length > 0) {
+    lines.push('- Unreviewed mappings: inspect with `doc-relay review --side-by-side`, then `doc-relay confirm` / `doc-relay reject` (add `--all` for bulk).');
+  }
+  if (report.orphanedSections.length > 0) {
+    lines.push('- Orphaned sections: link them with `doc-relay link create`, or delete stale rows with `doc-relay review --cleanup`.');
+  }
+  if (report.skippedFiles.length > 0) {
+    lines.push('- Skipped files: fix read permissions, or remove them from `doc_dirs` in `.docrelay/config.yaml`.');
+  }
+  lines.push('');
 
   return lines.join('\n');
 }

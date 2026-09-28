@@ -295,6 +295,41 @@ describe('formatReview / formatReviewDetailed', () => {
     expect(out).toContain('docs/gone.md (ENOENT)');
   });
 
+  it('appends suggested actions naming the exact command for each issue category', () => {
+    const report = docrelayReview(db, tmpDir);
+    report.unlinkedSymbols.push({ id: 'a', name: 'Lonely', kind: 'function', location: 'src/x.ts:1' });
+    report.impliedReferences.push({ symbolName: 'Mentioned', docFile: 'docs/a.md', docAnchor: 'A', mentionLine: 3, mentionText: '`Mentioned`' });
+    report.unreviewedMappings.push({ symbolId: 'a', symbolName: 'Auto', docId: 'd', docFile: 'docs/a.md', docAnchor: 'A', reviewStatus: 'auto', relType: 'describes' });
+    report.orphanedSections.push({ id: 'd', file: 'docs/a.md', anchor: 'A' });
+    report.skippedFiles.push('docs/gone.md (ENOENT)');
+
+    const out = formatReview(report);
+    expect(out).toContain('### Suggested actions');
+    expect(out).toContain('doc-relay scan');
+    expect(out).toContain('doc-relay link create');
+    expect(out).toContain('doc-relay confirm');
+    expect(out).toContain('doc-relay review --cleanup');
+    expect(out).toContain('doc_dirs');
+    expect(out).not.toContain('All clear');
+  });
+
+  it('omits suggested actions when the report is all-clear', () => {
+    const out = formatReview(docrelayReview(db, tmpDir));
+    expect(out).toContain('All clear');
+    expect(out).not.toContain('Suggested actions');
+  });
+
+  it('only suggests actions for categories that have issues', () => {
+    const report = docrelayReview(db, tmpDir);
+    report.unreviewedMappings.push({ symbolId: 'a', symbolName: 'Auto', docId: 'd', docFile: 'docs/a.md', docAnchor: 'A', reviewStatus: 'auto', relType: 'describes' });
+
+    const out = formatReview(report);
+    const actions = out.slice(out.indexOf('### Suggested actions'));
+    expect(actions).toContain('doc-relay confirm');
+    expect(actions).not.toContain('review --cleanup');
+    expect(actions).not.toContain('doc-relay scan');
+  });
+
   it('renders detailed review with source/doc snippets and confirm/reject hints', () => {
     fs.writeFileSync(
       path.join(tmpDir, 'src', 'svc.ts'),
