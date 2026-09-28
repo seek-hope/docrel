@@ -60,6 +60,9 @@ describe('docrelayStatus', () => {
       syncPercentage: 0, pendingChanges: 0, lastScan: null,
       error: 'Database query error — check server logs for details',
     });
-    expect(errSpy).toHaveBeenCalledWith('docrelayStatus failed:', expect.any(Error));
+    // stderr receives the message only (no raw Error/stack) unless
+    // DOCRELAY_DEBUG is set — the MCP-facing payload stays generic.
+    expect(errSpy).toHaveBeenCalledWith('DocRelay: docrelayStatus failed:', 'db.transaction is not a function');
+    expect(errSpy).not.toHaveBeenCalledWith(expect.anything(), expect.any(Error));
   });
 });

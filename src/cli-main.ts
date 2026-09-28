@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +16,7 @@ import { exportMappingsJson } from './db/mappings.js';
 import { readLastScanAt } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCRELAY_VERSION } from './version.js';
+import { DOCRELAY_DEBUG } from './utils/error-log.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
@@ -36,10 +37,16 @@ const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 // Thin project-bound wrappers around the testable helpers in cli-support.ts.
 const errMsg = (e: unknown): string => errMsgSupport(e, projectRoot);
 
+/** True once an intentional exit() was requested — in the test harness the
+ *  mocked process.exit throws, and the top-level parseAsync catch uses this
+ *  flag to rethrow that signal instead of treating it as a crash. */
+let exitRequested = false;
+
 /** Exit with database cleanup — ensures WAL checkpointing completes.
  *  The OS reaps the CodeGraph MCP child process on parent exit;
  *  error-path exits don't need an explicit async close. */
 function exit(code: number): never {
+  exitRequested = true;
   try { closeAllDbs(); } catch { /* best effort */ }
   process.exit(code);
 }
@@ -107,6 +114,11 @@ program
   .name('docrelay')
   .description('Code-Documentation Relational Sync System')
   .version(DOCRELAY_VERSION);
+
+// Route commander's own exits (--help, --version, usage errors) through the
+// top-level catch as CommanderError instead of direct process.exit calls,
+// so the crash safety net can tell intended exits apart from real failures.
+program.exitOverride();
 
 program
   .command('init')
@@ -984,8 +996,8 @@ program
       // npm stderr may contain absolute filesystem paths (global install
       // prefixes, npm config paths, etc.). Log the full output only when
       // DOCRELAY_DEBUG is enabled; otherwise show a generic message.
-      if (process.env.DOCRELAY_DEBUG === '1' || process.env.DOCRELAY_DEBUG === 'true') {
-        console.error(`Update failed: ${err.stderr ?? err.message}`);
+      if (DOCRELAY_DEBUG) {
+        console.error(`Update failed: ${(err as { stderr?: string }).stderr ?? errMsg(err)}`);
       } else {
         console.error('Update failed: npm install returned an error. Run with DOCRELAY_DEBUG=1 for details.');
       }
@@ -1316,7 +1328,26 @@ program
 // the CodeGraph MCP connection so the event loop can drain and the process
 // exits cleanly. Without this, the stdio transport keeps the process alive
 // indefinitely after every CLI command.
-await program.parseAsync();
+try {
+  await program.parseAsync();
+} catch (err) {
+  // The test harness mocks process.exit to throw — rethrow that signal so
+  // the harness reads the intended exit code. In production process.exit
+  // never returns, so this branch only fires in tests.
+  if (exitRequested) throw err;
+  // CommanderError covers commander's own exits (help/version/usage
+  // errors): the output was already printed; just exit with its code.
+  if (err instanceof CommanderError) exit(err.exitCode);
+  // Last-resort crash surface: every command action has its own try/catch,
+  // so reaching here means a bug or an unexpected environment failure.
+  // Print one sanitized line (stack behind DOCRELAY_DEBUG) instead of
+  // Node's default unhandled-rejection dump.
+  console.error(`DocRelay: unexpected error: ${errMsg(err)}`);
+  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
+    console.error('DocRelay: unexpected error (debug stack):', err.stack);
+  }
+  exit(1);
+}
 if (mcpServerStarted) {
   // The MCP server owns the process lifetime from here on (it registers its
   // own signal handlers and shuts down cleanly on stdin close). Do not run

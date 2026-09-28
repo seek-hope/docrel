@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { logInternalError } from '../utils/error-log.js';
 import { assertDbOpen } from '../db/connection.js';
 
 export interface CheckReport {
@@ -59,7 +60,7 @@ export function docrelayCheck(db: Database.Database): CheckReport {
 
     return { passed, staleDocs, summary };
   } catch (err: any) {
-    console.error('docrelayCheck failed:', err);
+    logInternalError('docrelayCheck failed', err);
     // Database errors always indicate the check could not run — the result
     // is not trustworthy regardless of strict mode. Return passed: false
     // with a sanitized error message to prevent information disclosure.

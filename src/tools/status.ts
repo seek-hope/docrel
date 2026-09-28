@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { logInternalError } from '../utils/error-log.js';
 import { assertDbOpen } from '../db/connection.js';
 
 export interface StatusReport {
@@ -55,7 +56,7 @@ export function docrelayStatus(db: Database.Database): StatusReport {
       };
     })();
   } catch (err: any) {
-    console.error('docrelayStatus failed:', err);
+    logInternalError('docrelayStatus failed', err);
     return {
       totalSymbols: 0, linkedSymbols: 0, linkedPercentage: 0,
       syncedDocs: 0, staleDocs: 0, totalDocs: 0,

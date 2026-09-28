@@ -23,19 +23,15 @@ import { docrelayDiff } from './tools/diff.js';
 import { readLastScanAt } from './discovery/scanner.js';
 import { runDocsPipeline, scanWithFallback } from './cli-support.js';
 import type { DocsPipelineReport } from './cli-support.js';
+import { DOCRELAY_DEBUG, logInternalError } from './utils/error-log.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
 
-const DOCRELAY_DEBUG = process.env.DOCRELAY_DEBUG === '1' || process.env.DOCRELAY_DEBUG === 'true';
-
 /** Sanitize an error for MCP client responses. Logs the full error to stderr
  *  and returns a generic message that does not disclose internal paths or details. */
 function sanitizeError(err: unknown): string {
-  console.error('DocRelay MCP tool error:', err instanceof Error ? err.message : err);
-  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
-    console.error('DocRelay MCP tool error (debug stack):', err.stack);
-  }
+  logInternalError('MCP tool error', err);
   return 'Internal error — check server logs.';
 }
 
@@ -649,17 +645,11 @@ export async function main(): Promise<void> {
   process.on('SIGINT', () => { void shutdown(0, deps); });
   process.on('SIGTERM', () => { void shutdown(0, deps); });
   process.on('uncaughtException', (err) => {
-    console.error('DocRelay: uncaught exception:', err instanceof Error ? err.message : err);
-    if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
-      console.error('DocRelay: uncaught exception (debug stack):', err.stack);
-    }
+    logInternalError('uncaught exception', err);
     void shutdown(1, deps);
   });
   process.on('unhandledRejection', (reason) => {
-    console.error('DocRelay: unhandled rejection:', reason instanceof Error ? reason.message : reason);
-    if (DOCRELAY_DEBUG && reason instanceof Error && reason.stack) {
-      console.error('DocRelay: unhandled rejection (debug stack):', reason.stack);
-    }
+    logInternalError('unhandled rejection', reason);
     void shutdown(1, deps);
   });
 
@@ -675,10 +665,7 @@ const invokedDirectly = process.argv[1]
   && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (invokedDirectly) {
   void main().catch((err) => {
-    console.error('Fatal error:', err instanceof Error ? err.message : err);
-    if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
-      console.error('Fatal error (debug stack):', err.stack);
-    }
+    logInternalError('Fatal error', err);
     process.exitCode = 1;
   });
 }

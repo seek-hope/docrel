@@ -1,5 +1,6 @@
 // src/sync/engine.ts
 import { cachedStmt } from '../db/statements.js';
+import { logInternalError } from '../utils/error-log.js';
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
@@ -540,7 +541,7 @@ export async function syncSymbol(
     }
   }
   } catch (err: any) {
-    console.error(`DocRelay: Catastrophic sync error for ${symbolId}:`, err);
+    logInternalError(`Catastrophic sync error for ${symbolId}`, err);
     result.errors.push(`Catastrophic sync error: internal error — check server logs`);
   }
 

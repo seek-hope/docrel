@@ -152,6 +152,10 @@ Start the MCP server on stdio. Agent configs invoke this for you — see
   the current working directory.
 - `DOCRELAY_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` — disable the background
   npm update check (useful for CI and offline environments).
+- `DOCRELAY_DEBUG=1` — include stack traces in error output. By default the
+  CLI prints one sanitized line for unexpected failures
+  (`DocRelay: unexpected error: …`); the flag adds the full stack for
+  debugging and bug reports.
 
 ## Exit codes
 

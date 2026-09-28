@@ -549,6 +549,63 @@ describe('CLI in-process: diff and history formats', () => {
   });
 });
 
+describe('CLI in-process: top-level crash safety net', () => {
+  afterEach(() => {
+    delete process.env.DOCRELAY_DEBUG;
+    vi.doUnmock('../../src/index.js');
+  });
+
+  it('an unexpected command crash surfaces one clean line and exit 1 — no stack dump', async () => {
+    // The mcp action awaits index.js main(); make it reject to simulate an
+    // unexpected failure escaping every command-local try/catch.
+    vi.doMock('../../src/index.js', () => ({
+      main: () => Promise.reject(new Error('kaboom from index')),
+    }));
+    seedProject();
+
+    expect(await runCli(['mcp'])).toBe(1);
+    const errText = errOut();
+    expect(errText).toContain('DocRelay: unexpected error: kaboom from index');
+    // Node's default unhandled-rejection surface (stack frames, Node version
+    // footer) must not leak into the user's terminal.
+    expect(errText).not.toMatch(/at Object\.|at async |node:internal/);
+  });
+
+  it('prints the crash stack only when DOCRELAY_DEBUG is set', async () => {
+    process.env.DOCRELAY_DEBUG = '1';
+    vi.doMock('../../src/index.js', () => ({
+      main: () => Promise.reject(new Error('kaboom from index')),
+    }));
+    seedProject();
+
+    expect(await runCli(['mcp'])).toBe(1);
+    const errText = errOut();
+    expect(errText).toContain('DocRelay: unexpected error: kaboom from index');
+    expect(errText).toContain('(debug stack):');
+  });
+
+  it('an intentional command failure still exits with its own code (not reclassified)', async () => {
+    // status in an uninitialized project exits 1 via requireProject — the
+    // safety net must not turn intentional exits into "unexpected error".
+    expect(await runCli(['status'])).toBe(1);
+    expect(errOut()).toContain('Not initialized');
+    expect(errOut()).not.toContain('unexpected error');
+  });
+
+  it('commander usage errors keep their own exit code and message', async () => {
+    seedProject();
+    expect(await runCli(['status', '--bogus-flag'])).toBe(1);
+    const errText = errOut();
+    expect(errText).toContain("unknown option '--bogus-flag'");
+    expect(errText).not.toContain('unexpected error');
+  });
+
+  it('--help exits 0 and prints usage', async () => {
+    expect(await runCli(['--help'])).toBe(0);
+    expect(out()).toContain('Usage: docrelay');
+  });
+});
+
 describe('CLI in-process: mcp / restore prompts / integrate dry-run', () => {
   it('mcp boots the server on the mocked stdio transport', async () => {
     seedProject();
