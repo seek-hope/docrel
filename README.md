@@ -213,8 +213,8 @@ src/
 | Database | SQLite via `better-sqlite3` |
 | Symbol Backend | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
-| Git | `simple-git` + native hooks |
-| Tests | `vitest` (239 tests, 23 suites) |
+| Git | native hooks (shell scripts in `.git/hooks`) |
+| Tests | `vitest` (1009 tests, 63 files, 95%+ line coverage) |
 
 ## Codegraph Integration
 
