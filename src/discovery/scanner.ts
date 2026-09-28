@@ -114,6 +114,13 @@ export async function scanProject(
       let dirSymbolCount = 0;
       let symIdx = 0;
       const reportProgress = createProgressReporter(symbols.length, `Scanning ${codeDir}`);
+      // Wrap the directory's per-symbol DB writes in ONE transaction. Without
+      // it, every upsert/changelog INSERT auto-commits (a WAL flush each),
+      // which dominates scan time on large codebases. Per-symbol errors are
+      // caught inside the loop, so a malformed symbol does not roll back the
+      // batch; better-sqlite3 nested transactions (used by the TOCTOU handler
+      // below) work via savepoints inside this outer transaction.
+      db.transaction(() => {
       for (const sym of symbols) {
         reportProgress(++symIdx);
         // Skip symbols whose source file matches a .docrelayignore pattern
@@ -261,6 +268,7 @@ export async function scanProject(
           // continue to next symbol — individual failures do not abort the directory
         }
       }
+      })();
     } catch (err: any) {
       // eslint-disable-next-line no-control-regex -- intentionally strips control chars from paths before they reach logs
       const safeName = codeDir.replace(/[\x00-\x1f\x7f]/g, '');

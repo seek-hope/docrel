@@ -444,6 +444,11 @@ export function ingestDocSections(
   let newDocs = 0;
   let newMappings = 0;
 
+  // Wrap the ingest batch in ONE transaction — per-section upserts otherwise
+  // auto-commit individually (a WAL flush each), which dominates ingest time
+  // on doc-heavy projects. Per-section errors are caught inside the loop, so
+  // one corrupted section does not roll back the batch.
+  db.transaction(() => {
   for (const section of sections) {
     // Wrap per-section processing in try/catch to prevent a single corrupted
     // section (empty file, invalid doc_type, etc.) from aborting the entire
@@ -491,6 +496,7 @@ export function ingestDocSections(
       console.warn(`DocRelay: ingestDocSections — skipping malformed section ${section.file}#${section.anchor}: ${err instanceof Error ? err.message : err}`);
     }
   }
+  })();
 
   return { newDocSections: newDocs, newMappings };
 }

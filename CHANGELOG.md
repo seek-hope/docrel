@@ -39,6 +39,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- Scan and doc-ingest now wrap their per-directory/per-batch database writes
+  in a single transaction instead of auto-committing every row — first scan
+  of a 10,000-symbol project is ~21% faster (1901ms → 1502ms in
+  `scripts/bench-scan.mjs`, bigger on slower disks). Completes the "batch
+  INSERT" item from the v0.2.2 performance roadmap.
 - Floating/misused promises in MCP-server signal handlers and the watch
   daemon's debounce loop; non-Error values could be rethrown by the codegraph
   client; `errMsg` emitted `[object Object]` for non-Error throws.
