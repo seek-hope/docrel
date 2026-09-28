@@ -11,7 +11,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `better-sqlite3` in package.json (npm v12 skips install scripts by
   default, which would leave the native binding unbuilt on fresh
   installs), plus a native-module smoke test step in the CI and release
-  workflows that fails fast if the binding is ever missing.
+  workflows that fails fast if the binding is ever missing. The CLI entry
+  point is now a thin shim (`src/cli.ts` -> `src/cli-main.ts`) that
+  detects a missing native binding at startup — walking the error cause
+  chain — and prints remediation steps instead of a raw "Could not locate
+  the bindings file" stack; install docs cover the
+  `--allow-scripts=better-sqlite3` flag for global installs.
 - Community/engineering hygiene: `CODE_OF_CONDUCT.md` (Contributor
   Covenant 2.1), `.editorconfig`, and `.gitattributes` (LF normalization).
 - Status badges + GitLab CI template (completes the 0.3.2 CI/CD roadmap
