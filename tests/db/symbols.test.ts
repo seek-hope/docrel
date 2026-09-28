@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
@@ -149,5 +149,56 @@ describe('symbols CRUD', () => {
       expect(log.old_sig).toBe('abc123');
       expect(log.new_sig).toBe('new456');
     });
+  });
+});
+
+describe('upsertSymbol / markSignatureChanged guards', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-dbsymbols-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects symbols with an empty id or name', () => {
+    expect(() => upsertSymbol(db, { id: '', name: 'x', kind: 'function' }))
+      .toThrow('Symbol id cannot be empty');
+    expect(() => upsertSymbol(db, { id: 'x', name: '  ', kind: 'function' }))
+      .toThrow('Symbol name cannot be empty');
+  });
+
+  it('defaults an unknown kind with a warning instead of failing', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const row = upsertSymbol(db, { id: 'sym-1', name: 'Thing', kind: 'struct' as never });
+
+    expect(row.kind).toBe('unknown');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("unknown kind 'struct'"));
+  });
+
+  it('serializes circular metadata as an empty object', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    upsertSymbol(db, { id: 'sym-circular', name: 'Circ', kind: 'function', metadata: circular });
+
+    const row = db.prepare('SELECT metadata AS m FROM symbols WHERE id = ?').get('sym-circular') as { m: string };
+    expect(row.m).toBe('{}');
+  });
+
+  it('markSignatureChanged warns and returns false for a missing symbol', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(markSignatureChanged(db, 'no-such-symbol', 'old', 'new')).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('markSignatureChanged called for non-existent symbol'));
+    const count = (db.prepare('SELECT COUNT(*) AS c FROM changelog').get() as { c: number }).c;
+    expect(count).toBe(0);
   });
 });

@@ -7,7 +7,9 @@ import {
   createMapping,
   getMappingsForSymbol,
   getMappingsForDoc,
+  setReviewStatus,
   deleteMapping,
+  exportMappingsJson,
 } from '../../src/db/mappings.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import fs from 'node:fs';
@@ -83,5 +85,53 @@ describe('doc_sections and mappings CRUD', () => {
       db.prepare('DELETE FROM symbols WHERE id = ?').run(symId);
       expect(getMappingsForSymbol(db, symId)).toHaveLength(0);
     });
+  });
+});
+
+describe('mapping guards and export', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-dbmappings-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns empty results for empty lookup ids', () => {
+    expect(getMappingsForSymbol(db, '')).toEqual([]);
+    expect(getMappingsForDoc(db, '')).toEqual([]);
+  });
+
+  it('setReviewStatus returns null for empty ids', () => {
+    expect(setReviewStatus(db, '', 'doc', 'describes', 'confirmed')).toBeNull();
+    expect(setReviewStatus(db, 'sym', '', 'describes', 'confirmed')).toBeNull();
+  });
+
+  it('deleteMapping returns false for empty ids', () => {
+    expect(deleteMapping(db, '', 'doc', 'describes')).toBe(false);
+    expect(deleteMapping(db, 'sym', '', 'describes')).toBe(false);
+  });
+
+  it('exportMappingsJson joins symbol and doc columns', () => {
+    const sym = symbolId('typescript', 'src/a.ts::Login', 'class');
+    const doc = docSectionId('docs/guide.md', 'Guide');
+    upsertSymbol(db, { id: sym, name: 'Login', kind: 'class', location: 'src/a.ts:1' });
+    upsertDocSection(db, { id: doc, file: 'docs/guide.md', anchor: 'Guide', doc_type: 'standalone' });
+    createMapping(db, { symbol_id: sym, doc_id: doc, rel_type: 'describes', review_status: 'confirmed' });
+
+    expect(exportMappingsJson(db)).toEqual([{
+      symbol_name: 'Login',
+      doc_file: 'docs/guide.md',
+      doc_anchor: 'Guide',
+      rel_type: 'describes',
+      review_status: 'confirmed',
+    }]);
   });
 });
