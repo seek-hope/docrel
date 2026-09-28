@@ -73,7 +73,11 @@ section). Behavior per doc type is configured via `strategies` in
 ### `link <create|delete> --symbol <id> --doc <id> [--type <rel>]`
 Create or delete a symbol↔doc mapping manually. Relationship types:
 `describes` (default), `references`, `generates`, `contracts`.
-Creating the same mapping twice is an idempotent upsert.
+Creating the same mapping twice is an idempotent upsert. Manual links are
+recorded as `confirmed` (user-asserted evidence), so the auto-linker's
+prune pass never removes them and staleness cascades may flow through
+them; mappings created by `link create` before v0.3.1 are still `auto` —
+re-run the command to confirm them.
 
 ### `confirm [--symbol <id> --doc <id> [--type <rel>]] [--all]`
 Mark auto-generated mappings as human-confirmed.

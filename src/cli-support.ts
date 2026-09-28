@@ -97,6 +97,9 @@ export interface DocsPipelineReport {
     highConfidence: number;
     mediumConfidence: number;
     lowConfidence: number;
+    /** 'auto' mappings pruned because the current evidence no longer
+     *  scores them (auto-linker self-healing). */
+    pruned: number;
   };
 }
 
@@ -181,12 +184,13 @@ export async function runDocsPipeline(
   const changedSymbols = scannedIdSet.size === allSymbols.length
     ? allSymbols
     : allSymbols.filter((s) => scannedIdSet.has(s.id));
-  const linkCounters = { totalMatched: 0, highConfidence: 0, mediumConfidence: 0, lowConfidence: 0 };
+  const linkCounters = { totalMatched: 0, highConfidence: 0, mediumConfidence: 0, lowConfidence: 0, pruned: 0 };
   const mergeLinkResult = (r: typeof linkCounters) => {
     linkCounters.totalMatched += r.totalMatched;
     linkCounters.highConfidence += r.highConfidence;
     linkCounters.mediumConfidence += r.mediumConfidence;
     linkCounters.lowConfidence += r.lowConfidence;
+    linkCounters.pruned += r.pruned;
   };
   if (changedSymbols.length > 0 && sections.length > 0) {
     mergeLinkResult(autoLink(db, changedSymbols, sections));

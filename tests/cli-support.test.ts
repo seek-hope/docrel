@@ -235,6 +235,7 @@ describe('runDocsPipeline', () => {
       highConfidence: 0,
       mediumConfidence: 0,
       lowConfidence: 0,
+      pruned: 0,
     });
   });
 

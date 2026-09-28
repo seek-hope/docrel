@@ -29,6 +29,29 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are peeled textually so narrative extraction sees pure content lines.
   Previously, fixing the two bugs above would have let sync write these
   mangled docstrings into source files.
+- Auto-linker precision: three prose-word bridges that manufactured
+  strong mappings out of ordinary English are closed. (1) The fuzzy
+  matcher's direct-containment shortcut is gone — `main` no longer links
+  every `Maintenance` section ('main' ⊂ 'maintenance'); containment of a
+  ≥5-character name is still caught by the prefix/LCS floors, so only the
+  sub-5-character false-positive class is blocked. (2) Those prefix/LCS
+  floors rose from 4 to 5 characters — `shutdown` had matched every
+  `--format json|markdown` heading through the shared 4-character
+  substring 'down'. (3) The heading-substring rule now only fires inside
+  identifier-like tokens (camelCase/snake_case/acronym/digit), so a
+  capitalized English word that merely contains a symbol name
+  ('Maintenance' ⊃ 'main') no longer scores 0.7.
+- `ingestDocSections` no longer creates mappings from `bodytext` code
+  references (bare identifiers heuristically spotted in prose — the
+  weakest evidence class at 0.4, below the 0.5 auto-link floor): every
+  full scan re-created ~33 such mappings on this repo and the new prune
+  pass deleted them again, an endless create/prune churn cycle. Weak
+  prose evidence is now owned solely by the scored auto-link pass.
+- The auto-link scorer now understands explicit `link:`/`xref:` doc
+  annotations (`link` code refs) and weights them 0.9 like backtick
+  quotes; previously ingest stored them at 0.9 but the scorer knew no
+  `link` case, so the prune pass would have deleted deliberate
+  annotations from reStructuredText/AsciiDoc docs on every scan.
 
 ### Added
 - Exhaustive codegraph symbol enumeration + scan-collapse guards (dogfood
@@ -48,6 +71,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `gc --force` only after an intentional mass deletion. `config.yaml`'s
   `codegraph.maxFiles` is deprecated (enumeration no longer pages explore
   requests) and remains accepted for compatibility.
+- Auto-linker self-healing: at the end of every completed auto-link pass,
+  `auto` `describes` mappings whose symbol and doc section were both
+  re-evaluated are re-scored against the current evidence, and mappings
+  the scorer no longer justifies are deleted (`scan`/`watch` report the
+  count as `autoLink.pruned`). Previously auto-linking was append-only, so
+  mappings created by a looser scorer revision — or justified by doc text
+  that has since been edited away — lived forever and kept fanning
+  staleness cascades through sections that no longer reference the
+  symbol. Confirmed/rejected rows are never touched, a timed-out partial
+  pass prunes nothing, and pairs outside the current scan's scope (e.g.
+  unchanged symbols in an incremental scan) are left alone. On this
+  repo's own database the first pruned scan removed 190 stale mappings
+  (854 → 668), including all seven phantom `shutdown` ↔ markdown-heading
+  links and the `main` ↔ Maintenance link.
 - npm v12 forward compatibility: `allowScripts` declaration for
   `better-sqlite3` in package.json (npm v12 skips install scripts by
   default, which would leave the native binding unbuilt on fresh
@@ -115,7 +152,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (806 new tests, 1103 total):
+  branches (818 new tests, 1115 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -248,6 +285,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   surface from 831 mappings to 78. The file-watcher's deletion path
   applies the same gate (and no longer stales docs through `rejected`
   mappings at all).
+- `link create` now records manual mappings as `confirmed` instead of
+  `auto`: a link the user typed is asserted evidence, so the prune pass
+  (which only re-evaluates `auto` rows) and the cascade confidence gate
+  both treat it as deliberate. Upgrade note: mappings created by `link
+  create` before this change are still stored as `auto` and will be
+  re-scored — and deleted if the evidence does not support them — by the
+  next scan; re-run the same `link create` (an idempotent upsert) to
+  stamp them `confirmed`.
 - Publish verification: `docs/` now ships in the npm tarball (README's
   relative doc links resolve on npmjs.com and offline), and the packed
   package was install-tested end-to-end — `npm install <tarball>` in a

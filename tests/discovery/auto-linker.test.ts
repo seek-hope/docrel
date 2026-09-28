@@ -7,7 +7,7 @@ import { upsertDocSection } from '../../src/db/docs.js';
 import { autoLink, ingestDocSections } from '../../src/discovery/auto-linker.js';
 import type { ParsedDocSection } from '../../src/discovery/doc-parser.js';
 import { symbolId, docSectionId, contentHash } from '../../src/utils/hash.js';
-import { listAllMappings } from '../../src/db/mappings.js';
+import { listAllMappings, createMapping } from '../../src/db/mappings.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -473,7 +473,7 @@ describe('ingestDocSections disambiguation', () => {
     makeSymbol('render', 'src/ui.ts:42');
     const section = makeSection('docs/api.md', 'Overview', '', [
       { symbolName: 'login()', refType: 'backtick', confidence: 0.9, lineInDoc: 1 },
-      { symbolName: 'render', refType: 'bodytext', confidence: 0.15, lineInDoc: 2 },
+      { symbolName: 'render', refType: 'heading', confidence: 0.7, lineInDoc: 2 },
     ]);
 
     ingestDocSections(db, [section]);
@@ -483,8 +483,36 @@ describe('ingestDocSections disambiguation', () => {
     ).all() as Array<{ name: string; confidence: number }>;
     expect(rows).toEqual([
       { name: 'login', confidence: 0.9 },
-      { name: 'render', confidence: 0.4 },
+      { name: 'render', confidence: 0.6 },
     ]);
+  });
+
+  it('does not create mappings from weak bodytext refs (autoLink owns prose evidence)', () => {
+    makeSymbol('render', 'src/ui.ts:42');
+    const section = makeSection('docs/api.md', 'Overview', '', [
+      { symbolName: 'render', refType: 'bodytext', confidence: 0.15, lineInDoc: 1 },
+    ]);
+
+    const result = ingestDocSections(db, [section]);
+
+    // A 0.4 bodytext mapping could never survive the auto-link prune pass
+    // (floor 0.5) — creating it in ingest caused a create/prune churn cycle
+    // on every scan. autoLink's scored pass remains free to link it.
+    expect(result.newMappings).toBe(0);
+    expect(listAllMappings(db)).toHaveLength(0);
+  });
+
+  it('creates mappings from explicit link annotations at full evidence weight', () => {
+    makeSymbol('login', 'src/auth.ts:42');
+    const section = makeSection('docs/api.md', 'Overview', '', [
+      { symbolName: 'login', refType: 'link', confidence: 0.9, lineInDoc: 1 },
+    ]);
+
+    ingestDocSections(db, [section]);
+
+    const rows = listAllMappings(db);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.confidence).toBe(0.9);
   });
 
   it('links when a name is unique (one symbol of that name)', () => {
@@ -695,5 +723,203 @@ describe('ingestDocSections edge paths', () => {
 
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('skipping malformed section'));
     expect(result.newDocSections).toBe(1);
+  });
+});
+
+describe('autoLink prose-word precision (dogfood regressions)', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-precision-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeSymbol(name: string, location: string = 'src/index.ts:42'): SymbolRow {
+    return upsertSymbol(db, { id: symbolId('typescript', `${location}::${name}`, 'function'), name, kind: 'function', location, signature: 'abc' });
+  }
+
+  function makeDocSection(
+    file: string,
+    anchor: string,
+    content: string,
+    codeRefs: ParsedDocSection['codeRefs'] = [],
+  ): ParsedDocSection {
+    const section: ParsedDocSection = { file, anchor, content, codeRefs };
+    upsertDocSection(db, { id: docSectionId(file, anchor), file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
+    return section;
+  }
+
+  function countMappings(): number {
+    return (db.prepare('SELECT COUNT(*) AS c FROM mappings').get() as { c: number }).c;
+  }
+
+  it("'shutdown' does not match headings containing 'markdown' (4-char 'down' LCS bridge)", () => {
+    const sym = makeSymbol('shutdown');
+    const section = makeDocSection('docs/cli.md', '`status [--format json|markdown]`', 'Show sync status.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(0);
+    expect(countMappings()).toBe(0);
+  });
+
+  it("'main' does not match the prose word 'Maintenance' (substring/prefix accident)", () => {
+    const sym = makeSymbol('main');
+    const section = makeDocSection('docs/cli.md', 'Maintenance', 'Housekeeping commands.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(0);
+    expect(countMappings()).toBe(0);
+  });
+
+  it("keeps fuzzy identifier matches: 'loginUser' vs 'userLogin' heading", () => {
+    const sym = makeSymbol('loginUser');
+    const section = makeDocSection('docs/api.md', 'userLogin', 'How users authenticate.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(1);
+    expect(countMappings()).toBe(1);
+  });
+
+  it("keeps identifier-substring matches: 'login' inside the code-like token 'loginUser'", () => {
+    const sym = makeSymbol('login');
+    const section = makeDocSection('docs/api.md', 'loginUser flow', 'Authentication flow.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(1);
+    const conf = db.prepare('SELECT confidence FROM mappings').get() as { confidence: number };
+    expect(conf.confidence).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it("keeps exact prose word matches: 'shutdown' as an exact heading word still links at 1.0", () => {
+    const sym = makeSymbol('shutdown');
+    const section = makeDocSection('docs/api.md', 'Shutdown', 'Graceful shutdown procedure.');
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(1);
+    expect(result.highConfidence).toBe(1);
+  });
+});
+
+describe('autoLink prune of unjustified auto mappings', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-prune-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeSymbol(name: string, location: string = 'src/index.ts:42'): SymbolRow {
+    return upsertSymbol(db, { id: symbolId('typescript', `${location}::${name}`, 'function'), name, kind: 'function', location, signature: 'abc' });
+  }
+
+  function makeDocSection(
+    file: string,
+    anchor: string,
+    content: string,
+    codeRefs: ParsedDocSection['codeRefs'] = [],
+  ): ParsedDocSection {
+    const section: ParsedDocSection = { file, anchor, content, codeRefs };
+    upsertDocSection(db, { id: docSectionId(file, anchor), file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
+    return section;
+  }
+
+  function mapCount(): number {
+    return (db.prepare('SELECT COUNT(*) AS c FROM mappings').get() as { c: number }).c;
+  }
+
+  it('prunes an auto mapping the scorer no longer justifies after the doc is edited', () => {
+    const sym = makeSymbol('login');
+    // First run: the section legitimately references login via a backtick ref.
+    const good = makeDocSection('docs/api.md', 'overview', 'Calls `login` to authenticate.', [
+      { symbolName: 'login', refType: 'backtick', confidence: 0.85, lineInDoc: 1 },
+    ]);
+    expect(autoLink(db, [sym], [good]).totalMatched).toBe(1);
+    expect(mapCount()).toBe(1);
+
+    // The doc is edited: same section (same doc id), but the login reference
+    // is gone — the mapping's evidence has evaporated.
+    const edited = makeDocSection('docs/api.md', 'overview', 'Completely unrelated prose.');
+
+    const result = autoLink(db, [sym], [edited]);
+    expect(result.totalMatched).toBe(0);
+    expect(result.pruned).toBe(1); // the stale (login ↔ overview) mapping is gone
+    expect(mapCount()).toBe(0);
+  });
+
+  it('never prunes confirmed or rejected rows', () => {
+    const sym = makeSymbol('login');
+    makeDocSection('docs/api.md', 'overview', 'Unrelated prose.');
+    // Seed unjustified mappings directly with each review status.
+    createMapping(db, { symbol_id: sym.id, doc_id: docSectionId('docs/api.md', 'overview'), rel_type: 'describes', review_status: 'confirmed' });
+    upsertDocSection(db, { id: docSectionId('docs/api.md', 'other'), file: 'docs/api.md', anchor: 'other', content_hash: contentHash('x'), doc_type: 'standalone' });
+    createMapping(db, { symbol_id: sym.id, doc_id: docSectionId('docs/api.md', 'other'), rel_type: 'describes', review_status: 'rejected' });
+    // One unjustified auto mapping as the control.
+    upsertDocSection(db, { id: docSectionId('docs/api.md', 'third'), file: 'docs/api.md', anchor: 'third', content_hash: contentHash('x'), doc_type: 'standalone' });
+    createMapping(db, { symbol_id: sym.id, doc_id: docSectionId('docs/api.md', 'third'), rel_type: 'describes', review_status: 'auto', confidence: 1.0 });
+
+    const sections: ParsedDocSection[] = ['overview', 'other', 'third'].map((anchor) => ({
+      file: 'docs/api.md', anchor, content: 'Unrelated prose.', codeRefs: [],
+    }));
+    const result = autoLink(db, [sym], sections);
+
+    expect(result.pruned).toBe(1); // only the 'auto' one
+    const remaining = listAllMappings(db).map((m) => m.review_status).sort();
+    expect(remaining).toEqual(['confirmed', 'rejected']);
+  });
+
+  it('leaves mappings whose symbol was not re-evaluated in this run untouched', () => {
+    const login = makeSymbol('login');
+    const logout = makeSymbol('logout', 'src/index.ts:43');
+    const section = makeDocSection('docs/api.md', 'overview', 'Unrelated prose.');
+    createMapping(db, { symbol_id: login.id, doc_id: docSectionId('docs/api.md', 'overview'), rel_type: 'describes', review_status: 'auto', confidence: 1.0 });
+    createMapping(db, { symbol_id: logout.id, doc_id: docSectionId('docs/api.md', 'overview'), rel_type: 'describes', review_status: 'auto', confidence: 1.0 });
+
+    // Incremental-style run: only `login` is re-evaluated; logout is not in scope.
+    const result = autoLink(db, [login], [section]);
+    expect(result.pruned).toBe(1);
+    const remaining = listAllMappings(db);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.symbol_id).toBe(logout.id);
+  });
+
+  it('keeps explicit link-annotation mappings through the prune pass', () => {
+    const sym = makeSymbol('login');
+    // An xref-style annotated section justifies its mapping at 0.9 — the
+    // prune pass must not delete explicit documentation annotations.
+    const section = makeDocSection('docs/api.md', 'overview', 'See xref:login for details.', [
+      { symbolName: 'login', refType: 'link', confidence: 0.9, lineInDoc: 1 },
+    ]);
+    ingestDocSections(db, [section]);
+    expect(mapCount()).toBe(1);
+
+    const result = autoLink(db, [sym], [section]);
+    expect(result.pruned).toBe(0);
+    expect(mapCount()).toBe(1);
+    const conf = db.prepare('SELECT confidence FROM mappings').get() as { confidence: number };
+    expect(conf.confidence).toBe(0.9);
+  });
+
+  it('reports pruned: 0 and creates mappings normally on a fully-justified run', () => {
+    const sym = makeSymbol('login');
+    const section = makeDocSection('docs/api.md', 'login', 'How login works.');
+    const result = autoLink(db, [sym], [section]);
+    expect(result.totalMatched).toBe(1);
+    expect(result.pruned).toBe(0);
   });
 });

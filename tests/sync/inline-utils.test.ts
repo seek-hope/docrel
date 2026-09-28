@@ -314,7 +314,7 @@ describe('stripCommentsAndStringsMultiline', () => {
   });
 
   it('matches the per-line map of stripCommentsAndStrings', () => {
-    const src = ['/** block */ const a = 1;', 'const t = `tpl ${x} y`;', 'regex /not-a-\/\/comment/;', ''].join('\n');
+    const src = ['/** block */ const a = 1;', 'const t = `tpl ${x} y`;', 'regex /not-a-//comment/;', ''].join('\n');
     expect(stripCommentsAndStringsMultiline(src)).toBe(src.split('\n').map(stripCommentsAndStrings).join('\n'));
   });
 });

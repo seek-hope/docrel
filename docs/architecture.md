@@ -71,7 +71,10 @@ doc files ───▶ doc parser ──▶ doc_sections ───┘
    references, `link:`/`xref:` annotations, inferred mentions).
 3. **Auto-linking** — matches doc references to symbols by name, with
    disambiguation by file stem and confidence scoring; ambiguous matches
-   are left unreviewed rather than guessed.
+   are left unreviewed rather than guessed. Each completed pass also
+   prunes `auto` mappings the current evidence no longer justifies
+   (confirmed/rejected rows are never touched), so links created by older
+   looser scorers or edited-away doc text do not accumulate.
 4. **Change detection** — scans compare signature hashes; changed symbols
    flip linked docs to `stale` per the CASCADE model. Two guards keep a
    broken scan from masquerading as mass change: `scan` warns when a full

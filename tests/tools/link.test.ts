@@ -44,11 +44,11 @@ describe('docrelayLink', () => {
     expect(r.message).toContain('Invalid rel_type');
   });
 
-  it('creates mappings for every valid rel_type', () => {
+  it('creates mappings for every valid rel_type (manual links default to confirmed)', () => {
     for (const relType of ['describes', 'references', 'generates', 'contracts']) {
       const r = docrelayLink(db, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: relType });
       expect(r.action).toBe('created');
-      expect(r.review_status).toBe('auto');
+      expect(r.review_status).toBe('confirmed');
     }
     expect(db.prepare('SELECT COUNT(*) AS c FROM mappings').get()).toEqual({ c: 4 });
   });

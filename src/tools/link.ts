@@ -24,7 +24,10 @@ export function docrelayLink(
   try {
     assertDbOpen(db);
     if (p.action === 'create') {
-      const row = createMapping(db, {symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type as MappingRow['rel_type'], review_status:p.review_status ?? 'auto'});
+      // Manual links are user-asserted evidence: record them 'confirmed' so
+      // the auto-linker's prune pass (which only touches 'auto' rows) and
+      // the staleness cascade gate both treat them as deliberate.
+      const row = createMapping(db, {symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type as MappingRow['rel_type'], review_status:p.review_status ?? 'confirmed'});
       return { action:'created', symbol_id:p.symbol_id, doc_id:p.doc_id, rel_type:p.rel_type, review_status:row.review_status, message:"Mapping created (status: "+row.review_status+")." };
     }
     const ok = deleteMapping(db, p.symbol_id, p.doc_id, p.rel_type);

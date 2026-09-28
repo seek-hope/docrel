@@ -17,6 +17,9 @@ export interface AutoLinkResult {
    *  skips). Makes re-scans readable: on a fully-linked project totalMatched
    *  is 0 but alreadyLinked shows the pairs that were confirmed as existing. */
   alreadyLinked: number;
+  /** 'auto' mappings deleted because the current evidence no longer scores
+   *  them (see pruneUnjustifiedAutoMappings). Skipped on timeout-partial runs. */
+  pruned: number;
 }
 
 // ── Normalization helpers ────────────────────────────────────────────────────
@@ -32,11 +35,15 @@ function normalize(s: string): string {
  *  identical semantics to normalizing inside the call, minus the repeated work. */
 function fuzzyNorm(n: string, h: string): boolean {
   if (!n || !h) return false;
-  // Direct containment
-  if (h.includes(n) || n.includes(h)) return true;
-  // Significant prefix overlap (at least 4 chars or 60% of the shorter string)
+  // No direct-containment shortcut (dogfood): 'main' ⊂ 'maintenance' is a
+  // prose accident, not a code reference. Containment of a >=5-char name is
+  // still caught by the prefix/LCS floors below, so only sub-5-char bridges
+  // (the false-positive class) are blocked.
+  // Significant prefix overlap (at least 5 chars or 60% of the shorter
+  // string). Floor raised 4→5 (dogfood): a 4-char shared prefix bridges
+  // unrelated English words far too easily ('main' vs 'maintenance').
   const minLen = Math.min(n.length, h.length);
-  const prefixThreshold = Math.max(4, Math.floor(minLen * 0.6));
+  const prefixThreshold = Math.max(5, Math.floor(minLen * 0.6));
   let matchLen = 0;
   for (let i = 0; i < minLen && n[i] === h[i]; i++) {
     matchLen++;
@@ -44,8 +51,10 @@ function fuzzyNorm(n: string, h: string): boolean {
   if (matchLen >= prefixThreshold) return true;
   // F9: Add longest common substring check to catch mid-string and suffix
   // overlaps (e.g., 'loginUser' vs 'userLogin' share 'user' in the middle).
-  // Require at least 4 chars or 50% of the shorter string.
-  const lcsThreshold = Math.max(4, Math.floor(minLen * 0.5));
+  // Require at least 5 chars or 50% of the shorter string. Floor raised
+  // 4→5 (dogfood): 'shutdown' matched every '--format json|markdown'
+  // heading through the shared 4-char substring 'down'.
+  const lcsThreshold = Math.max(5, Math.floor(minLen * 0.5));
   // Necessary-condition prefilter: every LCS position consumes one character
   // of n that also occurs in h, so LCS ≤ #{i : n[i] ∈ h}. When even that
   // loose upper bound is below the threshold the O(n·m) DP cannot succeed —
@@ -134,6 +143,8 @@ export interface SectionProfile {
   headingLower: string;
   /** normalize(heading) — fuzzy haystack side. */
   headingNorm: string;
+  /** Heading split into identifier-ish tokens, original case (rule 1b). */
+  headingTokens: string[];
   content: string;
   hasFile: boolean;
   fileStemLower: string;
@@ -165,6 +176,7 @@ export function buildSectionProfile(section: ParsedDocSection): SectionProfile {
     heading,
     headingLower: heading.toLowerCase(),
     headingNorm: normalize(heading),
+    headingTokens: heading.split(/[^A-Za-z0-9_$]+/).filter(Boolean),
     content: section.content || '',
     hasFile: docFile.length > 0,
     fileStemLower: docFile ? fileStem(docFile.split('/').pop() || docFile) : '',
@@ -211,17 +223,29 @@ export function scoreProfile(
   if (cp.heading.length > 0) {
     if (sp.wordRe.test(cp.heading)) {
       best = 1.0;
-    } else if (sp.nameClean.length >= 3 && cp.headingLower.includes(sp.nameCleanLower)) {
-      // 1b. Substring match in heading (confidence 0.7) — weaker signal,
-      // catches partial-name matches like 'getUser' in 'getUserProfile'.
-      // (nameClean is non-empty whenever length >= 3, so the empty-needle
-      // guard of the old containsIgnoreCase helper is preserved.)
-      best = Math.max(best, 0.7);
+    } else if (sp.nameClean.length >= 3) {
+      // 1b. Substring match inside an identifier-like heading token
+      // (confidence 0.7) — weaker signal, catches partial-name matches like
+      // 'getUser' in 'getUserProfile'. The containing token must look like
+      // an identifier (camelCase/snake_case/acronym/digit): a plain English
+      // word that merely CONTAINS the symbol name ('Maintenance' ⊃ 'main',
+      // 'Configuration' ⊃ 'config') is prose, not a code reference —
+      // dogfood showed these producing strong junk mappings that fanned
+      // staleness cascades out through unrelated sections.
+      for (const token of cp.headingTokens) {
+        if (token.length > sp.nameClean.length &&
+            token.toLowerCase().includes(sp.nameCleanLower) &&
+            isIdentifierLikeToken(token)) {
+          best = Math.max(best, 0.7);
+          break;
+        }
+      }
     }
   }
 
   // Code reference matches, weighted by ref type:
   //   backtick  0.9 — ``name`` / `name()
+  //   link      0.9 — explicit `link:`/`xref:` annotation
   //   codeblock 0.7 — inside a fenced code sample
   //   heading   0.6 — symbol captured from a heading token
   //   bodytext  0.4 — bare identifier in prose (weak, e.g. "the login function")
@@ -234,6 +258,13 @@ export function scoreProfile(
 
     switch (ref.refType) {
       case 'backtick':
+        if (refEq) best = Math.max(best, 0.9);
+        break;
+      case 'link':
+        // Explicit `link:`/`xref:` annotations are deliberate documentation
+        // evidence, as strong as a backtick quote. ingestDocSections already
+        // weighted them 0.9, and without this case the prune pass scored
+        // them 0 and deleted explicit annotations every scan.
         if (refEq) best = Math.max(best, 0.9);
         break;
       case 'codeblock':
@@ -282,6 +313,22 @@ export function scoreProfile(
   return { confidence: best, matched: best >= minConfidence };
 }
 
+/** Stricter token check for rule 1b: does a heading token look like an
+ *  identifier someone would write in code, rather than a capitalized
+ *  English word? Unlike isCodeLikeIdentifier (which accepts any token with
+ *  an uppercase letter, including prose like 'Maintenance'), this requires
+ *  identifier structure: interior case change, snake_case, acronym, digit,
+ *  or sigil. 'loginUser'/'HTTPServer'/'sha256'/'config_v2' pass;
+ *  'Maintenance'/'Configuration'/'Login' do not. */
+function isIdentifierLikeToken(token: string): boolean {
+  if (/[a-zA-Z]_[a-zA-Z]/.test(token)) return true;          // snake_case
+  if (token.startsWith('_') || token.includes('$')) return true; // sigils
+  if (/[a-z][A-Z]/.test(token)) return true;                 // camelCase hump
+  if (/^[A-Z0-9_]+$/.test(token) && token.length > 1) return true; // acronym
+  if (/\d/.test(token)) return true;                        // sha256, utf8
+  return false;
+}
+
 /** Check if a symbol name looks like a code identifier rather than a common
  *  English word. Matches CamelCase, PascalCase, or snake_case names.
  *  All-lowercase single words (even long ones like 'authentication') are
@@ -311,10 +358,10 @@ export function fastScoreProfile(sp: SymbolProfile, cp: SectionProfile): number 
     return 1.0;
   }
 
-  // 2. Backtick match (confidence 0.9)
+  // 2. Backtick / explicit link-annotation match (confidence 0.9)
   const symName = sp.row.name;
   for (const ref of cp.refs) {
-    if (ref.refType === 'backtick' &&
+    if ((ref.refType === 'backtick' || ref.refType === 'link') &&
         (ref.refClean === sp.nameClean ||
          ref.refClean === symName ||
          ref.symbolName === symName ||
@@ -536,6 +583,9 @@ export function autoLink(
   const AUTO_LINK_TIMEOUT_MS = 30_000;
   const startTime = Date.now();
   const timedOut = () => Date.now() - startTime > AUTO_LINK_TIMEOUT_MS;
+  // Pruning only runs on a fully completed pass — partial evidence from a
+  // timed-out run could delete mappings the run never re-evaluated.
+  let completed = true;
 
   // Symbols that already received a high-confidence link in pass 1.
   // These are skipped in pass 2 to avoid low-confidence false positives.
@@ -566,6 +616,7 @@ export function autoLink(
         mediumConfidence: counters.medium,
         lowConfidence: counters.low,
         alreadyLinked: counters.alreadyLinked,
+        pruned: 0,
       };
     }
 
@@ -595,6 +646,7 @@ export function autoLink(
 
     if (timedOut()) {
       console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
+      completed = false;
       break;
     }
 
@@ -612,13 +664,78 @@ export function autoLink(
     }
   }
 
+  // ── Prune: 'auto' mappings the current evidence no longer justifies ──
+  // autoLink is otherwise append-only: mappings created by a looser scorer
+  // revision (or a since-edited doc) lived forever, fanning staleness
+  // cascades out through prose-word links (dogfood: 'shutdown' × every
+  // '--format json|markdown' heading via a 4-char 'down' LCS bridge).
+  // Only mappings whose doc section AND symbol were both re-evaluated in
+  // THIS run are eligible; confirmed/rejected rows are never touched, and
+  // a timed-out partial run prunes nothing.
+  const pruned = completed
+    ? pruneUnjustifiedAutoMappings(db, symbolProfiles, sectionProfiles, minConfidence)
+    : 0;
+
   return {
     totalMatched: counters.high + counters.medium + counters.low,
     highConfidence: counters.high,
     mediumConfidence: counters.medium,
     lowConfidence: counters.low,
     alreadyLinked: counters.alreadyLinked,
+    pruned,
   };
+}
+
+/**
+ * Re-score every 'auto' `describes` mapping whose doc section was part of
+ * this run and delete those below minConfidence. A mapping whose symbol is
+ * not in symbolProfiles (e.g. an unchanged symbol during an incremental
+ * scan) is left alone — only pairs re-evaluated in this run are pruned.
+ */
+function pruneUnjustifiedAutoMappings(
+  db: Database.Database,
+  symbolProfiles: SymbolProfile[],
+  sectionProfiles: SectionProfile[],
+  minConfidence: number,
+): number {
+  const spById = new Map<string, SymbolProfile>();
+  for (const sp of symbolProfiles) spById.set(sp.row.id, sp);
+  const cpByDocId = new Map<string, SectionProfile>();
+  for (const cp of sectionProfiles) {
+    const id = tryDocSectionId(cp.section);
+    if (id) cpByDocId.set(id, cp);
+  }
+  if (cpByDocId.size === 0) return 0;
+
+  // Chunked IN query over this run's doc ids.
+  const docIds = [...cpByDocId.keys()];
+  const candidates: Array<{ symbol_id: string; doc_id: string }> = [];
+  const CHUNK = 500;
+  for (let i = 0; i < docIds.length; i += CHUNK) {
+    const chunk = docIds.slice(i, i + CHUNK);
+    candidates.push(...(db.prepare(
+      `SELECT symbol_id, doc_id FROM mappings WHERE review_status = 'auto' AND rel_type = 'describes' AND doc_id IN (${chunk.map(() => '?').join(',')})`,
+    ).all(...chunk) as Array<{ symbol_id: string; doc_id: string }>));
+  }
+  if (candidates.length === 0) return 0;
+
+  let pruned = 0;
+  const del = db.prepare("DELETE FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes' AND review_status = 'auto'");
+  db.transaction(() => {
+    for (const row of candidates) {
+      const sp = spById.get(row.symbol_id);
+      const cp = cpByDocId.get(row.doc_id);
+      if (!sp || !cp) continue; // pair not re-evaluated this run — keep
+      if (!scoreProfile(sp, cp, minConfidence).matched) {
+        del.run(row.symbol_id, row.doc_id);
+        pruned++;
+      }
+    }
+  })();
+  if (pruned > 0) {
+    console.warn(`DocRelay: autoLink pruned ${pruned} auto-mapping(s) no longer supported by the evidence`);
+  }
+  return pruned;
 }
 
 export interface IngestResult {
@@ -630,8 +747,10 @@ export interface IngestResult {
  *  ref-created mapping carries the same confidence the scorer would assign. */
 const REF_CONFIDENCE: Record<string, number> = {
   backtick: 0.9,
+  link: 0.9,
   codeblock: 0.7,
   heading: 0.6,
+  // bodytext (0.4) refs never reach createRefMapping — see the skip above.
   bodytext: 0.4,
 };
 
@@ -709,6 +828,16 @@ export function ingestDocSections(
       if (!existing) newDocs++;
 
       for (const ref of section.codeRefs) {
+        // bodytext refs (bare identifiers heuristically spotted in prose —
+        // the weakest evidence class) are deliberately NOT linked here:
+        // their 0.4 weight sits below the auto-link floor (0.5), so a
+        // mapping created now would be deleted by the auto-linker's prune
+        // pass at the end of the same scan, then re-created by the next
+        // scan's ingest — an endless create/prune churn cycle (dogfood: 33
+        // mappings oscillating on every full scan of this repo). Weak prose
+        // evidence stays with the scored autoLink pass, the single
+        // authority for whether a pair justifies a link.
+        if (ref.refType === 'bodytext') continue;
         const cleanName = ref.symbolName.replace(/\(.*\)$/, '');
         // Disambiguate same-named symbols across modules. A name-only lookup
         // used to pollute every same-named symbol (different modules) into the
