@@ -7,6 +7,7 @@ import { createMapping } from '../../src/db/mappings.js';
 import { syncSymbol } from '../../src/sync/engine.js';
 import { symbolId, docSectionId, contentHash } from '../../src/utils/hash.js';
 import type { DocRelayConfig } from '../../src/utils/config.js';
+import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -22,6 +23,23 @@ vi.mock('../../src/sync/generated.js', () => ({
   updateGeneratedDoc: mockUpdateGeneratedDoc,
   detectGenerator: mockDetectGenerator,
 }));
+
+/** A db wrapper whose prepare() returns zero-change results for statements
+ *  containing `match` (mark* helpers see "doc deleted concurrently"). */
+function proxyDb(db: Database.Database, match: string): Database.Database {
+  return {
+    prepare(sql: string) {
+      if (sql.includes(match)) {
+        return {
+          run: () => ({ changes: 0, lastInsertRowid: 0 }),
+          all: () => [],
+          get: () => undefined,
+        };
+      }
+      return db.prepare(sql);
+    },
+  } as unknown as Database.Database;
+}
 
 const autoConfig: DocRelayConfig = {
   version: 1,
@@ -228,6 +246,30 @@ describe('generated doc sync — post-regeneration read failures', () => {
     expect(result.errors).toHaveLength(0);
     expect(result.docsUpdated).toContain('docs/api.md');
     expect(getDocSection(db, docId)!.content_hash).toBe('h');
+  });
+
+  it('reports when the synced mark fails after a vanished-file regeneration', async () => {
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: '', doc_type: 'generated', content_hash: 'h', status: 'stale' });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+    mockUpdateGeneratedDoc.mockReturnValue({ success: true, output: 'ok' });
+
+    const result = await syncSymbol(proxyDb(db, "SET status = 'in_sync'"), autoConfig, symId, tmpDir);
+
+    expect(result.errors.some((e) => e.includes('Failed to mark generated doc') && e.includes('as synced'))).toBe(true);
+    expect(result.docsUpdated).toHaveLength(0);
+  });
+
+  it('reports when the hash refresh fails after a successful regeneration', async () => {
+    const docPath = path.join(tmpDir, 'docs', 'api.md');
+    fs.writeFileSync(docPath, '# API\n\nRegenerated.\n', 'utf-8');
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: '', doc_type: 'generated', content_hash: 'old', status: 'stale' });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+    mockUpdateGeneratedDoc.mockReturnValue({ success: true, output: 'ok' });
+
+    const result = await syncSymbol(proxyDb(db, 'SET content_hash'), autoConfig, symId, tmpDir);
+
+    expect(result.errors.some((e) => e.includes('Failed to mark generated doc') && e.includes('as synced'))).toBe(true);
+    expect(result.docsUpdated).toHaveLength(0);
   });
 
   it('rejects an absolute doc path outside the project without touching anything', async () => {

@@ -217,7 +217,9 @@ export function updateGeneratedDoc(input: GeneratedSyncInput): { success: boolea
     return { success: true, output: result.stdout };
   } catch (err: any) {
     console.error('DocRelay: updateGeneratedDoc spawn failed:', err instanceof Error ? err.message : err);
-    return { success: false, output: err.message };
+    // Non-Error throws have no .message — fall back to String() so the
+    // caller never interpolates `undefined` into its error report.
+    return { success: false, output: err instanceof Error ? err.message : String(err) };
   }
 }
 

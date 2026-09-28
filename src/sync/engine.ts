@@ -75,31 +75,24 @@ function parseLocation(location: string): { file: string; line: number } | null 
   return { file, line };
 }
 
-/** Extract the current signature for a symbol. Tries codegraph first
- *  (either cached raw_signature or a fresh query), then falls back to
- *  regex-based source file parsing. */
+/** Extract the current signature for a symbol. Tries a fresh codegraph
+ *  query first, then falls back to regex-based source file parsing.
+ *  The cached raw_signature is deliberately NOT used: sync runs after a
+ *  scan has already updated raw_signature to the new code value, so the
+ *  cache is stale as a measure of "current" (the file still has the old
+ *  text) and oldSig would equal newSig, breaking the rewrite. */
 async function getCurrentSignature(
   symbol: import('../db/symbols.js').SymbolRow,
   codegraph: CodegraphClient | undefined,
   projectRoot: string,
-  skipCache = false,
-): Promise<{ signature: string | null; reason?: string; source: 'codegraph_raw' | 'codegraph_query' | 'regex' | 'none' }> {
-  // 1. Use the cached raw_signature from DB (populated by codegraph during scan),
-  //    UNLESS skipCache is true. When called from a sync context after a scan has
-  //    already updated raw_signature to the new code value, the cache is stale as
-  //    a measure of "current" (file still has the old text). Bypassing forces a
-  //    regex-based source file read so oldSig != newSig and updateInlineDoc works.
-  if (!skipCache && symbol.raw_signature) {
-    return { signature: symbol.raw_signature, source: 'codegraph_raw' };
-  }
-
-  // 2. Try a fresh codegraph query
+): Promise<{ signature: string | null; reason?: string }> {
+  // 1. Try a fresh codegraph query
   if (codegraph) {
     try {
       const loc = parseLocation(symbol.location);
       const sig = await codegraph.getSymbolSignature(symbol.name, loc?.file);
       if (sig) {
-        return { signature: sig, source: 'codegraph_query' };
+        return { signature: sig };
       }
     } catch (err: any) {
       // codegraph query failed — fall through to regex.
@@ -111,13 +104,13 @@ async function getCurrentSignature(
     }
   }
 
-  // 3. Fall back to regex-based extraction from the source file
+  // 2. Fall back to regex-based extraction from the source file
   const loc = parseLocation(symbol.location);
   if (!loc) {
-    return { signature: null, reason: 'invalid or missing source file location', source: 'none' };
+    return { signature: null, reason: 'invalid or missing source file location' };
   }
   const result = extractCurrentSignature(loc.file, symbol.name, projectRoot, loc.line - 1);
-  return { signature: result.signature, reason: result.reason, source: result.signature ? 'regex' : 'none' };
+  return { signature: result.signature, reason: result.reason };
 }
 
 export async function syncSymbol(
@@ -204,11 +197,10 @@ export async function syncSymbol(
             const newSig = symbol.raw_signature;
             const newDocstring = generateUpdatedDocstring(symbol.name, symbol.kind, oldDocstring, newSig);
 
-            // Get current signature — skip the raw_signature cache (passed as
-            // skipCache=true) because a prior scan may have already updated
-            // symbol.raw_signature to the new value. Using the cache would
-            // make oldSig === newSig, causing updateInlineDoc to fail.
-            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot, true);
+            // Get current signature from the on-disk source (never the raw
+            // cache — a prior scan may have already updated raw_signature to
+            // the new value, which would make oldSig === newSig).
+            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot);
             if (sigResult.signature === null) {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${sigResult.reason ?? 'could not extract current signature'}`);
               continue;
@@ -252,11 +244,10 @@ export async function syncSymbol(
             // status without ever rewriting the document.
             const sectionContent = findSectionContent(doc.file, doc.anchor, projectRoot);
             if (sectionContent) {
-              // Current signature text from the on-disk source (skip the raw
-              // cache so we always read the actual file). The DB's
+              // Current signature text from the on-disk source. The DB's
               // symbols.signature is a content hash, so we must recover the
               // human-readable text via getCurrentSignature.
-              const curSig = await getCurrentSignature(symbol, codegraph, projectRoot, true);
+              const curSig = await getCurrentSignature(symbol, codegraph, projectRoot);
               // Old documented signature text, best-effort candidates:
               //  1. changelog.old_sig — now stores the pre-change signature TEXT
               //     (recorded by scan before raw_signature was overwritten).
