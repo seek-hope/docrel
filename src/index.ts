@@ -1,5 +1,6 @@
 // src/index.ts — DocRelay MCP Server entry point
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -39,6 +40,17 @@ function sanitizeError(err: unknown): string {
   return 'Internal error — check server logs.';
 }
 
+
+export interface DocrelayServerDeps {
+  db: ReturnType<typeof getDb>;
+  config: DocRelayConfig;
+  extractor: SymbolExtractor;
+  codegraph: CodegraphClient;
+  projectRoot: string;
+}
+
+/** Initialize config, database, and the best available symbol extractor. */
+async function initDeps(): Promise<DocrelayServerDeps> {
 const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
 // When DOCRELAY_PROJECT_ROOT is not set, verify .docrelay/config.yaml exists in CWD.
@@ -71,6 +83,17 @@ try {
   try { closeAllDbs(); } catch {}
   process.exit(1);
 }
+
+  return { db, config, extractor, codegraph, projectRoot };
+}
+
+/**
+ * Build the DocRelay MCP server with all tool registrations.
+ * Construction is separated from process wiring (stdio transport, signal
+ * handlers) so tests can drive the server over an in-memory transport.
+ */
+export function createDocrelayServer(deps: DocrelayServerDeps): McpServer {
+  const { db, config, extractor, codegraph, projectRoot } = deps;
 
 const server = new McpServer({
   name: 'docrelay',
@@ -531,14 +554,17 @@ server.tool(
   },
 );
 
-// ── Start ──────────────────────────────────────────────────────
+  return server;
+}
+
+// ── Process wiring (stdio transport + signal handlers) ─────────
 // Track the highest severity exit code across concurrent shutdown calls.
 // If SIGINT (code 0) fires first and then uncaughtException (code 1) fires
 // during the 500ms grace period, the crash code must NOT be downgraded to 0.
 let shuttingDown = false;
 let exitCode = 0;
 
-async function shutdown(code: number = 0): Promise<void> {
+async function shutdown(code: number, deps: DocrelayServerDeps): Promise<void> {
   // Escalate to the highest-severity exit code seen across concurrent calls.
   // A crash (code 1) arriving after a clean shutdown signal (code 0) must
   // win, so process supervisors (Docker, systemd, k8s) see the failure.
@@ -547,11 +573,11 @@ async function shutdown(code: number = 0): Promise<void> {
   shuttingDown = true;
 
   console.error('DocRelay MCP Server shutting down...');
-  try { await codegraph.close(); } catch (err: any) {
+  try { await deps.codegraph.close(); } catch (err: any) {
     if (DOCRELAY_DEBUG) console.error('DocRelay: codegraph.close() failed during shutdown:', err instanceof Error ? err.message : err);
   }
   try { closeAllDbs(); } catch (err: any) {
-    console.error('DocRelay: closeAllDbs() failed during shutdown — WAL may not have checkpointed:', err instanceof Error ? err.message : err);
+    if (DOCRELAY_DEBUG) console.error('DocRelay: closeAllDbs() failed during shutdown — WAL may not have checkpointed:', err instanceof Error ? err.message : err);
   }
   // Use exitCode to let the event loop drain gracefully instead of
   // immediately terminating — gives async cleanup a chance to finish.
@@ -562,33 +588,45 @@ async function shutdown(code: number = 0): Promise<void> {
   setTimeout(() => { process.exit(exitCode); }, 500).unref();
 }
 
-process.on('SIGINT', () => { void shutdown(0); });
-process.on('SIGTERM', () => { void shutdown(0); });
-process.on('uncaughtException', (err) => {
-  console.error('DocRelay: uncaught exception:', err instanceof Error ? err.message : err);
-  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
-    console.error('DocRelay: uncaught exception (debug stack):', err.stack);
-  }
-  void shutdown(1);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('DocRelay: unhandled rejection:', reason instanceof Error ? reason.message : reason);
-  if (DOCRELAY_DEBUG && reason instanceof Error && reason.stack) {
-    console.error('DocRelay: unhandled rejection (debug stack):', reason.stack);
-  }
-  void shutdown(1);
-});
+/** Start the MCP server on stdio. Invoked by `doc-relay mcp` and by direct
+ *  execution (`node dist/index.js`). */
+export async function main(): Promise<void> {
+  const deps = await initDeps();
+  const server = createDocrelayServer(deps);
 
-async function main() {
+  process.on('SIGINT', () => { void shutdown(0, deps); });
+  process.on('SIGTERM', () => { void shutdown(0, deps); });
+  process.on('uncaughtException', (err) => {
+    console.error('DocRelay: uncaught exception:', err instanceof Error ? err.message : err);
+    if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
+      console.error('DocRelay: uncaught exception (debug stack):', err.stack);
+    }
+    void shutdown(1, deps);
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('DocRelay: unhandled rejection:', reason instanceof Error ? reason.message : reason);
+    if (DOCRELAY_DEBUG && reason instanceof Error && reason.stack) {
+      console.error('DocRelay: unhandled rejection (debug stack):', reason.stack);
+    }
+    void shutdown(1, deps);
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('DocRelay MCP Server running on stdio');
 }
 
-void main().catch((err) => {
-  console.error('Fatal error:', err instanceof Error ? err.message : err);
-  if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
-    console.error('Fatal error (debug stack):', err.stack);
-  }
-  void shutdown(1).then(() => process.exit(1));
-});
+// Auto-start only when executed directly (`node dist/index.js`), not when
+// imported — the CLI's `mcp` subcommand calls main() explicitly, and tests
+// import createDocrelayServer without starting anything.
+const invokedDirectly = process.argv[1]
+  && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) {
+  void main().catch((err) => {
+    console.error('Fatal error:', err instanceof Error ? err.message : err);
+    if (DOCRELAY_DEBUG && err instanceof Error && err.stack) {
+      console.error('Fatal error (debug stack):', err.stack);
+    }
+    process.exitCode = 1;
+  });
+}

@@ -1268,7 +1268,8 @@ program
   .description('Start the DocRelay MCP server on stdio (for AI agent integration)')
   .action(async () => {
     mcpServerStarted = true;
-    await import('./index.js');
+    const { main } = await import('./index.js');
+    await main();
   });
 
 // parseAsync returns when the command action completes, then we clean up

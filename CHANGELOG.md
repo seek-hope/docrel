@@ -14,7 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 57/48/64/60) enforced in CI.
+  (currently 59/49/68/62) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -33,6 +33,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone
   auto_update failure modes, changelog applied/failed accounting, and
   syncAllStale dedup).
+- In-process MCP server tests (`tests/integration/mcp-server.test.ts`):
+  drives the real server through the official SDK client — tool listing,
+  status/check/scan/link/confirm/review round-trips, check file-filter
+  semantics, impact/diff/watch/refresh/health, and error resilience.
 - CLI end-to-end smoke suite (`tests/integration/cli.test.ts`): runs the real
   `dist/cli.js` binary in a throwaway project covering `--help`/`--version`,
   uninitialized-project guards, `init`, `scan` (incl. `--dry-run`), `status`
@@ -56,6 +60,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
 
 ### Changed
+- `src/index.ts` (MCP server) refactored into a testable
+  `createDocrelayServer(deps)` factory plus an explicit `main()` — tool
+  registrations no longer depend on module-level side effects, and the
+  server can be driven in-process over an in-memory transport.
+  `doc-relay mcp` and direct `node dist/index.js` execution are unchanged.
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
