@@ -193,3 +193,40 @@ describe('scanDocs permission & special-file edges', () => {
     expect(sections.every((s) => s.file === 'docs/guide.md')).toBe(true);
   });
 });
+
+describe('scanDocs directory recursion', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-docrec-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('recurses into real subdirectories and parses nested docs', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'docs', 'nested', 'deep'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'nested', 'deep', 'guide.md'), '# Deep\n\n## Setup\n\nNested.\n');
+
+    const { sections, report } = await scanDocs(['docs'], tmpDir);
+
+    expect(report.failedFiles).toEqual([]);
+    expect(sections.some((s) => s.file.includes('nested'))).toBe(true);
+  });
+
+  it('returns no sections for a single-file doc_dir that is a symlink escaping the root', async () => {
+    const external = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-doclink-'));
+    try {
+      fs.writeFileSync(path.join(external, 'secret.md'), '# Secret\n\nHidden.\n');
+      fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+      fs.symlinkSync(path.join(external, 'secret.md'), path.join(tmpDir, 'docs', 'link.md'));
+
+      const { sections } = await scanDocs(['docs/link.md'], tmpDir);
+
+      expect(sections).toEqual([]);
+    } finally {
+      fs.rmSync(external, { recursive: true, force: true });
+    }
+  });
+});
