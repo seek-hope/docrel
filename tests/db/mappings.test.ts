@@ -88,6 +88,47 @@ describe('doc_sections and mappings CRUD', () => {
   });
 });
 
+describe('mapping confidence (schema v6)', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-mapconf-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    upsertSymbol(db, { id: 's1', name: 'login', kind: 'function' });
+    upsertDocSection(db, { id: 'd1', file: 'docs/a.md', anchor: 'A', doc_type: 'standalone' });
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('defaults to 1.0 when no confidence is given (manual/legacy links)', () => {
+    const row = createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes' });
+    expect(row.confidence).toBe(1.0);
+  });
+
+  it('stores the auto-link evidence score on create', () => {
+    const row = createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes', confidence: 0.4 });
+    expect(row.confidence).toBe(0.4);
+  });
+
+  it('refreshes the score on conflict when a new one is carried', () => {
+    createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes', confidence: 0.9 });
+    const row = createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes', confidence: 0.4 });
+    expect(row.confidence).toBe(0.4);
+  });
+
+  it('preserves the stored score on conflict when none is carried', () => {
+    createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes', confidence: 0.4 });
+    const row = createMapping(db, { symbol_id: 's1', doc_id: 'd1', rel_type: 'describes' });
+    expect(row.confidence).toBe(0.4);
+  });
+});
+
 describe('mapping guards and export', () => {
   let tmpDir: string;
   let db: ReturnType<typeof getDb>;

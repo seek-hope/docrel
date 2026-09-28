@@ -82,8 +82,16 @@ export function markDocStale(db: Database.Database, id: string): boolean {
  */
 export function markDocsStaleForSymbol(db: Database.Database, symbolId: string): string[] {
   if (!symbolId) return [];
+  // Evidence gate: cascade only through mappings a human confirmed, or whose
+  // auto-link evidence is strong (>= 0.7: backtick / codeblock / heading
+  // matches — the doc actually quotes the symbol). Weak auto links (0.4
+  // bodytext prose mentions, 0.6 fuzzy headings) are review candidates, not
+  // facts: letting them stale docs cried wolf on every signature change
+  // (a single common-word symbol could stale dozens of unrelated sections).
   const rows = cachedStmt(db,
-    "SELECT doc_id FROM mappings WHERE symbol_id = ? AND review_status != 'rejected'"
+    `SELECT doc_id FROM mappings
+     WHERE symbol_id = ? AND review_status != 'rejected'
+       AND (review_status = 'confirmed' OR confidence >= 0.7)`
   ).all(symbolId) as Array<{ doc_id: string }>;
   if (rows.length === 0) return [];
 

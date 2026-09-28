@@ -71,6 +71,25 @@ describe('runMigrations', () => {
     expect(names).toContain('changelog');
   });
 
+  it('v6 migration adds mappings.confidence, grandfathering legacy rows at 1.0', () => {
+    const db = getDb(tmpDir);
+    runMigrations(db);
+    // Seed a mapping, then roll the schema back to v5 (drop the column).
+    db.prepare("INSERT INTO symbols (id, name, kind) VALUES ('s1', 'login', 'function')").run();
+    db.prepare("INSERT INTO doc_sections (id, file, anchor, doc_type) VALUES ('d1', 'docs/a.md', 'A', 'standalone')").run();
+    db.prepare("INSERT INTO mappings (symbol_id, doc_id, rel_type, confidence) VALUES ('s1', 'd1', 'describes', 0.4)").run();
+    db.exec('ALTER TABLE mappings DROP COLUMN confidence');
+    db.pragma('user_version = 5');
+
+    runMigrations(db);
+
+    expect(db.pragma('user_version', { simple: true })).toBe(SCHEMA_VERSION);
+    const row = db.prepare('SELECT confidence FROM mappings WHERE symbol_id = ?').get('s1') as { confidence: number };
+    // Legacy rows are grandfathered at 1.0 — historical cascade behavior is
+    // preserved until the next auto-link refresh records the true score.
+    expect(row.confidence).toBe(1.0);
+  });
+
   it('keeps an existing raw_signature column when re-running an old-version migration', () => {
     // Simulate a pre-V2 database: user_version reset, column already present.
     // The ALTER fails as a duplicate and the PRAGMA check must swallow it.

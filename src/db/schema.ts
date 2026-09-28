@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number;
@@ -42,6 +42,11 @@ export function runMigrations(db: Database.Database): void {
         doc_id     TEXT NOT NULL REFERENCES doc_sections(id) ON DELETE CASCADE,
         rel_type   TEXT NOT NULL CHECK(rel_type IN ('describes','references','generates','contracts')),
         review_status TEXT NOT NULL DEFAULT 'auto' CHECK(review_status IN ('auto','confirmed','rejected')),
+        -- Evidence strength of an auto-generated link (0.4 bodytext .. 1.0
+        -- heading-exact), refreshed on every auto-link evaluation. 1.0 for
+        -- manual/legacy rows. Staleness cascades only through confirmed
+        -- mappings or confidence >= 0.7 — see markDocsStaleForSymbol.
+        confidence REAL NOT NULL DEFAULT 1.0,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (symbol_id, doc_id, rel_type)
       );
@@ -96,6 +101,18 @@ export function runMigrations(db: Database.Database): void {
         // Avoids relying on English error messages which may be localized.
         const cols = db.prepare('PRAGMA table_info(symbols)').all() as Array<{ name: string }>;
         if (!cols.some(c => c.name === 'raw_signature')) throw err;
+      }
+    }
+
+    // V6: add mappings.confidence for existing V1-V5 databases. DEFAULT 1.0
+    // grandfathered: pre-existing links keep the historical cascade behavior
+    // until the next auto-link refresh records their true score.
+    if (currentVersion < 6) {
+      try {
+        db.exec('ALTER TABLE mappings ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0');
+      } catch (err: any) {
+        const cols = db.prepare('PRAGMA table_info(mappings)').all() as Array<{ name: string }>;
+        if (!cols.some(c => c.name === 'confidence')) throw err;
       }
     }
 

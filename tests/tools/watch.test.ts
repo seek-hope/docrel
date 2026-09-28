@@ -131,6 +131,43 @@ describe('startWatch', () => {
     }
   }, 15000);
 
+  it('does NOT stale docs through weak auto or rejected mappings on file deletion', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'), 'export class Foo {\n  run() { return 1; }\n}\n', 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'guide.md'), '## Guide\n\nFoo docs.\n', 'utf-8');
+    const config = makeConfig(tmpDir);
+    await scanProject(new BuiltinExtractor(), db, config, tmpDir, true);
+
+    const sym = db.prepare("SELECT id FROM symbols WHERE name = 'Foo'").get() as { id: string };
+    const weakDoc = docSectionId('docs/guide.md', 'Guide');
+    upsertDocSection(db, { id: weakDoc, file: 'docs/guide.md', anchor: 'Guide', doc_type: 'standalone', status: 'in_sync' });
+    // Weak auto link (0.4 bodytext) — a review candidate, not evidence.
+    createMapping(db, { symbol_id: sym.id, doc_id: weakDoc, rel_type: 'describes', review_status: 'auto', confidence: 0.4 });
+    const rejectedDoc = docSectionId('docs/guide.md', 'Rejected');
+    upsertDocSection(db, { id: rejectedDoc, file: 'docs/guide.md', anchor: 'Rejected', doc_type: 'standalone', status: 'in_sync' });
+    createMapping(db, { symbol_id: sym.id, doc_id: rejectedDoc, rel_type: 'references', review_status: 'rejected', confidence: 1.0 });
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), config, { debounceMs: 20 });
+    try {
+      await sleep(500); // let chokidar finish its initial scan and reach ready
+      fs.rmSync(path.join(tmpDir, 'src', 'a.ts'));
+
+      // The deletion IS processed (event counter advances) — the docs stay
+      // in_sync because the gate filtered the cascade, not because the
+      // event was missed.
+      await vi.waitFor(() => {
+        expect(getWatchStatus().eventsProcessed).toBeGreaterThanOrEqual(1);
+      }, { timeout: 8000, interval: 100 });
+      await sleep(300); // debounce + processing slack
+
+      for (const id of [weakDoc, rejectedDoc]) {
+        const row = db.prepare('SELECT status FROM doc_sections WHERE id = ?').get(id) as { status: string };
+        expect(row.status).toBe('in_sync');
+      }
+    } finally {
+      stop();
+    }
+  }, 15000);
+
   it('re-scans and picks up a newly added source file after the debounce', async () => {
     const config = makeConfig(tmpDir);
     const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), config, { debounceMs: 20 });

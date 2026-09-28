@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
+import { upsertSymbol } from '../../src/db/symbols.js';
+import { createMapping } from '../../src/db/mappings.js';
 import {
   upsertDocSection,
+  getDocSection,
   listDocSections,
   markDocStale,
   markDocsStaleForSymbol,
@@ -62,6 +65,40 @@ describe('db/docs', () => {
 
   it('markDocsStaleForSymbol returns [] for an empty symbol id', () => {
     expect(markDocsStaleForSymbol(db, '')).toEqual([]);
+  });
+
+  it('markDocsStaleForSymbol cascades only through confirmed or strong-evidence mappings', () => {
+    // Seed one symbol and four docs: weak auto link, strong auto link,
+    // confirmed-but-weak, and rejected — one per quadrant of the gate.
+    upsertSymbol(db, { id: 'sym1', name: 'login', kind: 'function' });
+    const mk = (anchor: string) => {
+      const id = docSectionId('docs/a.md', anchor);
+      upsertDocSection(db, { id, file: 'docs/a.md', anchor, doc_type: 'standalone' });
+      return id;
+    };
+    const weakAuto = mk('weak-auto');
+    const strongAuto = mk('strong-auto');
+    const weakConfirmed = mk('weak-confirmed');
+    const rejected = mk('rejected');
+    createMapping(db, { symbol_id: 'sym1', doc_id: weakAuto, rel_type: 'describes', review_status: 'auto', confidence: 0.4 });
+    createMapping(db, { symbol_id: 'sym1', doc_id: strongAuto, rel_type: 'describes', review_status: 'auto', confidence: 0.9 });
+    createMapping(db, { symbol_id: 'sym1', doc_id: weakConfirmed, rel_type: 'describes', review_status: 'confirmed', confidence: 0.4 });
+    createMapping(db, { symbol_id: 'sym1', doc_id: rejected, rel_type: 'describes', review_status: 'rejected', confidence: 1.0 });
+
+    const affected = markDocsStaleForSymbol(db, 'sym1').sort();
+
+    expect(affected).toEqual([strongAuto, weakConfirmed].sort());
+    expect(getDocSection(db, weakAuto)?.status).toBe('in_sync');
+    expect(getDocSection(db, rejected)?.status).toBe('in_sync');
+  });
+
+  it('markDocsStaleForSymbol treats the 0.7 threshold as inclusive (codeblock evidence)', () => {
+    upsertSymbol(db, { id: 'sym2', name: 'render', kind: 'function' });
+    const id = docSectionId('docs/b.md', 'Render');
+    upsertDocSection(db, { id, file: 'docs/b.md', anchor: 'Render', doc_type: 'standalone' });
+    createMapping(db, { symbol_id: 'sym2', doc_id: id, rel_type: 'describes', review_status: 'auto', confidence: 0.7 });
+
+    expect(markDocsStaleForSymbol(db, 'sym2')).toEqual([id]);
   });
 
   it('markInlineStaleForSymbol returns [] for an empty symbol id', () => {

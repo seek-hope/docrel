@@ -28,7 +28,12 @@ The database lives at `.git/docrelay.db` (local state, never committed).
 - **doc_sections** — one row per parsed documentation section (id, file,
   anchor, content hash, doc type, status: `in_sync` / `stale` / `pending`)
 - **mappings** — foreign keys with `ON DELETE CASCADE`; review status:
-  `auto` (generated), `confirmed` (human-approved), `rejected`
+  `auto` (generated), `confirmed` (human-approved), `rejected`; plus a
+  `confidence` score recording the auto-link evidence strength (0.4 prose
+  mention … 1.0 exact heading), refreshed on every scan. Staleness cascades
+  (a signature change marking docs stale) travel only through `confirmed`
+  mappings or `auto` mappings with confidence ≥ 0.7 — weak auto links are
+  review candidates and never block commits on their own
 - **changelog** — append-only record of symbol mutations and sync outcomes
 - **review_history** — append-only audit trail of confirm/reject decisions
   (actor-attributed); deliberately has **no** foreign keys so the trail

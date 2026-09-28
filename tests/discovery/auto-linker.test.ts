@@ -63,6 +63,69 @@ describe('autoLink', () => {
     expect(mappings[0].review_status).toBe('auto');
   });
 
+  // ── Confidence persistence (schema v6) ────────────────────────────────────
+
+  it('stores the computed evidence score on created mappings', () => {
+    // Two symbols: a heading-exact strong pair (1.0) and, for a DIFFERENT
+    // symbol, a bodytext+file-stem weak pair (0.5). (One symbol for both
+    // would not work: pass-1 high-confidence winners skip pass 2.)
+    const strong_sym = makeSymbol('login');
+    const weak_sym = makeSymbol('render', 'function', 'src/guide.ts:42');
+    const strong = makeDocSection('docs/api.md', 'Login', 'content');
+    const weak = makeDocSection('docs/guide.md', 'Overview', 'The render pass.', [
+      { symbolName: 'render', refType: 'bodytext', confidence: 0.15, lineInDoc: 1 },
+    ]);
+
+    autoLink(db, [strong_sym, weak_sym], [strong, weak]);
+
+    const rows = db.prepare(
+      'SELECT symbol_id, confidence FROM mappings ORDER BY confidence DESC',
+    ).all() as Array<{ symbol_id: string; confidence: number }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ symbol_id: strong_sym.id, confidence: 1.0 });
+    expect(rows[1]).toEqual({ symbol_id: weak_sym.id, confidence: 0.5 });
+  });
+
+  it('refreshes the stored score of an auto mapping when re-evaluated', () => {
+    const sym = makeSymbol('login', 'function', 'src/guide.ts:42');
+    // First evaluation: weak bodytext evidence + file-stem boost (0.5).
+    const weak = makeDocSection('docs/guide.md', 'Overview', 'The login flow.', [
+      { symbolName: 'login', refType: 'bodytext', confidence: 0.15, lineInDoc: 1 },
+    ]);
+    autoLink(db, [sym], [weak]);
+    const docId = docSectionId('docs/guide.md', 'Overview');
+    const conf = () => (db.prepare('SELECT confidence FROM mappings WHERE symbol_id = ? AND doc_id = ?').get(sym.id, docId) as { confidence: number }).confidence;
+    expect(conf()).toBe(0.5);
+
+    // The doc is rewritten to quote the symbol in backticks — re-evaluation
+    // must raise the stored score (and with it, staleness propagation).
+    const strong = makeDocSection('docs/guide.md', 'Overview', 'Call `login()` here.', [
+      { symbolName: 'login()', refType: 'backtick', confidence: 0.9, lineInDoc: 1 },
+    ]);
+    autoLink(db, [sym], [strong]);
+    expect(conf()).toBe(1.0); // 0.9 backtick + 0.1 file-stem boost
+  });
+
+  it('does not refresh the stored score of a CONFIRMED mapping', () => {
+    const sym = makeSymbol('login', 'function', 'src/guide.ts:42');
+    const weak = makeDocSection('docs/guide.md', 'Overview', 'The login flow.', [
+      { symbolName: 'login', refType: 'bodytext', confidence: 0.15, lineInDoc: 1 },
+    ]);
+    autoLink(db, [sym], [weak]);
+    const docId = docSectionId('docs/guide.md', 'Overview');
+    db.prepare("UPDATE mappings SET review_status = 'confirmed' WHERE symbol_id = ? AND doc_id = ?").run(sym.id, docId);
+
+    const strong = makeDocSection('docs/guide.md', 'Overview', 'Call `login()` here.', [
+      { symbolName: 'login()', refType: 'backtick', confidence: 0.9, lineInDoc: 1 },
+    ]);
+    autoLink(db, [sym], [strong]);
+
+    const row = db.prepare('SELECT confidence, review_status FROM mappings WHERE symbol_id = ? AND doc_id = ?').get(sym.id, docId) as { confidence: number; review_status: string };
+    // The human's review decision freezes the row — including its score.
+    expect(row.review_status).toBe('confirmed');
+    expect(row.confidence).toBe(0.5);
+  });
+
   it('matches symbol name in heading with extra text (confidence 1.0)', () => {
     const sym = makeSymbol('login');
     const section = makeDocSection('docs/api.md', 'The login function', 'Content.');
@@ -404,6 +467,25 @@ describe('ingestDocSections disambiguation', () => {
     upsertDocSection(db, { id, file, anchor, content_hash: contentHash(content), doc_type: 'standalone' });
     return section;
   }
+
+  it('stores the ref-type evidence weight on ingest-created mappings', () => {
+    makeSymbol('login', 'src/auth.ts:42');
+    makeSymbol('render', 'src/ui.ts:42');
+    const section = makeSection('docs/api.md', 'Overview', '', [
+      { symbolName: 'login()', refType: 'backtick', confidence: 0.9, lineInDoc: 1 },
+      { symbolName: 'render', refType: 'bodytext', confidence: 0.15, lineInDoc: 2 },
+    ]);
+
+    ingestDocSections(db, [section]);
+
+    const rows = db.prepare(
+      'SELECT s.name, m.confidence FROM mappings m JOIN symbols s ON s.id = m.symbol_id ORDER BY m.confidence DESC',
+    ).all() as Array<{ name: string; confidence: number }>;
+    expect(rows).toEqual([
+      { name: 'login', confidence: 0.9 },
+      { name: 'render', confidence: 0.4 },
+    ]);
+  });
 
   it('links when a name is unique (one symbol of that name)', () => {
     makeSymbol('login', 'src/auth.ts:42');

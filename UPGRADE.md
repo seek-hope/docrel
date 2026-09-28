@@ -7,7 +7,7 @@
 ## Current State (v0.3.1, 2026-09)
 
 - 49 TypeScript source files, ~14,100 lines (ES2023, NodeNext, pure ESM)
-- 66 test files, **1070 tests**, coverage 95.4/88.7/95.2/96.3
+- 66 test files, **1082 tests**, coverage 95.4/88.7/95.2/96.3
   (stmts/branch/funcs/lines, ratcheting CI gate)
 - MCP server (18 tools, in-process testable via `createDocrelayServer`)
   + CLI (28 commands, thin shim → `cli-main`)
@@ -17,7 +17,8 @@
 - Agent auto-detection & integration (Claude Code, Codex, OpenCode,
   Oh My Pi, Hermes, Cursor, Gemini, Kiro, Antigravity)
 - 4 doc types (inline, standalone, generated, architecture)
-- SQLite schema v5 (WAL, foreign keys, atomic UPSERT, review_history)
+- SQLite schema v6 (WAL, foreign keys, atomic UPSERT, review_history,
+  mapping evidence confidence)
 - 44 structured error codes, 8-point health check, incremental scanning
 - Watch daemon mode with PID file and directory-level debounce
 - npm package: 255.6 kB / 200 files, docs included, npm >= 12 ready

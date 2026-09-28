@@ -217,8 +217,16 @@ export async function startWatch(
           const markMappingStale = db.prepare(
             "UPDATE mappings SET review_status = 'auto' WHERE symbol_id = ? AND review_status = 'confirmed'"
           );
+          // Same evidence gate as markDocsStaleForSymbol (confirmed or
+          // confidence >= 0.7, never rejected) — previously this also staled
+          // docs through REJECTED and weak auto mappings.
           const markDocStale = db.prepare(
-            "UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id IN (SELECT doc_id FROM mappings WHERE symbol_id = ?)"
+            `UPDATE doc_sections SET status = 'stale', updated_at = datetime('now')
+             WHERE id IN (
+               SELECT doc_id FROM mappings
+               WHERE symbol_id = ? AND review_status != 'rejected'
+                 AND (review_status = 'confirmed' OR confidence >= 0.7)
+             )`
           );
           const txn = db.transaction(() => {
             for (const sym of affectedSymbols) {

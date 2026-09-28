@@ -7,21 +7,40 @@ export interface MappingRow {
   symbol_id: string; doc_id: string;
   rel_type: 'describes' | 'references' | 'generates' | 'contracts';
   review_status: ReviewStatus; created_at: string;
+  /** Evidence strength of an auto-generated link (schema v6). 1.0 for
+   *  manual/legacy rows. Staleness cascades only through confirmed mappings
+   *  or confidence >= 0.7 — see markDocsStaleForSymbol. */
+  confidence: number;
 }
 
 export interface MappingInput {
   symbol_id: string; doc_id: string;
   rel_type: MappingRow['rel_type']; review_status?: ReviewStatus;
+  /** Auto-link evidence score. Omit for manual/legacy links (defaults to
+   *  1.0 on insert and leaves the stored score untouched on conflict). */
+  confidence?: number;
 }
 
 export function createMapping(db: Database.Database, input: MappingInput): MappingRow {
   const status = input.review_status ?? 'auto';
-  const row = cachedStmt(db, `
+  // Two statement variants: when the caller carries an evidence score (the
+  // auto-linker re-evaluating a pair), the conflict path REFRESHES it; when
+  // they do not (manual link create, tests), an existing row keeps its score.
+  const row = (typeof input.confidence === 'number'
+    ? cachedStmt(db, `
+    INSERT INTO mappings (symbol_id, doc_id, rel_type, review_status, confidence)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET
+      review_status = CASE WHEN review_status = 'auto' THEN excluded.review_status ELSE review_status END,
+      confidence = excluded.confidence
+    RETURNING *
+  `).get(input.symbol_id, input.doc_id, input.rel_type, status, input.confidence)
+    : cachedStmt(db, `
     INSERT INTO mappings (symbol_id, doc_id, rel_type, review_status)
     VALUES (?, ?, ?, ?)
     ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET review_status = CASE WHEN review_status = 'auto' THEN excluded.review_status ELSE review_status END
     RETURNING *
-  `).get(input.symbol_id, input.doc_id, input.rel_type, status) as MappingRow | undefined;
+  `).get(input.symbol_id, input.doc_id, input.rel_type, status)) as MappingRow | undefined;
   if (!row) throw new Error("Mapping was not found after insert");
   return row;
 }

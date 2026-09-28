@@ -55,6 +55,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the audit trail. Files that fail to parse, are `.docrelayignore`d, or
   sit outside the configured doc_dirs are never pruned (transient-error
   safety), and neither are `inline`/`generated` rows.
+- Mapping evidence scores (schema v6): every auto-created mapping now
+  stores the confidence it was linked with (0.4 prose mention … 1.0 exact
+  heading match), refreshed on every scan as doc content evolves. Manual
+  and legacy mappings default to 1.0 (unchanged behavior) until the next
+  auto-link evaluation records their true score.
 - Benchmark harness: `scripts/bench.mjs` builds a synthetic repo
   (configurable file/doc counts, 4000 symbols / 500+ sections by default)
   and times init, full/incremental scans, status, check, and review —
@@ -192,6 +197,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
 
 ### Changed
+- Signature-change staleness now cascades only through `confirmed`
+  mappings or auto mappings with confidence ≥ 0.7 (backtick/codeblock/
+  heading evidence — the doc actually quotes the symbol). Previously ANY
+  non-rejected mapping propagated, so a single common-word symbol
+  (`section`, `shutdown`, …) auto-linked by weak prose evidence could
+  stale dozens of unrelated sections on every edit and permanently block
+  `check --strict`. On this repo's own database the gate cuts the cascade
+  surface from 831 mappings to 78. The file-watcher's deletion path
+  applies the same gate (and no longer stales docs through `rejected`
+  mappings at all).
 - Publish verification: `docs/` now ships in the npm tarball (README's
   relative doc links resolve on npmjs.com and offline), and the packed
   package was install-tested end-to-end — `npm install <tarball>` in a

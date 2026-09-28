@@ -454,6 +454,17 @@ function tryCreateMapping(
   const mappingKey = `${symbol.id}::${docId}::describes`;
   if (existingKeys.has(mappingKey)) {
     counters.alreadyLinked++;
+    // Refresh the stored evidence score so the staleness gate (confirmed OR
+    // confidence >= 0.7) reflects the CURRENT doc content: a doc that dropped
+    // its backtick reference must stop cascading, and vice versa. Auto rows
+    // only — a confirmed/rejected human decision is left untouched (the gate
+    // reads review_status first anyway). The != guard avoids WAL churn when
+    // the score is unchanged.
+    try {
+      db.prepare(
+        "UPDATE mappings SET confidence = ? WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes' AND review_status = 'auto' AND confidence != ?",
+      ).run(confidence, symbol.id, docId, confidence);
+    } catch { /* best-effort refresh — creation paths below report real errors */ }
     return false;
   }
 
@@ -463,6 +474,7 @@ function tryCreateMapping(
       doc_id: docId,
       rel_type: 'describes',
       review_status: 'auto',
+      confidence,
     });
     existingKeys.add(mappingKey);
 
@@ -614,12 +626,22 @@ export interface IngestResult {
   newMappings: number;
 }
 
+/** Evidence weight per codeRef type — mirrors the scoreProfile weights so a
+ *  ref-created mapping carries the same confidence the scorer would assign. */
+const REF_CONFIDENCE: Record<string, number> = {
+  backtick: 0.9,
+  codeblock: 0.7,
+  heading: 0.6,
+  bodytext: 0.4,
+};
+
 /**
  * Create a `describes` mapping from a symbol id to the current section
  * doc id, returning true when a new row was actually inserted. Duplicate
- * mappings are skipped silently.
+ * mappings are skipped silently (their stored confidence is still refreshed
+ * for 'auto' rows, mirroring tryCreateMapping).
  */
-function createRefMapping(db: Database.Database, symbolId: string, docId: string): boolean {
+function createRefMapping(db: Database.Database, symbolId: string, docId: string, confidence = 0.9): boolean {
   try {
     // Existence pre-check: createMapping is an UPSERT whose ON CONFLICT clause
     // would rewrite (and count as "new") an existing row — re-ingesting an
@@ -627,12 +649,20 @@ function createRefMapping(db: Database.Database, symbolId: string, docId: string
     const existing = cachedStmt(db,
       `SELECT 1 AS x FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes'`,
     ).get(symbolId, docId);
-    if (existing) return false;
+    if (existing) {
+      try {
+        db.prepare(
+          "UPDATE mappings SET confidence = ? WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes' AND review_status = 'auto' AND confidence != ?",
+        ).run(confidence, symbolId, docId, confidence);
+      } catch { /* best-effort refresh */ }
+      return false;
+    }
     createMapping(db, {
       symbol_id: symbolId,
       doc_id: docId,
       rel_type: 'describes',
       review_status: 'auto',
+      confidence,
     });
     return true;
   } catch {
@@ -687,8 +717,9 @@ export function ingestDocSections(
         // uniquely equals the doc file stem — otherwise skip (no link).
         const sameNameRows = sameNameStmt.all(cleanName, ref.symbolName) as Array<{ id: string; location: string }>;
 
+        const refConfidence = REF_CONFIDENCE[ref.refType] ?? 0.9;
         if (sameNameRows.length === 1) {
-          if (createRefMapping(db, sameNameRows[0].id, id)) newMappings++;
+          if (createRefMapping(db, sameNameRows[0].id, id, refConfidence)) newMappings++;
         } else if (sameNameRows.length > 1) {
           // Compare basename stems only, mirroring the file-name convention in
           // scorePair (docs/auth/login.md ↔ src/auth/login.ts).
@@ -703,7 +734,7 @@ export function ingestDocSections(
               unique = cand.id;
             }
           }
-          if (unique && unique !== 'AMBIGUOUS' && createRefMapping(db, unique, id)) newMappings++;
+          if (unique && unique !== 'AMBIGUOUS' && createRefMapping(db, unique, id, refConfidence)) newMappings++;
         }
       }
     } catch (err: any) {
