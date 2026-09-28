@@ -7,8 +7,6 @@ import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
 import { loadConfig, validateConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
-import { CodegraphExtractor } from './extractors/codegraph.js';
-import { BuiltinExtractor } from './extractors/builtin.js';
 import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelayStatus } from './tools/status.js';
 import { docrelayCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
@@ -20,8 +18,6 @@ import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
-import type { ScanReport } from './discovery/scanner.js';
-import { shouldFallbackToBuiltin } from './sync/scan-fallback.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { listSymbols } from './db/symbols.js';
@@ -32,21 +28,20 @@ import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
 import { docrelayGc } from './tools/gc.js';
 import { stringify as stringifyYaml } from 'yaml';
+import {
+  errMsg as errMsgSupport,
+  createExtractor,
+  scanWithFallback,
+  isProjectInitialized as isProjectInitializedSupport,
+} from './cli-support.js';
 
 const program = new Command();
 const projectRoot = process.env.DOCRELAY_PROJECT_ROOT ?? process.cwd();
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
-function errMsg(e: unknown): string {
-  // Non-Error throws stringify to '[object Object]' — treat anything that is
-  // not an Error or a string as unknown rather than emitting a useless blob.
-  const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : 'unknown error';
-  // Sanitize project root paths from error messages
-  return raw
-    .replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>')
-    .replace(/\/(?:home|opt|var|etc|tmp|usr)\/[^\s:,)]*/g, '<path>');
-}
+// Thin project-bound wrappers around the testable helpers in cli-support.ts.
+const errMsg = (e: unknown): string => errMsgSupport(e, projectRoot);
 
 /** Exit with database cleanup — ensures WAL checkpointing completes.
  *  The OS reaps the CodeGraph MCP child process on parent exit;
@@ -77,11 +72,6 @@ let _ctxReady = false;
 /** Shared extractor factory — used by ensureContext, scan, and gc.
  *  Tries Codegraph first, falls back to builtin regex extractor.
  *  Diagnostics are handled by CodegraphClient.preflight(), so we stay quiet. */
-async function createExtractor(cg: CodegraphClient, cfg: ReturnType<typeof loadConfig>): Promise<SymbolExtractor> {
-  const codegraphExt = new CodegraphExtractor(cg, cfg.codegraph?.maxFiles);
-  if (await codegraphExt.isAvailable()) return codegraphExt;
-  return new BuiltinExtractor();
-}
 
 /**
  * Run a scan but fall back to the builtin regex extractor when the chosen
@@ -91,26 +81,8 @@ async function createExtractor(cg: CodegraphClient, cfg: ReturnType<typeof loadC
  * this closes that gap by re-scanning with the builtin extractor.
  * Returns the fallback scan report when a fallback happened.
  */
-async function scanWithFallback(
-  extractor: SymbolExtractor,
-  cfgDb: ReturnType<typeof getDb>,
-  cfgConfig: ReturnType<typeof loadConfig>,
-  cfgRoot: string,
-  fullScan = true,
-): Promise<ScanReport> {
-  const report = await scanProject(extractor, cfgDb, cfgConfig, cfgRoot, fullScan);
-  if (shouldFallbackToBuiltin(report.totalSymbols, extractor.name, cfgConfig.code_dirs, cfgRoot)) {
-    console.warn('codegraph returned 0 symbols, fell back to builtin extractor');
-    return scanProject(new BuiltinExtractor(), cfgDb, cfgConfig, cfgRoot, fullScan);
-  }
-  return report;
-}
 
-/** Check if doc-relay has been initialized in this project. */
-function isProjectInitialized(): boolean {
-  return fs.existsSync(path.join(projectRoot, '.docrelay')) ||
-         fs.existsSync(path.join(projectRoot, '.git', 'docrelay.db'));
-}
+const isProjectInitialized = (): boolean => isProjectInitializedSupport(projectRoot);
 
 /** Guard: commands that need project state exit with clear guidance. */
 function requireProject(): void {

@@ -14,7 +14,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 59/49/68/62) enforced in CI.
+  (currently 59/50/69/62) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -60,6 +60,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
 
 ### Changed
+- CLI decision logic (`errMsg` sanitization, extractor selection,
+  codegraph→builtin scan fallback, init detection) extracted from `cli.ts`
+  into a new unit-tested `src/cli-support.ts`; `cli.ts` is now thin
+  commander wiring covered end-to-end by the subprocess smoke suite.
 - `src/index.ts` (MCP server) refactored into a testable
   `createDocrelayServer(deps)` factory plus an explicit `main()` — tool
   registrations no longer depend on module-level side effects, and the
