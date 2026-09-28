@@ -33,6 +33,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone
   auto_update failure modes, changelog applied/failed accounting, and
   syncAllStale dedup).
+- CLI end-to-end smoke suite (`tests/integration/cli.test.ts`): runs the real
+  `dist/cli.js` binary in a throwaway project covering `--help`/`--version`,
+  uninitialized-project guards, `init`, `scan` (incl. `--dry-run`), `status`
+  (json/markdown), `check --strict` with `--file` filtering,
+  `export-mappings`, `review`, `backup`, `gc`, and `health`.
+- `DOCRELAY_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` environment opt-out for
+  the background npm update check (CI/offline use).
 - `doc-relay mcp` CLI subcommand that starts the MCP server on stdio, so the
   published package can be launched directly from agent MCP configs
   (`npx -y doc-relay mcp`). Previously the MCP server could only be started

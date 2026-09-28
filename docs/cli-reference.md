@@ -114,6 +114,13 @@ Update the globally-installed DocRelay to the latest npm release.
 Start the MCP server on stdio. Agent configs invoke this for you — see
 [mcp-integration.md](mcp-integration.md).
 
+## Environment variables
+
+- `DOCRELAY_PROJECT_ROOT` — operate on a different project directory than
+  the current working directory.
+- `DOCRELAY_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` — disable the background
+  npm update check (useful for CI and offline environments).
+
 ## Exit codes
 
 - `0` — success (or, for `check`/`health`, everything healthy)

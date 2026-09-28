@@ -883,6 +883,9 @@ program
 
 
 async function notifyIfOutdated(): Promise<void> {
+  // Opt-out for CI/offline environments, mirroring the common
+  // NO_UPDATE_NOTIFIER convention used by npm ecosystems.
+  if (process.env.DOCRELAY_NO_UPDATE_CHECK || process.env.NO_UPDATE_NOTIFIER) return;
   try {
     const latest = await checkForUpdates(DOCRELAY_VERSION);
     if (latest && isNewer(DOCRELAY_VERSION, latest)) {
