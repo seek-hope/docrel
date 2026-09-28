@@ -26,7 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 80.6/74.4/79.6/81.2) enforced in CI.
+  (currently 82.4/76.9/79.9/83.0) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -35,7 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (474 new tests, 771 total):
+  branches (521 new tests, 818 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -66,7 +66,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   section-scoped signature replacement), and the comment/string stripping
   state machines plus docstring regeneration (narrative preservation,
   param-description harvesting, generic-constraint parameter parsing,
-  string-default comma handling)).
+  string-default comma handling), and the sync-engine signature extractor
+  and error paths (Allman/overload/multi-line/generic-constraint signature
+  assembly, block-comment and string-splice decoys, 500-char/100k-line/10 MB
+  extraction guards, dangling mappings, fault-injected mark-* failures via a
+  db proxy, standalone surgical dedup/genuine-failure/hash-accounting/mtime
+  paths, unknown pre-union doc_types, sanitized per-doc and catastrophic
+  error wrappers, multi-line method standalone rewrites, and a vacuous
+  inline-sync test assertion repaired to match the real failure prefix)).
 - In-process MCP server tests (`tests/integration/mcp-server.test.ts`):
   drives the real server through the official SDK client — tool listing,
   status/check/scan/link/confirm/review round-trips, check file-filter
@@ -106,6 +113,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- Inline sync failed for every symbol whose signature contains a string or
+  template literal (e.g. default parameter values like `a = "x")"`):
+  `updateInlineDoc` counted the verbatim signature against comment+string-
+  stripped content, so the occurrence count was always 0 and the sync
+  aborted with "signature missing from source". The signature is now
+  string-stripped (comments kept, so crafted comment-trapped signatures
+  still fail validation) before both the pre-count and post-validation.
+- Inline sync never ran for multi-line class method definitions
+  (`login(\n  user: string\n)`): `extractDocstring`'s symbol regex required
+  the closing paren and an opening brace/colon on a single line, so the
+  docstring lookup returned null and the sync bailed with "Could not
+  extract existing docstring". An anchored opener pattern (optional member
+  modifiers + `name(` with no closing paren on the line) now recognizes
+  multi-line definitions while still excluding prefixed call sites.
 - Detailed review doc snippets displayed the heading line number off by one
   (`// docs/file.md:N+1` instead of `N`): `readDocSnippet` added one to an
   already 1-based line count.

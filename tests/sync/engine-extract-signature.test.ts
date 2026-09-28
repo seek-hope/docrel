@@ -65,8 +65,11 @@ describe('extractCurrentSignature — success branches (via inline sync)', () =>
     createMapping(db, { symbol_id: id, doc_id: docId, rel_type: 'describes' });
 
     const result = await syncSymbol(db, config, id, tmpDir);
+    // Match the whole inline-update failure prefix, not just the reason-less
+    // tail: a failed extraction carries its reason (e.g. 'symbol definition not
+    // found in source file'), which the old substring check silently ignored.
     expect(
-      result.errors.filter((e) => e.includes('could not extract current signature')),
+      result.errors.filter((e) => e.includes('Failed to update inline doc')),
       `signature extraction should succeed; errors: ${result.errors.join(' | ')}`,
     ).toHaveLength(0);
     return result;
@@ -125,6 +128,18 @@ describe('extractCurrentSignature — success branches (via inline sync)', () =>
     expect(content).toContain('pass: string');
   });
 
+  it('extracts a multi-line class method definition', async () => {
+    // End-to-end: extractDocstring finds the JSDoc via the anchored opener,
+    // extractCurrentSignature accumulates the multi-line parameter list.
+    const result = await runInlineCase(
+      'class Auth {\n  /**\n   * Docs.\n   */\n  login(\n    user: string\n  ): boolean {\n    return true;\n  }\n}\n',
+      'login', 5, 'login(\n    user: string,\n    pass: string\n  ): boolean {',
+    );
+    expect(result.docsUpdated).toContain('src/auth.ts');
+    const content = fs.readFileSync(path.join(tmpDir, 'src', 'auth.ts'), 'utf-8');
+    expect(content).toContain('pass: string');
+  });
+
   it('extracts an Allman-style class method', async () => {
     await runInlineCase(
       'class Auth {\n  /**\n   * Docs.\n   */\n  login(user: string): boolean\n  {\n    return true;\n  }\n}\n',
@@ -136,6 +151,29 @@ describe('extractCurrentSignature — success branches (via inline sync)', () =>
     await runInlineCase(
       'class Auth {\n  /**\n   * Docs.\n   */\n  login(\n    user: string\n  )\n  : boolean {\n    return true;\n  }\n}\n',
       'login', 5, 'login(\n    user: string,\n    pass: string\n  )\n  : boolean {',
+    );
+  });
+
+  it('extracts an Allman-style function with a blank line before the brace', async () => {
+    await runInlineCase(
+      '/**\n * Docs.\n */\nexport function login(user: string)\n\n{\n  return true;\n}\n',
+      'login', 4, 'export function login(user: string, pass: string)\n\n{',
+    );
+  });
+
+  it('returns the trimmed line for a function keyword without parens', async () => {
+    await runInlineCase(
+      '/**\n * Docs.\n */\nfunction login\n',
+      'login', 4, 'function login(a: string): void {',
+    );
+  });
+
+  it('tracks string and template literals inside parameter lists', async () => {
+    // The ")" inside the string default must not close the parameter list;
+    // the ${...} nesting inside the template default must not either.
+    await runInlineCase(
+      '/**\n * Docs.\n */\nexport function login(a: string = "x\\")", b: string = `p${q}r`): boolean {\n  return true;\n}\n',
+      'login', 4, 'export function login(a: string, b: string): boolean {',
     );
   });
 
@@ -213,7 +251,56 @@ describe('extractCurrentSignature — failure guards (via standalone sync)', () 
   }
 
   it('rejects a symbol name over 500 chars (corruption guard)', async () => {
+    // The source file must exist so validatePath passes and the 500-char
+    // name guard (not the path guard) is what rejects the extraction.
+    fs.writeFileSync(path.join(tmpDir, 'src', 'auth.ts'), 'export {}\n', 'utf-8');
     await runStandaloneCase('x'.repeat(501), 'src/auth.ts:1');
+  });
+
+  it('rejects a symbol name over 500 chars via inline sync', async () => {
+    const name = 'x'.repeat(501);
+    const content = `/**\n * Docs.\n */\nexport function ${name}(a: string): boolean {\n  return true;\n}\n`;
+    fs.writeFileSync(path.join(tmpDir, 'src', 'auth.ts'), content, 'utf-8');
+    const id = symbolId('typescript', `src/auth.ts::${name}`, 'function');
+    upsertSymbol(db, { id, name, kind: 'function', location: 'src/auth.ts:4', raw_signature: `export function ${name}(a: string, b: number): boolean {` });
+    const docId = docSectionId('src/auth.ts', name);
+    upsertDocSection(db, { id: docId, file: 'src/auth.ts', anchor: name, doc_type: 'inline', status: 'stale' });
+    createMapping(db, { symbol_id: id, doc_id: docId, rel_type: 'describes' });
+
+    const result = await syncSymbol(db, config, id, tmpDir);
+    expect(result.errors.some((e) => e.includes('symbol name too long'))).toBe(true);
+  });
+
+  it('reports an unreadable source file (open failure)', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'export function login(): boolean {\n  return true;\n}\n',
+      'utf-8',
+    );
+    const realOpen = fs.openSync;
+    vi.spyOn(fs, 'openSync').mockImplementation((p, flags, mode) => {
+      if (String(p).endsWith('auth.ts')) throw new Error('EIO: input/output error');
+      return realOpen(p, flags, mode);
+    });
+    await runStandaloneCase('login', 'src/auth.ts:1');
+  });
+
+  it('rejects a source file over 100k lines', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'export function login(): boolean {\n  return true;\n}\n' + 'x\n'.repeat(100_001),
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:1');
+  });
+
+  it('reports when the symbol definition is not found in the source', async () => {
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'export function other(): boolean {\n  return true;\n}\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:1');
   });
 
   it('rejects a symbol location pointing at a directory', async () => {
@@ -227,7 +314,167 @@ describe('extractCurrentSignature — failure guards (via standalone sync)', () 
     await runStandaloneCase('login', 'src/big.ts:1');
   });
 
+  it('skips a trailing overload declaration when no body follows (peek exhausts at EOF)', async () => {
+    // The file ends right after the overload declaration: the peek loop finds
+    // no further non-empty line, so the function path falls through to the
+    // `continue` at engine.ts:693 and the symbol is never found.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'export function login(user: string);\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:1');
+  });
+
+  it('breaks the method-candidate scan when the name is spliced by a string literal', async () => {
+    // codeOnly strips the string, joining `log` + `in(` into `login(` so the
+    // method regex matches — but the raw trimmed line has no textual `login(`,
+    // so the candidate scan exhausts and breaks at engine.ts:738.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'const n = 1;\n  log"/*"in(user: string) {\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:2');
+  });
+
+  it('skips an interface-style method declaration ending with ;', async () => {
+    // afterClean ends with ';' → the method path continues at engine.ts:769.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'class Auth {\n  login(user: string): void;\n}\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:2');
+  });
+
+  it('gives up when a peeked continuation line has no opening brace', async () => {
+    // The peeked line is neither '{' nor a return-type line containing '{'
+    // (engine.ts:790-793), so extraction falls through to 'not found'.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'class Auth {\n  login(\n    user: string\n  ) trailing\n  garbage\n}\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:2');
+  });
+
+  it('reskips past a string-embedded block-comment closer after the match', async () => {
+    // The `/*` inside the string literal survives stripAllBlockComments, so
+    // the candidate scan believes the match is inside a block comment and
+    // skips past the next `*/` (also inside a string) — engine.ts:749-751.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'const a = "/*"; login(user: string): boolean { return true; } const b = "*/";\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:1');
+  });
+
+  it('bails out of the candidate scan on an unclosed block-comment marker', async () => {
+    // A string-embedded `/*` with no later `*/` trips the bail at
+    // engine.ts:750.
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'const a = "/*"; login(user: string): boolean { return true; }\n',
+      'utf-8',
+    );
+    await runStandaloneCase('login', 'src/auth.ts:1');
+  });
+
   it('returns the invalid-location reason when the location is empty', async () => {
     await runStandaloneCase('login', '');
+  });
+});
+
+describe('extractCurrentSignature — multi-line method success (via standalone sync)', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-exml-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Standalone doc contains `rawOldSig`; the source file holds the current
+   *  (multi-line) method signature. The surgical swap should rewrite the doc
+   *  and push the file to docsUpdated — proving extraction succeeded. */
+  async function runStandaloneSuccess(content: string, line: number, rawOldSig: string) {
+    fs.writeFileSync(path.join(tmpDir, 'src', 'auth.ts'), content, 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'api.md'), `## auth\n\n\`${rawOldSig}\`\n`, 'utf-8');
+    const id = symbolId('typescript', 'src/auth.ts::login', 'function');
+    upsertSymbol(db, { id, name: 'login', kind: 'function', location: `src/auth.ts:${line}`, raw_signature: rawOldSig });
+    const docId = docSectionId('docs/api.md', 'auth');
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone', status: 'stale' });
+    createMapping(db, { symbol_id: id, doc_id: docId, rel_type: 'describes' });
+
+    const result = await syncSymbol(db, config, id, tmpDir);
+    expect(result.errors, `standalone sync should succeed; errors: ${result.errors.join(' | ')}`).toHaveLength(0);
+    expect(result.docsUpdated).toContain('docs/api.md');
+    return result;
+  }
+
+  it('accumulates a multi-line parameter list and a return-type line (closing at EOL)', async () => {
+    // `)` is the last character of the accumulated signature, so the brace
+    // search peeks at the next line (': boolean {') — engine.ts:759-761 and
+    // the closing-at-EOL peek path 795-815.
+    const result = await runStandaloneSuccess(
+      'class Auth {\n  login(\n    user: string\n  )\n  : boolean {\n    return true;\n  }\n}\n',
+      2, 'login(user: string): boolean',
+    );
+    expect(result.docsUpdated).toHaveLength(1);
+    const doc = fs.readFileSync(path.join(tmpDir, 'docs', 'api.md'), 'utf-8');
+    expect(doc).toContain(': boolean {');
+    expect(doc).not.toContain('login(user: string): boolean');
+  });
+
+  it('skips a blank line while peeking for the Allman brace', async () => {
+    // Blank line between the signature and the brace exercises the peek
+    // increment at engine.ts:777.
+    await runStandaloneSuccess(
+      'class Auth {\n  login(user: string) // c\n\n  {\n    return true;\n  }\n}\n',
+      2, 'login(user: string): boolean',
+    );
+  });
+
+  it('accumulates a peeked return-type line containing the brace (closing mid-line)', async () => {
+    // The peeked line does not start with '{' but contains it, so the
+    // extended signature is returned at engine.ts:792.
+    await runStandaloneSuccess(
+      'class Auth {\n  login(user: string) trailing\n  : boolean {\n    return true;\n  }\n}\n',
+      2, 'login(user: string): boolean',
+    );
+  });
+
+  it('finds an Allman brace past a blank line when the closing paren ends the line', async () => {
+    // `)` at end of the accumulated signature, then a blank line, then the
+    // brace — exercises the closing-at-EOL peek increment (engine.ts:800)
+    // and the Allman append path (805-808).
+    await runStandaloneSuccess(
+      'class Auth {\n  login(\n    user: string\n  )\n\n  {\n    return true;\n  }\n}\n',
+      2, 'login(user: string): boolean',
+    );
+  });
+
+  it('peeks past a trailing line comment for an Allman brace (closing mid-line)', async () => {
+    // The accumulated signature ends with `) // mount point`, so `after` does
+    // not start with '{' or ':' — the peek finds the Allman brace on the next
+    // line — engine.ts:775-785.
+    await runStandaloneSuccess(
+      'class Auth {\n  login(\n    user: string\n  ) // mount point\n  {\n    return true;\n  }\n}\n',
+      2, 'login(user: string): boolean',
+    );
   });
 });

@@ -98,6 +98,33 @@ describe('extractDocstring', () => {
     expect(extractDocstring(file, 'foo', tmpDir)).toBeNull();
   });
 
+  it('extracts a JSDoc comment before a multi-line class method definition', () => {
+    // The method opener spans multiple lines (`login(\n  user: string\n)`),
+    // which no single-line alternative in the symbol regex matches.
+    const file = path.join(tmpDir, 'm.ts');
+    fs.writeFileSync(
+      file,
+      'class Auth {\n  /**\n   * Logs in.\n   */\n  login(\n    user: string\n  ): boolean {\n    return true;\n  }\n}\n',
+      'utf-8',
+    );
+
+    const doc = extractDocstring(file, 'login', tmpDir, 4);
+    expect(doc).toBe('  /**\n   * Logs in.\n   */');
+  });
+
+  it('does not match a same-named call prefixed by an expression', () => {
+    // `return login(` and `const x = login(` must not be treated as
+    // definitions — the opener pattern is anchored to the line start.
+    const file = path.join(tmpDir, 'call.ts');
+    fs.writeFileSync(
+      file,
+      '/** Real docs */\nfunction caller() {\n  return login(\n    user\n  );\n}\n',
+      'utf-8',
+    );
+
+    expect(extractDocstring(file, 'login', tmpDir)).toBeNull();
+  });
+
   it('extracts a single-line comment before a const', () => {
     const file = path.join(tmpDir, 'const.ts');
     fs.writeFileSync(file, '// A constant\nconst foo = 42;', 'utf-8');
@@ -667,6 +694,47 @@ describe('updateInlineDoc guard paths', () => {
     expect(result).toBe(false);
     expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('signature missing from source, refusing partial update'),
+    );
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('updates a signature containing string and template literal defaults', () => {
+    // Regression: signatures with string/template defaults were counted
+    // verbatim against comment+string-stripped content, so they never matched
+    // and every inline sync failed with "signature missing from source".
+    const sig = 'function foo(a: string = "x\\")y", b: string = `p${q}r`): void';
+    const content = `/** Doc */\n${sig} {}`;
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: sig,
+      newSignature: 'function foo(a: string, b: string): void',
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(true);
+    const updated = fs.readFileSync(testFile, 'utf-8');
+    expect(updated).toContain('function foo(a: string, b: string): void');
+    expect(updated).toContain('/** New */');
+  });
+
+  it('still skips replacement when the string-stripped signature is ambiguous', () => {
+    // Two definitions whose code shape collides once string literals are
+    // stripped must stay ambiguous — better to skip than to mis-replace.
+    const content =
+      '/** Doc */\nfunction foo(a: string = "x"): void {}\nfunction foo(a: string = "y"): void {}';
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'function foo(a: string = "x"): void',
+      newSignature: 'function foo(a: string): void',
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('old signature count is 2 (expected 1)'),
     );
     expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
   });

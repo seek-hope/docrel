@@ -138,8 +138,15 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // with "oversized search string" in the warning messages below.
     const sigInputEmpty = !input.oldSignature?.trim() || !input.newSignature?.trim();
     const docInputEmpty = !input.oldDocstring?.trim() || !input.newDocstring?.trim();
+    // The content is counted in comment+string-stripped form, so the old
+    // signature must be string-stripped too: a signature containing string or
+    // template literals (e.g. default parameter values like `a = "x")"`) can
+    // never match the stripped content verbatim, and every inline sync for
+    // such a symbol failed with "signature missing from source". Comments are
+    // deliberately left intact in the signature so a crafted signature whose
+    // code would be commented out still fails the occurrence checks.
     const sigCount = sigInputEmpty
-      ? -2 : countOccurrences(contentNoComments, input.oldSignature);
+      ? -2 : countOccurrences(contentNoComments, stripStringLiterals(input.oldSignature));
     // Use content with non-JSDoc comments and strings stripped for docstring
     // counting. This prevents oldDocstring text appearing inside string literals
     // or non-JSDoc comments from inflating the count. JSDoc comments (/** */),
@@ -231,7 +238,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // false negatives when the new signature/docstring text appears in JSDoc
     // comments, string literals, or non-JSDoc comments — matching the
     // pre-replacement occurrence counting approach at lines 134 and 148.
-    if (sigInputEmpty === false && countOccurrences(stripCommentsAndStrings(stripAllBlockComments(content)), input.newSignature) !== 1) {
+    if (sigInputEmpty === false && countOccurrences(stripCommentsAndStrings(stripAllBlockComments(content)), stripStringLiterals(input.newSignature)) !== 1) {
       console.warn('DocRelay: updateInlineDoc post-validation failed — new signature count != 1');
       return false;
     }
@@ -664,6 +671,19 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   const lines = content.split('\n');
 
   const symRegex = escapedSymRegex(symbolName);
+  // Multi-line class method definitions (`login(\n  user: string\n)`) match
+  // no single-line alternative in symRegex: the method shape there requires
+  // `)…[{:]` on one line. Without an opener pattern, extractDocstring never
+  // finds such symbols and every inline sync bails with "Could not extract
+  // existing docstring". Accept an anchored opener — optional member
+  // modifiers, then `name(` with no closing paren on the line. Anchoring to
+  // the line start excludes call sites prefixed by `return`, assignments,
+  // `await`, etc. (a bare-statement call like `login(` still matches, the
+  // same heuristic risk extractCurrentSignature's methodRegex already takes).
+  const openerRegex = new RegExp(
+    `^\\s*(?:(?:public|private|protected|static|async|override|readonly|abstract)\\s+)*${escapeRegex(symbolName)}(?:<[^>]*>)?\\s*\\([^)]*$`,
+  );
+  const isSymbolLine = (codePart: string) => symRegex.test(codePart) || openerRegex.test(codePart);
 
   // When a line hint is provided, start searching from that line
   // to find the correct occurrence when same-named symbols share a file.
@@ -671,7 +691,7 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   let symbolLine = -1;
   for (let i = searchStart; i < lines.length; i++) {
     const codePart = stripCommentsAndStrings(lines[i]);
-    if (symRegex.test(codePart)) {
+    if (isSymbolLine(codePart)) {
       symbolLine = i;
       break;
     }
@@ -680,7 +700,7 @@ export function extractDocstring(file: string, symbolName: string, projectRoot: 
   if (symbolLine < 0 && searchStart > 0) {
     for (let i = 0; i < searchStart; i++) {
       const codePart = stripCommentsAndStrings(lines[i]);
-      if (symRegex.test(codePart)) {
+      if (isSymbolLine(codePart)) {
         symbolLine = i;
         break;
       }
@@ -936,6 +956,57 @@ export function stripAllBlockComments(content: string): string {
       continue;
     }
     out.push(ch);
+    i++;
+  }
+  return out.join('');
+}
+
+/**
+ * Strip ONLY string and template literals from content, leaving comments and
+ * all other text intact. Mirrors the string-handling branches of
+ * stripCommentsAndStrings (escape sequences, `${...}` template nesting).
+ *
+ * Used to make signature occurrence counting consistent: the content side is
+ * counted with both comments and strings stripped, so a signature containing
+ * string literals (e.g. default parameter values) must be string-stripped
+ * before it can match. Comments are intentionally NOT stripped here — a
+ * signature carrying comment text must keep failing the count so crafted
+ * signatures whose code would be commented out cannot slip past validation.
+ */
+export function stripStringLiterals(content: string): string {
+  const out: string[] = [];
+  let i = 0;
+  while (i < content.length) {
+    const c = content[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i++;
+      while (i < content.length) {
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          i += 2; continue;
+        }
+        if (content[i] === quote) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (c === '`') {
+      i++;
+      let nestDepth = 0;
+      while (i < content.length) {
+        if (content[i] === '\\') {
+          if (i + 1 >= content.length) { i++; break; }
+          i += 2; continue;
+        }
+        if (content[i] === '$' && content[i + 1] === '{') { nestDepth++; i += 2; continue; }
+        if (content[i] === '}' && nestDepth > 0) { nestDepth--; i++; continue; }
+        if (content[i] === '`' && nestDepth === 0) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    out.push(c);
     i++;
   }
   return out.join('');
