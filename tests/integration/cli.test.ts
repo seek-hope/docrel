@@ -159,6 +159,36 @@ describe('CLI smoke', () => {
     expect(Array.isArray(JSON.parse(fs.readFileSync(outFile, 'utf-8')))).toBe(true);
   });
 
+  it('history lists decisions recorded by confirm --all', { timeout: 120_000 }, () => {
+    expect(run(['init', '--no-hooks', '--no-scan', '--no-integrate'], tmpDir).code).toBe(0);
+    expect(run(['scan'], tmpDir).code).toBe(0);
+
+    const empty = run(['history'], tmpDir);
+    expect(empty.code).toBe(0);
+    expect(JSON.parse(empty.stdout)).toEqual([]);
+
+    const confirm = run(['confirm', '--all'], tmpDir);
+    expect(confirm.code).toBe(0);
+    const confirmed = JSON.parse(confirm.stdout) as { confirmed: number };
+    expect(confirmed.confirmed).toBeGreaterThanOrEqual(1);
+
+    const history = run(['history', '--limit', '5'], tmpDir);
+    expect(history.code).toBe(0);
+    const entries = JSON.parse(history.stdout) as Array<{ action: string; actor: string; symbol_name: string | null }>;
+    expect(entries.length).toBeGreaterThanOrEqual(1);
+    expect(entries.length).toBeLessThanOrEqual(5);
+    expect(entries[0].action).toBe('confirmed');
+    expect(entries[0].actor).toBe('cli');
+
+    const md = run(['history', '--format', 'markdown'], tmpDir);
+    expect(md.code).toBe(0);
+    expect(md.stdout).toContain('## DocRelay Review History');
+
+    const badLimit = run(['history', '--limit', 'abc'], tmpDir);
+    expect(badLimit.code).toBe(1);
+    expect(badLimit.stderr).toContain('--limit');
+  });
+
   it('health reports project state', () => {
     expect(run(['init', '--no-hooks', '--no-scan', '--no-integrate'], tmpDir).code).toBe(0);
     const r = run(['health'], tmpDir);

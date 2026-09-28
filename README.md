@@ -68,6 +68,7 @@ doc-relay status
 | `doc-relay confirm` / `doc-relay reject` | Approve or reject pending sync suggestions (supports `--all`, `--pattern`) |
 | `doc-relay link create --symbol <id> --doc <id>` | Create a manual mapping |
 | `doc-relay diff <symbol_id>` | View change history for a symbol |
+| `doc-relay history` | Audit trail of confirm/reject decisions (`--limit`, `--symbol`, `--format`) |
 | `doc-relay scan` | Scan codebase and discover symbols (`--incremental`, `--dry-run`) |
 | `doc-relay review` | Review queue for stale/pending documentation |
 | `doc-relay watch` | Watch the codebase and re-scan on change (`--daemon` for background) |
@@ -101,7 +102,7 @@ Add to your agent's MCP configuration:
 
 Running `doc-relay integrate` writes this configuration for you (Claude Code, Codex, OpenCode, Oh My Pi, and others are auto-detected).
 
-DocRelay exposes 16 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_sync_all`, `docrelay_link`, `docrelay_confirm`, `docrelay_reject`, `docrelay_diff`, `docrelay_scan`, `docrelay_review`, `docrelay_integrate`, `docrelay_watch`, `docrelay_watch_status`, `docrelay_refresh`, `docrelay_health`.
+DocRelay exposes 17 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_sync_all`, `docrelay_link`, `docrelay_confirm`, `docrelay_reject`, `docrelay_diff`, `docrelay_history`, `docrelay_scan`, `docrelay_review`, `docrelay_integrate`, `docrelay_watch`, `docrelay_watch_status`, `docrelay_refresh`, `docrelay_health`.
 
 ### Configuration (`.docrelay/config.yaml`)
 

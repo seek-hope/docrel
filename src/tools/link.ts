@@ -1,6 +1,8 @@
 import type Database from 'better-sqlite3';
 import { assertDbOpen } from '../db/connection.js';
 import { createMapping, deleteMapping, setReviewStatus } from '../db/mappings.js';
+import { recordReviewAction } from '../db/review-history.js';
+import type { ReviewAction } from '../db/review-history.js';
 import type { MappingRow, ReviewStatus } from '../db/mappings.js';
 
 const VALID_REL_TYPES = new Set(['describes', 'references', 'generates', 'contracts']);
@@ -49,16 +51,33 @@ export function docrelayLink(
   }
 }
 
-export function docrelayConfirm(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+/**
+ * Best-effort audit trail: a failed history insert must never break the
+ * review decision itself (the mapping update has already succeeded).
+ */
+function recordReviewActionSafe(
+  db: Database.Database,
+  input: { symbol_id: string; doc_id: string; rel_type: string; action: ReviewAction; actor: string },
+): void {
+  try {
+    recordReviewAction(db, input);
+  } catch (err: any) {
+    console.warn('DocRelay: failed to record review history:', err instanceof Error ? err.message : err);
+  }
+}
+
+export function docrelayConfirm(db: Database.Database, sid: string, did: string, rt = 'describes', actor = 'cli'): LinkResult {
   if (!sid || !did) return { action:'error', symbol_id:sid || '', doc_id:did || '', rel_type:rt, message:'symbol_id and doc_id must not be empty' };
   const row = setReviewStatus(db, sid, did, rt, 'confirmed');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
+  recordReviewActionSafe(db, { symbol_id: sid, doc_id: did, rel_type: rt, action: 'confirmed', actor });
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'confirmed', message:'Mapping confirmed.' };
 }
 
-export function docrelayReject(db: Database.Database, sid: string, did: string, rt = 'describes'): LinkResult {
+export function docrelayReject(db: Database.Database, sid: string, did: string, rt = 'describes', actor = 'cli'): LinkResult {
   if (!sid || !did) return { action:'error', symbol_id:sid || '', doc_id:did || '', rel_type:rt, message:'symbol_id and doc_id must not be empty' };
   const row = setReviewStatus(db, sid, did, rt, 'rejected');
   if (!row) return { action:'error', symbol_id:sid, doc_id:did, rel_type:rt, message:'Mapping not found.' };
+  recordReviewActionSafe(db, { symbol_id: sid, doc_id: did, rel_type: rt, action: 'rejected', actor });
   return { action:'updated', symbol_id:sid, doc_id:did, rel_type:rt, review_status:'rejected', message:'Mapping rejected.' };
 }

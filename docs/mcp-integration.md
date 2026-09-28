@@ -42,7 +42,7 @@ Notes:
   missing (rather than silently creating a database in a random directory).
 - Set `DOCRELAY_DEBUG=1` for stack traces in server logs.
 
-## Available tools (16)
+## Available tools (17)
 
 | Tool | Purpose |
 |------|---------|
@@ -55,6 +55,7 @@ Notes:
 | `docrelay_confirm` | Confirm auto-generated mappings |
 | `docrelay_reject` | Reject auto-generated mappings |
 | `docrelay_diff` | Change history for a symbol |
+| `docrelay_history` | Audit trail of confirm/reject decisions |
 | `docrelay_scan` | Rescan codebase and docs, re-link |
 | `docrelay_review` | Mapping audit (unlinked symbols, orphans) |
 | `docrelay_integrate` | Write agent integration configs |

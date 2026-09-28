@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 export function runMigrations(db: Database.Database): void {
   const currentVersion = db.pragma('user_version', { simple: true }) as number;
@@ -68,6 +68,22 @@ export function runMigrations(db: Database.Database): void {
         value      TEXT NOT NULL DEFAULT '',
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+
+      -- Audit trail for human review decisions. Deliberately has NO foreign
+      -- keys: history rows must survive deletion of the mapping, symbol, or
+      -- doc section they refer to.
+      CREATE TABLE IF NOT EXISTS review_history (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol_id  TEXT NOT NULL,
+        doc_id     TEXT NOT NULL,
+        rel_type   TEXT NOT NULL,
+        action     TEXT NOT NULL CHECK(action IN ('confirmed','rejected')),
+        actor      TEXT NOT NULL DEFAULT 'cli',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_review_history_symbol ON review_history(symbol_id);
+      CREATE INDEX IF NOT EXISTS idx_review_history_created ON review_history(created_at);
     `);
 
     // Add raw_signature column for existing V0/V1 databases.

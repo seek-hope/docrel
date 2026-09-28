@@ -14,6 +14,7 @@ import { docrelayImpact, formatImpactMarkdown } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
 import { docrelayDiff, formatDiffMarkdown } from './tools/diff.js';
+import { docrelayHistory, formatHistoryMarkdown } from './tools/history.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
@@ -546,6 +547,36 @@ program
       }
     } catch (err: any) {
       console.error('Diff failed:', errMsg(err));
+      exit(1);
+    }
+  });
+
+program
+  .command('history')
+  .description('Show review history: audit trail of confirmed/rejected mappings')
+  .option('--limit <n>', 'Maximum entries to show (newest first)', '50')
+  .option('--symbol <id>', 'Filter by symbol ID')
+  .option('--format <format>', 'Output format: json or markdown', 'json')
+  .action(async (opts: { limit: string; symbol?: string; format: string }) => {
+    try {
+      await ensureContext();
+      const limit = Number.parseInt(opts.limit, 10);
+      if (!Number.isFinite(limit) || limit < 1) {
+        console.error('--limit must be a positive integer');
+        exit(1);
+      }
+      const result = docrelayHistory(db, { limit, symbol_id: opts.symbol });
+      if (!result.ok) {
+        console.error(result.message || 'History query failed');
+        exit(1);
+      }
+      if (opts.format === 'markdown') {
+        console.log(formatHistoryMarkdown(result.entries));
+      } else {
+        console.log(JSON.stringify(result.entries, null, 2));
+      }
+    } catch (err: any) {
+      console.error('History failed:', errMsg(err));
       exit(1);
     }
   });

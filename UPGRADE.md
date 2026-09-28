@@ -35,7 +35,7 @@
 ### ✅ 0.2.2 — Performance
 - [x] **Incremental scanning**: `--incremental` flag skips files with mtime <= last_scan_at
 - [ ] Lazy symbol extraction (deferred)
-- [ ] Batch INSERT (deferred)
+- [x] **Batch INSERT**: scan/ingest run in single SQLite transactions (~21% faster on large repos)
 - [ ] Cache warming (deferred)
 - [ ] Query optimization (deferred)
 
@@ -78,7 +78,7 @@
 ### ✅ 0.4.2 — Review Workflow (partial)
 - [x] **Batch operations**: `docsync confirm --all`, `docsync reject --all`, `docsync reject --pattern`
 - [ ] Review queue (deferred)
-- [ ] Review history (deferred)
+- [x] **Review history**: `docsync history` / `docrelay_history` — append-only audit trail of confirm/reject decisions (CLI/MCP actor attribution, survives mapping deletion)
 
 ---
 

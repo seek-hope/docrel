@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Added
+- Review history: every confirm/reject decision is recorded in a new
+  append-only `review_history` table (schema v5) with actor attribution
+  (`cli` vs `mcp`). Inspect it with `doc-relay history [--limit n]
+  [--symbol id] [--format json|markdown]` or the `docrelay_history` MCP
+  tool. History rows deliberately have no foreign keys, so the audit trail
+  survives deletion of the referenced mapping, symbol, or doc section.
 - Release workflow (`.github/workflows/release.yml`): tag push verifies the
   version, runs all gates, publishes to npm with provenance, and creates a
   GitHub Release with the packed tarball (requires the `NPM_TOKEN` secret).

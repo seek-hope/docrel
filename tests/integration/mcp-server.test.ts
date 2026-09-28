@@ -86,7 +86,7 @@ describe('MCP server (in-process)', () => {
     for (const expected of [
       'docrelay_status', 'docrelay_check', 'docrelay_impact', 'docrelay_sync',
       'docrelay_sync_all', 'docrelay_link', 'docrelay_confirm', 'docrelay_reject',
-      'docrelay_diff', 'docrelay_scan', 'docrelay_review', 'docrelay_integrate',
+      'docrelay_diff', 'docrelay_history', 'docrelay_scan', 'docrelay_review', 'docrelay_integrate',
       'docrelay_watch', 'docrelay_refresh', 'docrelay_watch_status', 'docrelay_health',
     ]) {
       expect(names).toContain(expected);
@@ -157,6 +157,25 @@ describe('MCP server (in-process)', () => {
       arguments: { symbol_id: sym.id, doc_id: docId, rel_type: 'describes' },
     }))) as { review_status?: string; status?: string };
     expect(JSON.stringify(confirm)).toContain('confirmed');
+
+    // The confirm call is recorded in review history, attributed to the MCP actor.
+    const history = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_history', arguments: { symbol_id: sym.id },
+    }))) as Array<{ action: string; actor: string; symbol_name: string | null; doc_file: string | null }>;
+    expect(history.length).toBeGreaterThanOrEqual(1);
+    expect(history[0]).toMatchObject({ action: 'confirmed', actor: 'mcp' });
+    expect(history[0].symbol_name).toBe('login');
+    expect(history[0].doc_file).toBe('docs/api.md');
+  });
+
+  it('history rejects an invalid limit and returns an empty list on a fresh project', async () => {
+    const empty = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_history', arguments: {},
+    }))) as unknown[];
+    expect(empty).toEqual([]);
+
+    const bad = await client.callTool({ name: 'docrelay_history', arguments: { limit: 0 } });
+    expect(bad.isError).toBe(true);
   });
 
   it('impact, diff (not-found), watch, watch_status, refresh, and health respond', async () => {

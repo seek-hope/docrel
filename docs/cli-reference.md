@@ -41,6 +41,12 @@ Accepts multiple paths (e.g. from `git diff --name-only`).
 ### `diff <symbol_id> [--format json|markdown]`
 Show the changelog for a symbol (signature changes, renames, sync events).
 
+### `history [--limit n] [--symbol <id>] [--format json|markdown]`
+Show the review history: an append-only audit trail of every confirm/reject
+decision, with actor attribution (`cli` or `mcp`). Newest first, `--limit`
+defaults to 50 (max 1000). Entries survive deletion of the referenced
+mapping, symbol, or doc section — deleted entries fall back to raw IDs.
+
 ### `review [--format markdown|json|detailed] [-S|--side-by-side] [--cleanup]`
 Audit mapping quality: unlinked symbols, orphaned doc sections, implied
 references. `--cleanup` deletes orphaned sections (whose files are gone),

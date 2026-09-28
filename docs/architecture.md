@@ -30,10 +30,14 @@ The database lives at `.git/docrelay.db` (local state, never committed).
 - **mappings** — foreign keys with `ON DELETE CASCADE`; review status:
   `auto` (generated), `confirmed` (human-approved), `rejected`
 - **changelog** — append-only record of symbol mutations and sync outcomes
+- **review_history** — append-only audit trail of confirm/reject decisions
+  (actor-attributed); deliberately has **no** foreign keys so the trail
+  survives deletion of the referenced entities
 - **metadata** — key/value store (schema version, last scan time)
 
 Foreign keys are enforced (`PRAGMA foreign_keys = ON`), so deleting a symbol
-or doc section cascades to its mappings automatically.
+or doc section cascades to its mappings automatically (`review_history`
+excepted, by design).
 
 ## Pipeline
 

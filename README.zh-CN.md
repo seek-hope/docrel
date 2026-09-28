@@ -57,6 +57,7 @@ doc-relay status
 | `doc-relay confirm` / `doc-relay reject` | 批准或拒绝待处理的同步建议（支持 `--all`、`--pattern`） |
 | `doc-relay link create --symbol <id> --doc <id>` | 手动创建映射 |
 | `doc-relay diff <符号id>` | 查看符号的变更历史 |
+| `doc-relay history` | confirm/reject 决策的审计记录（`--limit`、`--symbol`、`--format`） |
 | `doc-relay scan` | 扫描代码库发现符号（`--incremental`、`--dry-run`） |
 | `doc-relay review` | 过期/待处理文档的审查队列 |
 | `doc-relay watch` | 监听代码库并在变更时重新扫描（`--daemon` 后台运行） |
@@ -90,7 +91,7 @@ doc-relay status
 
 运行 `doc-relay integrate` 可自动写入该配置（自动检测 Claude Code、Codex、OpenCode、Oh My Pi 等）。
 
-DocRelay 提供 16 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_sync_all`、`docrelay_link`、`docrelay_confirm`、`docrelay_reject`、`docrelay_diff`、`docrelay_scan`、`docrelay_review`、`docrelay_integrate`、`docrelay_watch`、`docrelay_watch_status`、`docrelay_refresh`、`docrelay_health`。
+DocRelay 提供 17 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_sync_all`、`docrelay_link`、`docrelay_confirm`、`docrelay_reject`、`docrelay_diff`、`docrelay_history`、`docrelay_scan`、`docrelay_review`、`docrelay_integrate`、`docrelay_watch`、`docrelay_watch_status`、`docrelay_refresh`、`docrelay_health`。
 
 ### 配置（`.docrelay/config.yaml`）
 

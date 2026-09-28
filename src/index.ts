@@ -262,7 +262,7 @@ server.tool(
   async ({ symbol_id, doc_id, rel_type }) => {
     try {
       const { docrelayConfirm } = await import('./tools/link.js');
-      const result = docrelayConfirm(db, symbol_id, doc_id, rel_type);
+      const result = docrelayConfirm(db, symbol_id, doc_id, rel_type, 'mcp');
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -284,7 +284,7 @@ server.tool(
   async ({ symbol_id, doc_id, rel_type }) => {
     try {
       const { docrelayReject } = await import('./tools/link.js');
-      const result = docrelayReject(db, symbol_id, doc_id, rel_type);
+      const result = docrelayReject(db, symbol_id, doc_id, rel_type, 'mcp');
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
       };
@@ -312,6 +312,33 @@ server.tool(
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(diff.report, null, 2) }],
+      };
+    } catch (err: any) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
+    }
+  },
+);
+
+// ── docrelay_history ─────────────────────────────────────────────
+server.tool(
+  'docrelay_history',
+  'Show the review history: an audit trail of confirmed/rejected mapping decisions',
+  {
+    limit: z.number().int().min(1).max(1000).optional().default(50).describe('Maximum entries to return (newest first)'),
+    symbol_id: z.string().min(1).optional().describe('Filter by symbol ID'),
+  },
+  async ({ limit, symbol_id }) => {
+    try {
+      const { docrelayHistory } = await import('./tools/history.js');
+      const result = docrelayHistory(db, { limit, symbol_id });
+      if (!result.ok) {
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ error: result.message || 'History query failed' }) }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(result.entries, null, 2) }],
       };
     } catch (err: any) {
       return { content: [{ type: 'text' as const, text: JSON.stringify({ error: sanitizeError(err) }) }], isError: true };
