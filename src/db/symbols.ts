@@ -50,6 +50,13 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
   // the row in a single statement. This avoids the TOCTOU race where a
   // concurrent DELETE between the UPSERT and a separate SELECT causes a
   // spurious "was not found after upsert" error.
+  //
+  // updated_at means "last time the symbol CHANGED" — status.ts surfaces
+  // MAX(updated_at) as the last-change timestamp and the scanner already
+  // skips unchanged symbols caller-side. Preserve it at the SQL level too
+  // (same convention as upsertDocSection's stale/draft timestamp) so the
+  // other callers of this function can't bump it with a byte-identical
+  // re-write. Comparisons are NULL-safe: every column above defaults to ''.
   const row = cachedStmt(db, `
     INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -61,7 +68,17 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
       signature = excluded.signature,
       raw_signature = excluded.raw_signature,
       metadata = excluded.metadata,
-      updated_at = datetime('now')
+      updated_at = CASE
+        WHEN symbols.name = excluded.name
+         AND symbols.kind = excluded.kind
+         AND symbols.project = excluded.project
+         AND symbols.location = excluded.location
+         AND symbols.signature = excluded.signature
+         AND symbols.raw_signature = excluded.raw_signature
+         AND symbols.metadata = excluded.metadata
+        THEN symbols.updated_at
+        ELSE datetime('now')
+      END
     RETURNING *
   `).get(
     input.id,

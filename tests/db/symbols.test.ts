@@ -93,6 +93,38 @@ describe('symbols CRUD', () => {
       const fetched = getSymbol(db, testSymbol.id);
       expect(fetched?.signature).toBe('def456');
     });
+
+    it('preserves updated_at on a byte-identical re-upsert (updated_at = last CHANGE time)', () => {
+      upsertSymbol(db, testSymbol);
+      // Backdate directly — datetime('now') has second precision, so a
+      // sentinel is more reliable than sleeping.
+      db.prepare("UPDATE symbols SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(testSymbol.id);
+
+      const row = upsertSymbol(db, { ...testSymbol });
+      expect(row.updated_at).toBe('2020-01-01 00:00:00');
+      expect(getSymbol(db, testSymbol.id)?.updated_at).toBe('2020-01-01 00:00:00');
+    });
+
+    it('bumps updated_at when any stored field changes', () => {
+      upsertSymbol(db, testSymbol);
+      db.prepare("UPDATE symbols SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(testSymbol.id);
+
+      const row = upsertSymbol(db, { ...testSymbol, location: 'src/auth.ts:99' });
+      expect(row.location).toBe('src/auth.ts:99');
+      expect(row.updated_at).not.toBe('2020-01-01 00:00:00');
+    });
+
+    it('treats metadata key order as a change (safeStringify is not canonicalizing)', () => {
+      // Documenting conservative behavior: a different metadata string bumps
+      // updated_at rather than risk missing a real change.
+      upsertSymbol(db, { ...testSymbol, metadata: { a: 1, b: 2 } });
+      db.prepare("UPDATE symbols SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(testSymbol.id);
+
+      const same = upsertSymbol(db, { ...testSymbol, metadata: { a: 1, b: 2 } });
+      expect(same.updated_at).toBe('2020-01-01 00:00:00');
+      const reordered = upsertSymbol(db, { ...testSymbol, metadata: { b: 2, a: 1 } });
+      expect(reordered.updated_at).not.toBe('2020-01-01 00:00:00');
+    });
   });
 
   describe('getSymbol', () => {
