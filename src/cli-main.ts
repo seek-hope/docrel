@@ -92,7 +92,7 @@ function requireProject(): void {
   }
 }
 
-async function ensureContext(opts?: { allowUninitialized?: boolean }): Promise<void> {
+async function ensureContext(opts?: { allowUninitialized?: boolean; infraExitCode?: number }): Promise<void> {
   if (_ctxReady) return;
   // Guard against running commands outside an initialized project,
   // except for init (which creates the project) and config (read-only).
@@ -105,8 +105,12 @@ async function ensureContext(opts?: { allowUninitialized?: boolean }): Promise<v
     extractor = await createExtractor(codegraph, config);
     _ctxReady = true;
   } catch (err: any) {
+    // An initialization failure (corrupt/unopenable DB, failed migration)
+    // is an infrastructure error, never a staleness verdict — `check`
+    // passes infraExitCode 2 so the git hooks print infra guidance
+    // instead of wrongly declaring docs stale.
     console.error('DocRelay initialization failed:', errMsg(err));
-    exit(1);
+    exit(opts?.infraExitCode ?? 1);
   }
 }
 
@@ -296,7 +300,7 @@ program
   .option('--format <format>', 'Output format: json, markdown, ci, or shields', 'json')
   .action(async (opts) => {
     try {
-      await ensureContext();
+      await ensureContext({ infraExitCode: 2 });
       const report = docrelayCheck(db);
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count or output format.

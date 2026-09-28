@@ -617,6 +617,30 @@ describe('CLI in-process: top-level crash safety net', () => {
     }
   });
 
+  it('check exits 2 when the database cannot even be opened (corrupt file)', async () => {
+    // A corrupt DB fails inside ensureContext (getDb/runMigrations), before
+    // docrelayCheck runs — the hooks still need exit 2, not the stale
+    // message. Write a file SQLite rejects at the header.
+    seedProject();
+    fs.writeFileSync(
+      path.join(tmpDir, '.git', 'docrelay.db'),
+      'NOT A SQLITE DATABASE — header magic intentionally broken for the test',
+    );
+    expect(await runCli(['check', '--strict'])).toBe(2);
+    expect(errOut()).toContain('DocRelay initialization failed');
+    expect(errOut()).not.toContain('unexpected error');
+  });
+
+  it('other commands keep exit 1 on initialization failure', async () => {
+    seedProject();
+    fs.writeFileSync(
+      path.join(tmpDir, '.git', 'docrelay.db'),
+      'NOT A SQLITE DATABASE — header magic intentionally broken for the test',
+    );
+    expect(await runCli(['status'])).toBe(1);
+    expect(errOut()).toContain('DocRelay initialization failed');
+  });
+
   it('commander usage errors keep their own exit code and message', async () => {
     seedProject();
     expect(await runCli(['status', '--bogus-flag'])).toBe(1);
