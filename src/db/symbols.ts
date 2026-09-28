@@ -79,7 +79,7 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
 }
 
 export function getSymbol(db: Database.Database, id: string): SymbolRow | undefined {
-  return db.prepare('SELECT * FROM symbols WHERE id = ?').get(id) as SymbolRow | undefined;
+  return cachedStmt(db, 'SELECT * FROM symbols WHERE id = ?').get(id) as SymbolRow | undefined;
 }
 
 export interface SymbolFilter {

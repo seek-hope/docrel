@@ -45,12 +45,12 @@ export function ensureMapping(db: Database.Database, input: MappingInput): Mappi
 
 export function getMappingsForSymbol(db: Database.Database, symbolId: string): MappingRow[] {
   if (!symbolId) return [];
-  return db.prepare("SELECT * FROM mappings WHERE symbol_id = ?").all(symbolId) as MappingRow[];
+  return cachedStmt(db, "SELECT * FROM mappings WHERE symbol_id = ?").all(symbolId) as MappingRow[];
 }
 
 export function getMappingsForDoc(db: Database.Database, docId: string): MappingRow[] {
   if (!docId) return [];
-  return db.prepare("SELECT * FROM mappings WHERE doc_id = ?").all(docId) as MappingRow[];
+  return cachedStmt(db, "SELECT * FROM mappings WHERE doc_id = ?").all(docId) as MappingRow[];
 }
 
 export function listAllMappings(db: Database.Database): MappingRow[] {

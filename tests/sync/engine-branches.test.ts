@@ -203,4 +203,77 @@ describe('syncAllStale', () => {
     const ids = out.synced.map((r) => r.symbolId).sort();
     expect(ids).toEqual([symA, symB].sort());
   });
+
+  /** Fixture: one symbol on disk + one stale standalone doc (auto_update) that
+   *  forces the signature-extraction path where codegraph would be consulted. */
+  const seedAutoUpdateFixture = () => {
+    const symA = symbolId('typescript', 'src/a.ts::A', 'function');
+    upsertSymbol(db, { id: symA, name: 'A', kind: 'function', location: 'src/a.ts:1' });
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'), 'export function A(): number {\n  return 1;\n}\n', 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'one.md'), '# Doc\n\n## x\n\nold text\n', 'utf-8');
+    const doc1 = docSectionId('docs/one.md', 'x');
+    upsertDocSection(db, { id: doc1, file: 'docs/one.md', anchor: 'x', doc_type: 'standalone', status: 'stale' });
+    createMapping(db, { symbol_id: symA, doc_id: doc1, rel_type: 'describes' });
+    return symA;
+  };
+
+  it('probes codegraph availability once per batch and skips per-symbol queries when unavailable', async () => {
+    seedAutoUpdateFixture();
+    const isAvailable = vi.fn().mockResolvedValue(false);
+    const getSymbolSignature = vi.fn();
+    const cg = { isAvailable, getSymbolSignature } as unknown as CodegraphClient;
+
+    await syncAllStale(db, cg, makeConfig({ standalone: 'auto_update' }), tmpDir);
+
+    expect(isAvailable).toHaveBeenCalledTimes(1);
+    // Unavailable → straight to the regex extractor, zero per-symbol queries
+    // (previously every symbol paid a failed spawn + preflight before fallback).
+    expect(getSymbolSignature).not.toHaveBeenCalled();
+  });
+
+  it('queries codegraph for signatures when the probe reports available', async () => {
+    seedAutoUpdateFixture();
+    const isAvailable = vi.fn().mockResolvedValue(true);
+    const getSymbolSignature = vi.fn().mockResolvedValue(null); // null → regex fallback
+    const cg = { isAvailable, getSymbolSignature } as unknown as CodegraphClient;
+
+    await syncAllStale(db, cg, makeConfig({ standalone: 'auto_update' }), tmpDir);
+
+    expect(isAvailable).toHaveBeenCalledTimes(1);
+    expect(getSymbolSignature).toHaveBeenCalled();
+  });
+
+  it('shares comment-stripped source lines across symbols in the same file', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'shared.ts'),
+      'export function A(): number {\n  return 1;\n}\n\nexport function B(): number {\n  return 2;\n}\n',
+      'utf-8',
+    );
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'one.md'), '# Doc\n\n## x\n\nold\n', 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'two.md'), '# Doc\n\n## y\n\nold\n', 'utf-8');
+    const symA = symbolId('typescript', 'src/shared.ts::A', 'function');
+    const symB = symbolId('typescript', 'src/shared.ts::B', 'function');
+    upsertSymbol(db, { id: symA, name: 'A', kind: 'function', location: 'src/shared.ts:1' });
+    upsertSymbol(db, { id: symB, name: 'B', kind: 'function', location: 'src/shared.ts:5' });
+    const doc1 = docSectionId('docs/one.md', 'x');
+    const doc2 = docSectionId('docs/two.md', 'y');
+    upsertDocSection(db, { id: doc1, file: 'docs/one.md', anchor: 'x', doc_type: 'standalone', status: 'stale' });
+    upsertDocSection(db, { id: doc2, file: 'docs/two.md', anchor: 'y', doc_type: 'standalone', status: 'stale' });
+    createMapping(db, { symbol_id: symA, doc_id: doc1, rel_type: 'describes' });
+    createMapping(db, { symbol_id: symB, doc_id: doc2, rel_type: 'describes' });
+
+    const cache = new Map<string, string[]>();
+    const cfg = makeConfig({ standalone: 'auto_update' });
+    await syncSymbol(db, cfg, symA, tmpDir, undefined, cache);
+    await syncSymbol(db, cfg, symB, tmpDir, undefined, cache);
+
+    // One shared entry for shared.ts — the second symbol's extraction did not
+    // re-read / re-strip / re-split the file.
+    expect(cache.size).toBe(1);
+    expect([...cache.keys()][0].endsWith(path.join('src', 'shared.ts'))).toBe(true);
+  });
 });

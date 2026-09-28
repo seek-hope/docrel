@@ -81,12 +81,12 @@ export function markDocStale(db: Database.Database, id: string): boolean {
  */
 export function markDocsStaleForSymbol(db: Database.Database, symbolId: string): string[] {
   if (!symbolId) return [];
-  const rows = db.prepare(
+  const rows = cachedStmt(db,
     "SELECT doc_id FROM mappings WHERE symbol_id = ? AND review_status != 'rejected'"
   ).all(symbolId) as Array<{ doc_id: string }>;
   if (rows.length === 0) return [];
 
-  const stmt = db.prepare("UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?");
+  const stmt = cachedStmt(db, "UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?");
   const affected: string[] = [];
   for (const { doc_id } of rows) {
     if (stmt.run(doc_id).changes > 0) affected.push(doc_id);
@@ -104,13 +104,13 @@ export function markDocsStaleForSymbol(db: Database.Database, symbolId: string):
  */
 export function markInlineStaleForSymbol(db: Database.Database, symbolId: string): string[] {
   if (!symbolId) return [];
-  const rows = db.prepare(
+  const rows = cachedStmt(db,
     `SELECT d.id, d.doc_type FROM mappings m
      JOIN doc_sections d ON d.id = m.doc_id
      WHERE m.symbol_id = ?`
   ).all(symbolId) as Array<{ id: string; doc_type: DocSectionRow['doc_type'] }>;
   const inline = rows.filter((r) => r.doc_type === 'inline');
-  const stmt = db.prepare("UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?");
+  const stmt = cachedStmt(db, "UPDATE doc_sections SET status = 'stale', updated_at = datetime('now') WHERE id = ?");
   const affected: string[] = [];
   for (const { id } of inline) {
     if (stmt.run(id).changes > 0) affected.push(id);
@@ -120,7 +120,7 @@ export function markInlineStaleForSymbol(db: Database.Database, symbolId: string
 
 
 export function markDocRelayed(db: Database.Database, id: string): boolean {
-  const info = db.prepare("UPDATE doc_sections SET status = 'in_sync', updated_at = datetime('now') WHERE id = ?").run(id);
+  const info = cachedStmt(db, "UPDATE doc_sections SET status = 'in_sync', updated_at = datetime('now') WHERE id = ?").run(id);
   if (info.changes === 0) {
     console.warn(`DocRelay: markDocRelayed called for non-existent doc: ${id}`);
     return false;

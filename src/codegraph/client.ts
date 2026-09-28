@@ -187,7 +187,7 @@ export class CodegraphClient {
     let realStat: { ino: number; dev: number } | null;
     try {
       const { execFileSync } = await import('node:child_process');
-      cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 5000 }).trim();
+      cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
       if (!cmd || cmd.includes('\n')) {
         throw new Error(`${this.command ? this.command : 'codegraph'} not found in PATH`);
       }
@@ -334,7 +334,7 @@ export class CodegraphClient {
 
     // 0b. Resolve the binary via which and validate its real path prefix
     try {
-      const whichOut = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 3000 }).trim();
+      const whichOut = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 3000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
       if (!whichOut) return (this._preflightResult = `Codegraph binary '${cmd}' not found on PATH — install from https://github.com/colbymchenry/codegraph`);
       const fs = await import('node:fs');
       const realBin = fs.realpathSync(whichOut);

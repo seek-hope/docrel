@@ -1,4 +1,5 @@
 // src/sync/engine.ts
+import { cachedStmt } from '../db/statements.js';
 import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import { assertDbOpen } from '../db/connection.js';
@@ -85,6 +86,7 @@ async function getCurrentSignature(
   symbol: import('../db/symbols.js').SymbolRow,
   codegraph: CodegraphClient | undefined,
   projectRoot: string,
+  sigFileCache?: Map<string, string[]>,
 ): Promise<{ signature: string | null; reason?: string }> {
   // 1. Try a fresh codegraph query
   if (codegraph) {
@@ -109,7 +111,7 @@ async function getCurrentSignature(
   if (!loc) {
     return { signature: null, reason: 'invalid or missing source file location' };
   }
-  const result = extractCurrentSignature(loc.file, symbol.name, projectRoot, loc.line - 1);
+  const result = extractCurrentSignature(loc.file, symbol.name, projectRoot, loc.line - 1, sigFileCache);
   return { signature: result.signature, reason: result.reason };
 }
 
@@ -119,6 +121,7 @@ export async function syncSymbol(
   symbolId: string,
   projectRoot: string,
   codegraph?: CodegraphClient,
+  sigFileCache?: Map<string, string[]>,
 ): Promise<SyncResult> {
   const result: SyncResult = { symbolId, docsUpdated: [], docsStaled: [], docsChecked: [], errors: [], warnings: [], requiresReview: false, proposedChanges: [] };
 
@@ -200,7 +203,7 @@ export async function syncSymbol(
             // Get current signature from the on-disk source (never the raw
             // cache — a prior scan may have already updated raw_signature to
             // the new value, which would make oldSig === newSig).
-            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot);
+            const sigResult = await getCurrentSignature(symbol, codegraph, projectRoot, sigFileCache);
             if (sigResult.signature === null) {
               result.errors.push(`Failed to update inline doc for ${symbol.name} in ${relPath(loc.file, projectRoot)}: ${sigResult.reason ?? 'could not extract current signature'}`);
               continue;
@@ -247,7 +250,7 @@ export async function syncSymbol(
               // Current signature text from the on-disk source. The DB's
               // symbols.signature is a content hash, so we must recover the
               // human-readable text via getCurrentSignature.
-              const curSig = await getCurrentSignature(symbol, codegraph, projectRoot);
+              const curSig = await getCurrentSignature(symbol, codegraph, projectRoot, sigFileCache);
               // Old documented signature text, best-effort candidates:
               //  1. changelog.old_sig — now stores the pre-change signature TEXT
               //     (recorded by scan before raw_signature was overwritten).
@@ -500,7 +503,7 @@ export async function syncSymbol(
   // Without this, changelog rows stay 'pending' indefinitely even after
   // all docs are synced — causing pendingChanges to never reach 0.
   const newStatus = result.errors.length > 0 ? 'failed' : 'applied';
-  db.prepare(
+  cachedStmt(db,
     "UPDATE changelog SET sync_status = ? WHERE symbol_id = ? AND sync_status = 'pending'"
   ).run(newStatus, symbolId);
 
@@ -526,9 +529,23 @@ export async function syncAllStale(
     }
   }
 
+  // Probe codegraph ONCE for the whole batch: without this, every syncSymbol
+  // call attempts a fresh connect (a failed spawn plus preflight probes,
+  // ~2-4ms each on machines without the binary) before falling back to the
+  // regex extractor — thousands of wasted process spawns on large batches.
+  // A client that cannot report availability (partial test stubs) is treated
+  // as unavailable and skipped the same way.
+  const cgAvailable = typeof codegraph?.isAvailable === 'function'
+    ? await codegraph.isAvailable()
+    : false;
+  const cg = cgAvailable ? codegraph : undefined;
+  // Per-run cache of comment-stripped source files, shared by every symbol's
+  // signature extraction (see extractCurrentSignature).
+  const sigFileCache = new Map<string, string[]>();
+
   const synced: SyncResult[] = [];
   for (const symbolId of uniqueSymbolIds) {
-    synced.push(await syncSymbol(db, config, symbolId, projectRoot, codegraph));
+    synced.push(await syncSymbol(db, config, symbolId, projectRoot, cg, sigFileCache));
   }
 
   return { synced, totalStale: staleDocs.length };
@@ -557,7 +574,7 @@ interface ExtractResult {
  * Returns a structured result with a reason when extraction fails, so
  * callers can provide specific error messages instead of a generic fallback.
  */
-function extractCurrentSignature(file: string, symbolName: string, projectRoot: string, definitionLine?: number): ExtractResult {
+function extractCurrentSignature(file: string, symbolName: string, projectRoot: string, definitionLine?: number, fileCache?: Map<string, string[]>): ExtractResult {
   // Use the shared validatePath() for path-traversal defense and dangling
   // symlink detection. This ensures future hardening of validatePath
   // (e.g., TOCTOU hardening, additional checks) propagates here.
@@ -572,37 +589,47 @@ function extractCurrentSignature(file: string, symbolName: string, projectRoot: 
     return { signature: null, reason: 'symbol name too long — possible corruption' };
   }
 
-  let content: string;
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync(resolved, 'r');
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) return { signature: null, reason: 'not a regular file' };
-    if (stat.size > 10 * 1024 * 1024) return { signature: null, reason: 'file exceeds 10 MB size limit' };
-    content = fs.readFileSync(fd, 'utf-8');
-  } catch {
-    return { signature: null, reason: 'could not read source file' };
-  } finally {
-    if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch { /* best effort */ }
+  // Batch-sync runs pass a per-run cache: reading, comment-stripping, and
+  // splitting the file once per SYMBOL meant a file with N symbols was
+  // processed N times (this dominated regex-fallback sync time). The cached
+  // lines are comment-stripped, so they are invariant under the only writes
+  // a sync run performs (inline doc rewrites touch comment blocks, not code)
+  // — results are identical to re-reading the file per symbol.
+  let processedLines = fileCache?.get(resolved);
+  if (!processedLines) {
+    let content: string;
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(resolved, 'r');
+      const stat = fs.fstatSync(fd);
+      if (!stat.isFile()) return { signature: null, reason: 'not a regular file' };
+      if (stat.size > 10 * 1024 * 1024) return { signature: null, reason: 'file exceeds 10 MB size limit' };
+      content = fs.readFileSync(fd, 'utf-8');
+    } catch {
+      return { signature: null, reason: 'could not read source file' };
+    } finally {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch { /* best effort */ }
+      }
     }
+    // Pre-process the full file content with stripAllBlockComments to prevent
+    // false positives from function/method definitions inside multi-line /* */
+    // block comments. Without this, before the per-line loop, commented-out
+    // old implementations could match the regex and be returned as the
+    // signature, causing updateInlineDoc to receive a wrong oldSignature.
+    const processedContent = stripAllBlockComments(content);
+    // Limit line count to prevent hangs on degenerate input.
+    // Pre-scan newline count before splitting to avoid OOM from the array
+    // allocation itself. (Round 14: the original round 5 fix used a
+    // post-split guard which does not prevent the split from allocating.)
+    let engineNewlineCount = 1;
+    for (let i = 0; i < processedContent.length && engineNewlineCount <= MAX_LINES + 1; i++) {
+      if (processedContent[i] === '\n') engineNewlineCount++;
+    }
+    if (engineNewlineCount > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
+    processedLines = processedContent.split('\n');
+    fileCache?.set(resolved, processedLines);
   }
-  // Pre-process the full file content with stripAllBlockComments to prevent
-  // false positives from function/method definitions inside multi-line /* */
-  // block comments. Without this, before the per-line loop, commented-out
-  // old implementations could match the regex and be returned as the
-  // signature, causing updateInlineDoc to receive a wrong oldSignature.
-  const processedContent = stripAllBlockComments(content);
-  // Limit line count to prevent hangs on degenerate input.
-  // Pre-scan newline count before splitting to avoid OOM from the array
-  // allocation itself. (Round 14: the original round 5 fix used a
-  // post-split guard which does not prevent the split from allocating.)
-  let engineNewlineCount = 1;
-  for (let i = 0; i < processedContent.length && engineNewlineCount <= MAX_LINES + 1; i++) {
-    if (processedContent[i] === '\n') engineNewlineCount++;
-  }
-  if (engineNewlineCount > MAX_LINES) return { signature: null, reason: `file exceeds ${MAX_LINES} lines` };
-  const processedLines = processedContent.split('\n');
 
   const escaped = escapeRegex(symbolName);
   // Match only symbol definitions, not references or usage sites.
