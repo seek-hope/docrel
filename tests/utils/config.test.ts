@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -131,5 +131,67 @@ describe('validateConfig', () => {
     config.version = CONFIG_SCHEMA_VERSION + 5;
     const issues = validateConfig(config, tmpDir);
     expect(issues.some((i) => i.field === 'version' && i.severity === 'warning')).toBe(true);
+  });
+});
+
+describe('loadConfig guards', () => {
+  let tmpDir: string;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-config-guard-'));
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('throws when projectRoot is a file, not a directory', () => {
+    const file = path.join(tmpDir, 'plain-file');
+    fs.writeFileSync(file, 'x');
+
+    expect(() => loadConfig(file)).toThrow(/projectRoot is not a directory/);
+  });
+
+  it('falls back to defaults when config.yaml exceeds 1 MB', () => {
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.docrelay', 'config.yaml'), 'version: 1\n' + '# '.repeat(600 * 1024));
+
+    const config = loadConfig(tmpDir);
+
+    expect(config.code_dirs).toEqual(['src']);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds 1048576 bytes'));
+  });
+
+  it('warns and strips a non-numeric schema version, keeping other fields', () => {
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.docrelay', 'config.yaml'), 'version: abc\ncode_dirs:\n  - custom-src\n');
+
+    const config = loadConfig(tmpDir);
+
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('not a valid number'));
+    expect(config.version).toBe(CONFIG_SCHEMA_VERSION);
+    expect(config.code_dirs).toEqual(['custom-src']);
+  });
+});
+
+describe('validateConfig doc_dirs', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-config-val-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects doc dirs escaping the project root', () => {
+    const config = loadConfig(tmpDir);
+    config.doc_dirs = ['../../../etc'];
+    const issues = validateConfig(config, tmpDir);
+    expect(issues.some((i) => i.severity === 'error' && i.field === `doc_dirs.${'../../../etc'}` && i.message.includes('outside project root'))).toBe(true);
   });
 });

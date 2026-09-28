@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -112,5 +112,65 @@ describe('isIgnored', () => {
     fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), 'src/generated/\n');
     // Backslash paths are normalized to forward slashes before matching
     expect(isIgnored('src\\generated\\types.ts', tmpDir)).toBe(true);
+  });
+});
+
+describe('isIgnored resource guards', () => {
+  let tmpDir: string;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    clearIgnoreCache();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-ignore-guard-'));
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('ignores a .docrelayignore larger than 1 MB', () => {
+    fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), '*.log\n' + 'x'.repeat(1_048_577));
+
+    expect(isIgnored('error.log', tmpDir)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeds 1MB'));
+  });
+
+  it('warns and ignores when .docrelayignore is a directory', () => {
+    fs.mkdirSync(path.join(tmpDir, '.docrelayignore'));
+
+    expect(isIgnored('error.log', tmpDir)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('cannot read .docrelayignore'), expect.anything());
+  });
+
+  it('ignores a .docrelayignore with more than 10000 lines', () => {
+    fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), 'pat\n'.repeat(10_001));
+
+    expect(isIgnored('pat', tmpDir)).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('exceeding 10000'));
+  });
+
+  it('skips a bare negation marker without crashing', () => {
+    fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), '!\n*.log\n');
+
+    expect(isIgnored('error.log', tmpDir)).toBe(true);
+    expect(isIgnored('src/index.ts', tmpDir)).toBe(false);
+  });
+
+  it('supports ** at the end and in the middle of a pattern', () => {
+    fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), 'src/**\n**.log\n', 'utf-8');
+
+    expect(isIgnored('src/deep/nested/file.ts', tmpDir)).toBe(true);
+    expect(isIgnored('error.log', tmpDir)).toBe(true);
+    expect(isIgnored('other/file.ts', tmpDir)).toBe(false);
+  });
+
+  it('matches ? as exactly one non-separator character', () => {
+    fs.writeFileSync(path.join(tmpDir, '.docrelayignore'), 'src/?.ts\n', 'utf-8');
+
+    expect(isIgnored('src/a.ts', tmpDir)).toBe(true);
+    expect(isIgnored('src/ab.ts', tmpDir)).toBe(false);
+    expect(isIgnored('src/x/a.ts', tmpDir)).toBe(false);
   });
 });
