@@ -5,7 +5,7 @@
 [![CI](https://github.com/seek-hope/docrel/actions/workflows/ci.yml/badge.svg)](https://github.com/seek-hope/docrel/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/doc-relay)](https://www.npmjs.com/package/doc-relay)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 
 **像管理数据库一样管理文档。** DocRelay 将关系型数据库的概念——外键、级联更新（CASCADE）、CHECK 约束——应用于代码与文档的同步。无需手动标注。
 

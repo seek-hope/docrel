@@ -16,7 +16,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`engines`, `repository`, `keywords`, `homepage`, `bugs`).
 - ESLint 9 flat config (`eslint.config.js`); `npm run lint` works again.
 - CI workflow (`.github/workflows/ci.yml`): lint, build, test, and CLI smoke
-  test on Node 20 and 22.
+  test on Node 22 and 24.
+
+### Security
+- Resolved all 14 npm audit findings (1 critical, 7 high, 6 moderate) by
+  upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
+
+### Changed
+- Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
 - Agent integration (`.mcp.json`, CLAUDE.md/OPENCODE.md/generic instructions)
