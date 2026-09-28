@@ -1,0 +1,11 @@
+# Normalize line endings to LF for text files.
+* text=auto eol=lf
+
+# Shell scripts must keep LF even on Windows checkouts.
+*.sh text eol=lf
+
+# Binary artifacts
+*.png binary
+*.jpg binary
+*.ico binary
+*.db binary

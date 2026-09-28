@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Added
+- npm v12 forward compatibility: `allowScripts` declaration for
+  `better-sqlite3` in package.json (npm v12 skips install scripts by
+  default, which would leave the native binding unbuilt on fresh
+  installs), plus a native-module smoke test step in the CI and release
+  workflows that fails fast if the binding is ever missing.
+- Community/engineering hygiene: `CODE_OF_CONDUCT.md` (Contributor
+  Covenant 2.1), `.editorconfig`, and `.gitattributes` (LF normalization).
 - Status badges + GitLab CI template (completes the 0.3.2 CI/CD roadmap
   item): `doc-relay check --format shields` prints a shields.io endpoint
   JSON payload (`docs: in sync / N stale`), `docs/templates/gitlab-ci.yml`

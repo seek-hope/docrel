@@ -12,6 +12,9 @@
     "node": ">=22.12.0"
   },
   "license": "MIT",
+  "allowScripts": {
+    "better-sqlite3": true
+  },
   "author": "Tempest",
   "homepage": "https://github.com/seek-hope/docrel#readme",
   "repository": {
