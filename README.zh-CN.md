@@ -221,10 +221,12 @@ doc-relay export-mappings
 git clone https://github.com/seek-hope/docrel.git
 cd docrel
 npm install
-npm test          # 239 tests
+npm test          # 550 个测试，含覆盖率门禁
 npm run lint      # eslint（flat config）
 npm run build     # → dist/
 ```
+
+完整的开发流程、质量门禁与发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。安全问题报告见 [SECURITY.md](SECURITY.md)。
 
 ## 许可证
 

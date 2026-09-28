@@ -257,10 +257,13 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and [UPGRADE.md](UPGRADE.md
 git clone https://github.com/seek-hope/docrel.git
 cd docrel
 npm install
-npm test          # 239 tests
+npm test          # 550 tests with coverage gates
 npm run lint      # eslint (flat config)
 npm run build     # → dist/
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow,
+quality gates, and release process. Security reports: [SECURITY.md](SECURITY.md).
 
 ## License
 
