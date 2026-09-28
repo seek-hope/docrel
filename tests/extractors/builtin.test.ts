@@ -164,3 +164,157 @@ describe('extractLeadingDocstring edge cases', () => {
       .toBe('"""One-liner."""');
   });
 });
+
+describe('BuiltinExtractor fault-injected fs failures', () => {
+  let tmpDir: string;
+  const extractor = new BuiltinExtractor();
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-builtin-fault-'));
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'), 'export function alpha(): number {\n  return 1;\n}\n');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('warns when the code dir cannot be resolved (non-ENOENT)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const real = fs.realpathSync;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((p: any) => {
+      if (String(p) === path.join(tmpDir, 'src')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return real(p);
+    });
+    expect(await extractor.extract('src', tmpDir)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot resolve code directory'), expect.anything());
+  });
+
+  it('warns when the code dir vanishes before the stat check', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const real = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((p: any) => {
+      if (String(p) === path.join(tmpDir, 'src')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return real(p);
+    });
+    expect(await extractor.extract('src', tmpDir)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('code directory not found'));
+  });
+
+  it('warns when the code dir cannot be stat-ed for other reasons', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const real = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((p: any) => {
+      if (String(p) === path.join(tmpDir, 'src')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return real(p);
+    });
+    expect(await extractor.extract('src', tmpDir)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot access code directory'));
+  });
+
+  it('warns and continues when a subdirectory cannot be read', async () => {
+    const sub = path.join(tmpDir, 'src', 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(sub, 'b.ts'), 'export function beta(): number {\n  return 2;\n}\n');
+    fs.chmodSync(sub, 0o000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const symbols = await extractor.extract('src', tmpDir);
+      expect(symbols.map((s) => s.name)).toEqual(['alpha']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot read directory'), expect.anything());
+    } finally {
+      fs.chmodSync(sub, 0o755);
+    }
+  });
+
+  it('skips walk entries whose realpath fails', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'src', 'sub'), { recursive: true });
+    const real = fs.realpathSync;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((p: any) => {
+      if (String(p) === path.join(tmpDir, 'src', 'sub')) throw Object.assign(new Error('ELOOP'), { code: 'ELOOP' });
+      return real(p);
+    });
+    const symbols = await extractor.extract('src', tmpDir);
+    expect(symbols.map((s) => s.name)).toEqual(['alpha']);
+  });
+
+  it('visits a directory only once when several symlinks point at it', async () => {
+    const real = path.join(tmpDir, 'src', 'real');
+    fs.mkdirSync(real, { recursive: true });
+    fs.writeFileSync(path.join(real, 'x.ts'), 'export function shared(): number {\n  return 3;\n}\n');
+    fs.symlinkSync('real', path.join(tmpDir, 'src', 'l1'), 'dir');
+    fs.symlinkSync('real', path.join(tmpDir, 'src', 'l2'), 'dir');
+    const symbols = await extractor.extract('src', tmpDir);
+    expect(symbols.filter((s) => s.name === 'shared')).toHaveLength(1);
+  });
+
+  it('rejects a source file that resolves outside the project root', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-builtin-out-'));
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.ts'), 'export function secret(): number {\n  return 0;\n}\n');
+      fs.symlinkSync(path.join(outside, 'secret.ts'), path.join(tmpDir, 'src', 'link.ts'));
+      const symbols = await extractor.extract('src', tmpDir);
+      expect(symbols.map((s) => s.name)).toEqual(['alpha']);
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('warns when a source file cannot be resolved (non-ENOENT)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const target = path.join(tmpDir, 'src', 'a.ts');
+    const real = fs.realpathSync;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((p: any) => {
+      if (String(p) === target) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return real(p);
+    });
+    expect(await extractor.extract('src', tmpDir)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot resolve source file'), expect.anything());
+  });
+
+  it('warns when a source file cannot be opened (non-ENOENT)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const target = path.join(tmpDir, 'src', 'a.ts');
+    const real = fs.openSync;
+    vi.spyOn(fs, 'openSync').mockImplementation((p: any, flags: any): number => {
+      if (String(p) === target) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return real(p, flags);
+    });
+    expect(await extractor.extract('src', tmpDir)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot read source file'), expect.anything());
+  });
+
+  it('skips files whose stat fails during incremental filtering', async () => {
+    const target = path.join(tmpDir, 'src', 'a.ts');
+    const real = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((p: any) => {
+      if (String(p) === target) throw Object.assign(new Error('EIO'), { code: 'EIO' });
+      return real(p);
+    });
+    expect(await extractor.extract('src', tmpDir, Date.now() - 60_000)).toEqual([]);
+  });
+});
+
+describe('extractTsJsDoc scan-up edges (via extractLeadingDocstring)', () => {
+  it('stops at an earlier block close inside the candidate region', () => {
+    const lines = [' * earlier */ close', ' * doc', ' */', 'function f() {}'];
+    expect(extractLeadingDocstring(lines, 3, 'typescript')).toBeUndefined();
+  });
+
+  it('skips blank interior lines inside a JSDoc block', () => {
+    const lines = ['/**', '', ' * doc', ' */', 'function f() {}'];
+    const doc = extractLeadingDocstring(lines, 4, 'typescript');
+    expect(doc).toContain('doc');
+  });
+
+  it('returns undefined when a non-comment line interrupts the candidate block', () => {
+    const lines = ['random text', ' * doc', ' */', 'function f() {}'];
+    expect(extractLeadingDocstring(lines, 3, 'typescript')).toBeUndefined();
+  });
+
+  it('returns undefined for a plain /* block (not a doc block)', () => {
+    const lines = ['/* regular block', ' * note', ' */', 'function f() {}'];
+    expect(extractLeadingDocstring(lines, 3, 'typescript')).toBeUndefined();
+  });
+});
