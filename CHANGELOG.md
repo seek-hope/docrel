@@ -26,7 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 66/58/75/69) enforced in CI.
+  (currently 67/59/75/70) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -35,7 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (180 new tests, 477 total):
+  branches (195 new tests, 492 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -44,7 +44,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   auto_update signature rewrite, codegraph-query signature source, doc/file
   mismatch repair, docstring/raw-signature failure guards, standalone
   surgical replacement, agent-pre-rewritten hash accounting, stale→in_sync
-  mtime transition, generated regeneration failure), and the generated-doc command allowlist
+  mtime transition, generated regeneration failure), doc-scanner
+  containment (path escape, symlinked dir/file escape, single-file doc_dirs,
+  .docrelayignore dir/file patterns, extension allowlist, hidden/vendor dir
+  skips, 10 MB size limit, EACCES handling, non-regular files), and the generated-doc command allowlist
   (interpreter/path/code-loading-flag rejection, npm-script resolution,
   OpenAPI/TypeDoc detection heuristics, and engine coverage for
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone
