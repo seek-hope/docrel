@@ -596,7 +596,15 @@ async function shutdown(code: number, deps: DocrelayServerDeps): Promise<void> {
   // A crash (code 1) arriving after a clean shutdown signal (code 0) must
   // win, so process supervisors (Docker, systemd, k8s) see the failure.
   if (code > exitCode) exitCode = code;
-  if (shuttingDown) return;
+  if (shuttingDown) {
+    // A higher-severity code arriving after shutdown already started must
+    // still reach the graceful exit path — otherwise a crash during a clean
+    // shutdown would exit 0 whenever the event loop drains before the
+    // force-exit timer fires (the timer reads the escalated variable, but
+    // process.exitCode was only set by the first call).
+    process.exitCode = exitCode;
+    return;
+  }
   shuttingDown = true;
 
   console.error('DocRelay MCP Server shutting down...');
