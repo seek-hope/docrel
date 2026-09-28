@@ -44,11 +44,12 @@ DocRelay uses [Codegraph](https://github.com/colbymchenry/codegraph) to track sy
 npm install -g doc-relay
 ```
 
-> **npm >= 12:** install scripts are blocked by default, which prevents the
-> `better-sqlite3` native binding from being built during global installs.
-> If `doc-relay` fails to start with a "native binding was not built"
-> message, run `npm install -g doc-relay --allow-scripts=better-sqlite3`
-> (or `npm rebuild better-sqlite3` inside the global package).
+> **npm >= 12:** install scripts are blocked by default, but DocRelay's
+> SQLite driver (`better-sqlite3` v13) ships N-API prebuilds for all major
+> platforms, so global installs work out of the box. On exotic platforms
+> without a prebuild, a source build is required — if `doc-relay` fails to
+> start with a "native binding was not built" message, run
+> `npm install -g doc-relay --allow-scripts=better-sqlite3`.
 
 ### First Use in a Project
 

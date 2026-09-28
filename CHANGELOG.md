@@ -170,6 +170,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
 
 ### Changed
+- Publish verification: `docs/` now ships in the npm tarball (README's
+  relative doc links resolve on npmjs.com and offline), and the packed
+  package was install-tested end-to-end — `npm install <tarball>` in a
+  clean project followed by init/scan/status/check smoke tests. A
+  welcome side effect of the better-sqlite3 v13 upgrade: it bundles
+  N-API prebuilds for 8 platform targets, so npm >= 12 global installs
+  work with no build step on major platforms (the CLI shim remains as
+  the safety net elsewhere).
 - Dependency overhaul: commander 13→15, chokidar 4→5, better-sqlite3
   12→13 (+ @types/better-sqlite3 7→9), eslint 9→10 (+ @eslint/js 10);
   removed the unused `simple-git` dependency. ESLint 10's new

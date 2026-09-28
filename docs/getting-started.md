@@ -19,9 +19,11 @@ npm install -g doc-relay
 # Both binaries are provided: doc-relay and docrelay
 ```
 
-On npm >= 12, install scripts are blocked by default and the `better-sqlite3`
-native binding may not be built during a global install. DocRelay detects this
-at startup and prints remediation steps; the short fix is
+On npm >= 12, install scripts are blocked by default. This is not a problem on
+major platforms — `better-sqlite3` v13 bundles N-API prebuilds (Linux, macOS,
+Windows, musl; x64 and arm64) that need no build step. On platforms without a
+prebuild, DocRelay detects the missing binding at startup and prints
+remediation steps; the short fix is
 `npm install -g doc-relay --allow-scripts=better-sqlite3`.
 
 ## Initialize a project
