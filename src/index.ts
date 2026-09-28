@@ -478,7 +478,7 @@ server.tool(
 // ── docrelay_watch ─────────────────────────────────────────────
 server.tool(
   'docrelay_watch',
-  'Return the list of paths DocRelay would watch. The actual file watcher runs via the CLI (`docrelay watch`), not through MCP. Use docrelay_refresh for lightweight polling instead.',
+  'Return the list of paths DocRelay would watch. The actual file watcher runs via the CLI (`doc-relay watch`), not through MCP. Use docrelay_refresh for lightweight polling instead.',
   async () => {
     try {
       const watchPaths: string[] = [];
@@ -496,7 +496,7 @@ server.tool(
           text: JSON.stringify({
             watching: true,
             paths: watchPaths,
-            hint: 'For persistent file watching, run `docrelay watch` in the CLI. For agent polling, use docrelay_refresh periodically.',
+            hint: 'For persistent file watching, run `doc-relay watch` in the CLI. For agent polling, use docrelay_refresh periodically.',
           }, null, 2),
         }],
       };

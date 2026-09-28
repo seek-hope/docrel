@@ -33,12 +33,12 @@ DocRelay tracks code symbols and their linked documentation, keeping everything
 in sync as the codebase evolves.
 
 ### SessionStart
-Run \`docrelay status\` at the beginning of each session to see current
+Run \`doc-relay status\` at the beginning of each session to see current
 documentation health (symbols tracked, docs linked, stale docs).
 
 ### PostToolUse
 After using Edit or Write tools, consider whether the change affects
-documentation. Run \`docrelay impact <changed-file>\` to see which doc sections
+documentation. Run \`doc-relay impact <changed-file>\` to see which doc sections
 reference the modified code.
 
 ### Available MCP Tools
@@ -54,12 +54,12 @@ reference the modified code.
 
 ### CLI Quick Reference
 \`\`\`
-docrelay status              # Health dashboard
-docrelay check               # Find stale docs
-docrelay check --strict      # Exit 1 if any stale docs
-docrelay impact src/foo.ts   # What docs are affected?
-docrelay sync --symbol <id>  # Sync docs for a symbol
-docrelay scan                # Rescan codebase
+doc-relay status              # Health dashboard
+doc-relay check               # Find stale docs
+doc-relay check --strict      # Exit 1 if any stale docs
+doc-relay impact src/foo.ts   # What docs are affected?
+doc-relay sync --symbol <id>  # Sync docs for a symbol
+doc-relay scan                # Rescan codebase
 \`\`\`
 `;
 
@@ -86,12 +86,12 @@ Add this to your \`.mcp.json\`:
 
 ### CLI Quick Reference
 \`\`\`
-docrelay status              # Health dashboard
-docrelay check               # Find stale docs
-docrelay check --strict      # Exit 1 if any stale docs
-docrelay impact src/foo.ts   # What docs are affected?
-docrelay sync --symbol <id>  # Sync docs for a symbol
-docrelay scan                # Rescan codebase
+doc-relay status              # Health dashboard
+doc-relay check               # Find stale docs
+doc-relay check --strict      # Exit 1 if any stale docs
+doc-relay impact src/foo.ts   # What docs are affected?
+doc-relay sync --symbol <id>  # Sync docs for a symbol
+doc-relay scan                # Rescan codebase
 \`\`\`
 `;
 
@@ -110,12 +110,12 @@ alias docrelay='npx -y doc-relay'
 ## Commands
 | Command | Purpose |
 |---------|---------|
-| \`docrelay status\` | Health dashboard |
-| \`docrelay check\` | Find stale docs |
-| \`docrelay check --strict\` | Exit 1 if any stale |
-| \`docrelay impact <file>\` | Docs affected by change |
-| \`docrelay sync --symbol <id>\` | Sync docs for symbol |
-| \`docrelay scan\` | Rescan codebase |
+| \`doc-relay status\` | Health dashboard |
+| \`doc-relay check\` | Find stale docs |
+| \`doc-relay check --strict\` | Exit 1 if any stale |
+| \`doc-relay impact <file>\` | Docs affected by change |
+| \`doc-relay sync --symbol <id>\` | Sync docs for symbol |
+| \`doc-relay scan\` | Rescan codebase |
 `;
 
 // ── Generic instructions (unknown agent) ─────────────────────────────
@@ -146,9 +146,9 @@ alias docrelay='npx -y doc-relay'
 \`\`\`
 
 ### 3. Recommended Workflow
-- At session start, run \`docrelay status\` to see documentation health
-- After code changes, run \`docrelay impact <file>\` to check affected docs
-- Run \`docrelay check --strict\` before committing to catch stale docs
+- At session start, run \`doc-relay status\` to see documentation health
+- After code changes, run \`doc-relay impact <file>\` to check affected docs
+- Run \`doc-relay check --strict\` before committing to catch stale docs
 
 ## Available Tools
 | Tool | Purpose |
@@ -163,12 +163,12 @@ alias docrelay='npx -y doc-relay'
 
 ## CLI Commands
 \`\`\`
-docrelay status              # Health dashboard
-docrelay check               # Find stale docs
-docrelay check --strict      # Exit 1 if stale (good for CI)
-docrelay impact src/foo.ts   # Impact analysis
-docrelay sync --symbol <id>  # Sync docs
-docrelay scan                # Rescan
+doc-relay status              # Health dashboard
+doc-relay check               # Find stale docs
+doc-relay check --strict      # Exit 1 if stale (good for CI)
+doc-relay impact src/foo.ts   # Impact analysis
+doc-relay sync --symbol <id>  # Sync docs
+doc-relay scan                # Rescan
 \`\`\`
 `;
 
@@ -458,12 +458,12 @@ in \`.mcp.json\`.
 
 ### CLI Quick Reference
 \`\`\`
-docrelay status              # Health dashboard
-docrelay check               # Find stale docs
-docrelay check --strict      # Exit 1 if stale (good for CI)
-docrelay impact src/foo.ts   # Impact analysis
-docrelay sync --symbol <id>  # Sync docs
-docrelay scan                # Rescan
+doc-relay status              # Health dashboard
+doc-relay check               # Find stale docs
+doc-relay check --strict      # Exit 1 if stale (good for CI)
+doc-relay impact src/foo.ts   # Impact analysis
+doc-relay sync --symbol <id>  # Sync docs
+doc-relay scan                # Rescan
 \`\`\`
 `;
 

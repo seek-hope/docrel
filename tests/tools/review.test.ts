@@ -353,8 +353,8 @@ describe('formatReview / formatReviewDetailed', () => {
     expect(out).toContain('SOURCE');
     expect(out).toContain('class FooService');
     expect(out).toContain('FooService docs.');
-    expect(out).toContain(`docrelay confirm --symbol ${sym} --doc ${docId}`);
-    expect(out).toContain(`docrelay reject --symbol ${sym} --doc ${docId}`);
+    expect(out).toContain(`doc-relay confirm --symbol ${sym} --doc ${docId}`);
+    expect(out).toContain(`doc-relay reject --symbol ${sym} --doc ${docId}`);
   });
 
   it('falls back gracefully when src/ or the doc anchor is missing in detailed mode', () => {

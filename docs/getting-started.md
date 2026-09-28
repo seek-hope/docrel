@@ -72,7 +72,7 @@ behalf. See [mcp-integration.md](mcp-integration.md).
 doc-relay gc --dry-run      # preview removal of symbols gone from the code
 doc-relay gc                # garbage-collect them (two-pass, safe)
 doc-relay backup            # snapshot the database (auto-rotates old backups)
-doc-relay health            # 8-point system check (config, DB, hooks, ...)
+doc-relay health            # 13-point system check (config, DB, hooks, ...)
 ```
 
 ## Next steps

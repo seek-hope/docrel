@@ -189,7 +189,7 @@ strategies:
         installHooks(projectRoot, opts.force);
         steps.push('Installed git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)');
       } else {
-        steps.push('Skipped git hooks (run \'docrelay install-hooks\' later)');
+        steps.push('Skipped git hooks (run \'doc-relay install-hooks\' later)');
       }
 
       // 5. Auto-detect and configure AI coding agent (unless --no-integrate)
@@ -199,10 +199,10 @@ strategies:
           const result = await integrate(projectRoot, detected.kind, false);
           steps.push(`Configured ${detected.name} integration — ${result.summary}`);
         } else {
-          steps.push('No supported AI coding agent detected — run \'docrelay integrate\' later');
+          steps.push('No supported AI coding agent detected — run \'doc-relay integrate\' later');
         }
       } else {
-        steps.push('Skipped agent integration (run \'docrelay integrate\' later)');
+        steps.push('Skipped agent integration (run \'doc-relay integrate\' later)');
       }
 
       // 6. Scan codebase (unless --no-scan) — symbols AND documentation, so a
@@ -216,16 +216,16 @@ strategies:
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
           steps.push(`Scanned docs: ${pipeline.docs.totalSections} sections, ${pipeline.autoLink.totalMatched} auto-linked`);
         } else {
-          steps.push('Skipped scan: no extractor available (run \'docrelay scan\' later)');
+          steps.push('Skipped scan: no extractor available (run \'doc-relay scan\' later)');
         }
       } else {
-        steps.push('Skipped scan (run \'docrelay scan\' later or omit --no-scan)');
+        steps.push('Skipped scan (run \'doc-relay scan\' later or omit --no-scan)');
       }
 
       // 6. Summary
       console.log('DocRelay initialized!\n');
       steps.forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
-      console.log(`\nNext: docrelay status   — check documentation health`);
+      console.log(`\nNext: doc-relay status   — check documentation health`);
     } catch (err: any) {
       console.error('Init failed:', errMsg(err));
       exit(1);
@@ -740,7 +740,7 @@ program
         for (const i of configErrors) {
           console.error(`× ${i.field}: ${i.message}`);
         }
-        console.error('Fix the errors above or run `docrelay config validate` for details.');
+        console.error('Fix the errors above or run `doc-relay config validate` for details.');
         exit(1);
       }
 
@@ -934,7 +934,7 @@ async function notifyIfOutdated(): Promise<void> {
   try {
     const latest = await checkForUpdates(DOCRELAY_VERSION);
     if (latest && isNewer(DOCRELAY_VERSION, latest)) {
-      console.error(`\n  DocRelay ${latest} is available (you have ${DOCRELAY_VERSION}). Run 'docrelay update' to upgrade.\n`);
+      console.error(`\n  DocRelay ${latest} is available (you have ${DOCRELAY_VERSION}). Run 'doc-relay update' to upgrade.\n`);
     }
   } catch {
     // Never let update check break the main command
@@ -1056,7 +1056,7 @@ configCommand
     if (errors.length > 0) exit(1);
   });
 
-// Default action for `docrelay config` (no subcommand) → show config
+// Default action for `doc-relay config` (no subcommand) → show config
 configCommand.action(async () => {
   try {
     await ensureContext({ allowUninitialized: true });
@@ -1185,7 +1185,7 @@ program
       if (!fs.existsSync(gitDbPath)) {
         const docrelayDbPath = path.join(projectRoot, '.docrelay', 'docrelay.db');
         if (!fs.existsSync(docrelayDbPath)) {
-          console.error('No DocRelay database found. Run docrelay init first.');
+          console.error('No DocRelay database found. Run doc-relay init first.');
           exit(1);
         }
       }

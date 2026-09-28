@@ -37,7 +37,7 @@ describe('integrate', () => {
     expect(fs.existsSync(claudePath)).toBe(true);
     const content = fs.readFileSync(claudePath, 'utf-8');
     expect(content).toContain('## DocRelay — Code-Documentation Sync');
-    expect(content).toContain('docrelay status');
+    expect(content).toContain('doc-relay status');
 
     // .mcp.json should be created with docrelay entry
     const mcpPath = path.join(tmpDir, '.mcp.json');

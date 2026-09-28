@@ -86,14 +86,14 @@ export async function docrelayHealth(
   await run('config', async () => {
     const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
     if (!fs.existsSync(configPath)) {
-      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docrelay/config.yaml not found — run docrelay init' };
+      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docrelay/config.yaml not found — run doc-relay init' };
     }
     try {
       const cfg = loadConfig(projectRoot);
       const issues = validateConfig(cfg, projectRoot);
       const errs = issues.filter((i) => i.severity === 'error');
       if (errs.length > 0) {
-        return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_INVALID, message: `${errs.length} config error(s): ${errs[0].message} — run docrelay config validate` };
+        return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_INVALID, message: `${errs.length} config error(s): ${errs[0].message} — run doc-relay config validate` };
       }
       if (issues.length > 0) {
         return { name: 'config', status: 'degraded', message: `${issues.length} config warning(s): ${issues[0].message}` };
@@ -103,7 +103,7 @@ export async function docrelayHealth(
       // Log the full error so operators can diagnose; the client message
       // stays generic (parse errors may embed absolute paths).
       console.error('Config parse failed:', err instanceof Error ? err.message : err);
-      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_PARSE_FAILED, message: 'config.yaml failed to parse — run docrelay config validate for details' };
+      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_PARSE_FAILED, message: 'config.yaml failed to parse — run doc-relay config validate for details' };
     }
   });
 
@@ -179,7 +179,7 @@ export async function docrelayHealth(
     if (count > 0) {
       return { name: 'symbols', status: 'ok', message: `${count} symbols tracked` };
     }
-    return { name: 'symbols', status: 'degraded', message: 'No symbols tracked — run docrelay scan' };
+    return { name: 'symbols', status: 'degraded', message: 'No symbols tracked — run doc-relay scan' };
   });
 
   // 6. Doc section count
@@ -188,7 +188,7 @@ export async function docrelayHealth(
     if (count > 0) {
       return { name: 'docs', status: 'ok', message: `${count} doc sections tracked` };
     }
-    return { name: 'docs', status: 'degraded', message: 'No doc sections tracked — run docrelay scan' };
+    return { name: 'docs', status: 'degraded', message: 'No doc sections tracked — run doc-relay scan' };
   });
 
   // 7. Stale doc ratio
@@ -198,7 +198,7 @@ export async function docrelayHealth(
     const stale = (db.prepare("SELECT COUNT(*) AS c FROM doc_sections WHERE status = 'stale'").get() as { c: number }).c;
     const ratio = stale / total;
     if (ratio === 0) return { name: 'stale_docs', status: 'ok', message: 'All docs in sync' };
-    if (ratio < 0.1) return { name: 'stale_docs', status: 'degraded', message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — run docrelay sync` };
+    if (ratio < 0.1) return { name: 'stale_docs', status: 'degraded', message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — run doc-relay sync` };
     return { name: 'stale_docs', status: 'failed', code: ErrorCode.SYNC_PARTIAL, message: `${stale}/${total} docs stale (${Math.round(ratio * 100)}%) — documentation is significantly out of date` };
   });
 
@@ -217,14 +217,14 @@ export async function docrelayHealth(
         return { name: 'last_scan', status: 'degraded', message: `Last scan ${hours}h ago — consider re-scanning` };
       }
     }
-    return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run docrelay scan' };
+    return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run doc-relay scan' };
   });
 
   // 9. Pending changelog entries awaiting sync
   await run('pending_changes', async () => {
     const pending = (db.prepare("SELECT COUNT(*) AS c FROM changelog WHERE sync_status = 'pending'").get() as { c: number }).c;
     if (pending === 0) return { name: 'pending_changes', status: 'ok', message: 'No pending changes' };
-    return { name: 'pending_changes', status: 'degraded', message: `${pending} change(s) awaiting sync — run docrelay sync` };
+    return { name: 'pending_changes', status: 'degraded', message: `${pending} change(s) awaiting sync — run doc-relay sync` };
   });
 
   // 10. Git hooks installed and executable
@@ -234,7 +234,7 @@ export async function docrelayHealth(
       fs.accessSync(preCommit, fs.constants.X_OK);
       return { name: 'hooks', status: 'ok', message: 'Git hooks installed' };
     } catch {
-      return { name: 'hooks', status: 'degraded', message: 'Git hooks not installed (or not executable) — run docrelay install-hooks' };
+      return { name: 'hooks', status: 'degraded', message: 'Git hooks not installed (or not executable) — run doc-relay install-hooks' };
     }
   });
 
@@ -247,7 +247,7 @@ export async function docrelayHealth(
       WHERE s.id IS NULL OR d.id IS NULL
     `).get() as { c: number }).c;
     if (orphans === 0) return { name: 'orphan_mappings', status: 'ok', message: 'No orphaned mappings' };
-    return { name: 'orphan_mappings', status: 'degraded', message: `${orphans} mapping(s) reference missing symbols or docs — run docrelay gc` };
+    return { name: 'orphan_mappings', status: 'degraded', message: `${orphans} mapping(s) reference missing symbols or docs — run doc-relay gc` };
   });
 
   // Aggregate results and log failures

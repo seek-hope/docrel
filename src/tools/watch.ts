@@ -178,7 +178,7 @@ export async function startWatch(
           watchStatus.lastError = err instanceof Error ? err.message : String(err);
           console.error(`[${now}] Watch error (${key}): ${err instanceof Error ? err.message : err}`);
 
-          // Write a recovery marker so `docrelay status` can surface the failure
+          // Write a recovery marker so `doc-relay status` can surface the failure
           try {
             const markerDir = path.join(projectRoot, '.docrelay');
             fs.mkdirSync(markerDir, { recursive: true });
@@ -204,7 +204,7 @@ export async function startWatch(
       // Without this, deleted symbols persist until the next explicit gc run
       // (two-pass: first gc marks stale, second gc deletes). The watcher
       // should surface the impact immediately so the developer sees stale docs
-      // in docrelay status and can run gc to clean up.
+      // in doc-relay status and can run gc to clean up.
       try {
         // Find symbols whose location starts with this file path.
         // Cap at 1000 to prevent pathological DB queries from blocking the
@@ -252,13 +252,13 @@ export async function startWatch(
 
     // Handle chokidar close — the watcher may die after a fatal error
     // (EMFILE, ENOSPC, filesystem unmount). Log prominently and write a
-    // recovery marker so `docrelay status` can surface the failure.
+    // recovery marker so `doc-relay status` can surface the failure.
     // chokidar's 'close' event is not in the typed FSWatcherEventMap, but
     // FSWatcher extends EventEmitter and emits it at runtime.
     (watcher as any).on("close", () => {
       watchStatus.running = false;
-      watchStatus.lastError = 'Filesystem watcher closed unexpectedly — restart with `docrelay watch`';
-      console.error('DocRelay: filesystem watcher closed unexpectedly. Docs may become stale. Re-run `docrelay watch` to resume.');
+      watchStatus.lastError = 'Filesystem watcher closed unexpectedly — restart with `doc-relay watch`';
+      console.error('DocRelay: filesystem watcher closed unexpectedly. Docs may become stale. Re-run `doc-relay watch` to resume.');
       try {
         const markerDir = path.join(projectRoot, '.docrelay');
         fs.mkdirSync(markerDir, { recursive: true });

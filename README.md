@@ -79,7 +79,7 @@ doc-relay status
 | `doc-relay scan` | Scan codebase and discover symbols (`--incremental`, `--dry-run`) |
 | `doc-relay review` | Review queue for stale/pending documentation |
 | `doc-relay watch` | Watch the codebase and re-scan on change (`--daemon` for background) |
-| `doc-relay health` | 8-point health check (config, DB, hooks, codegraph, freshness) |
+| `doc-relay health` | 13-point health check (config, DB, hooks, codegraph, freshness) |
 | `doc-relay export-mappings` | Export `.docrelay/mappings.json` for CodeGraph integration |
 | `doc-relay install-hooks` | Install pre-commit, post-commit, pre-push hooks |
 | `doc-relay integrate` | Auto-detect your AI agent and write its DocRelay config |

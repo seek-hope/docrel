@@ -59,7 +59,7 @@ function queryHealthContext(db: Database.Database): DocHealthContext {
  *
  * Example output:
  * "DocRelay status: 287 symbols tracked, 245 docs linked (85%), 12 docs stale.
- *  Stale docs: docs/api.md, README.md#setup. Run `docrelay sync` to update."
+ *  Stale docs: docs/api.md, README.md#setup. Run `doc-relay sync` to update."
  */
 export function getDocHealthContext(db: Database.Database): string {
   try {
@@ -95,7 +95,7 @@ export function getDocHealthContext(db: Database.Database): string {
         output += ` and ${ctx.staleDocDetails.length - 5} more`;
       }
 
-      output += '. Run `docrelay sync` to update.';
+      output += '. Run `doc-relay sync` to update.';
     }
 
     return output;

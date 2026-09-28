@@ -63,7 +63,7 @@ Notes:
 | `docrelay_watch` | List paths the CLI watcher would watch |
 | `docrelay_watch_status` | Watcher state (events, errors, last event) |
 | `docrelay_refresh` | Lightweight incremental poll for agents |
-| `docrelay_health` | 8-point system health check |
+| `docrelay_health` | 13-point system health check |
 
 ## Recommended agent workflow
 

@@ -64,7 +64,7 @@ export interface ScanReport {
   newSymbols: number;
   updatedSymbols: number;
   failedDirs: string[];
-  /** All symbol IDs that were found during this scan. Used by `docrelay gc` to
+  /** All symbol IDs that were found during this scan. Used by `doc-relay gc` to
    *  identify symbols that existed in the database but were not re-discovered. */
   scannedIds: string[];
 }

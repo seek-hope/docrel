@@ -271,7 +271,7 @@ describe('docrelayHealth extended diagnostics', () => {
     const c = await checkMessage('pending_changes');
     expect(c.status).toBe('degraded');
     expect(c.message).toContain('1 change(s)');
-    expect(c.message).toContain('docrelay sync');
+    expect(c.message).toContain('doc-relay sync');
   });
 
   it('hooks degrades when pre-commit is missing and is ok once installed', async () => {
@@ -294,6 +294,6 @@ describe('docrelayHealth extended diagnostics', () => {
     const c = await checkMessage('orphan_mappings');
     expect(c.status).toBe('degraded');
     expect(c.message).toContain('1 mapping(s)');
-    expect(c.message).toContain('docrelay gc');
+    expect(c.message).toContain('doc-relay gc');
   });
 });

@@ -531,12 +531,12 @@ export function formatReviewDetailed(report: ReviewReport, projectRoot: string):
 
       lines.push(`\`\`\`${'─'.repeat(w)}┴${'─'.repeat(w)}\`\`\``);
       lines.push('');
-      lines.push(`→ \`docrelay confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`docrelay reject --symbol ${m.symbolId} --doc ${m.docId}\``);
+      lines.push(`→ \`doc-relay confirm --symbol ${m.symbolId} --doc ${m.docId}\`  |  \`doc-relay reject --symbol ${m.symbolId} --doc ${m.docId}\``);
       lines.push('');
     }
 
     if (report.unreviewedMappings.length > MAX_DETAILED_MAPPINGS) {
-      lines.push(`_Showing ${MAX_DETAILED_MAPPINGS} of ${report.unreviewedMappings.length} unreviewed mappings. Use \`docrelay review --format json\` to see all IDs._`);
+      lines.push(`_Showing ${MAX_DETAILED_MAPPINGS} of ${report.unreviewedMappings.length} unreviewed mappings. Use \`doc-relay review --format json\` to see all IDs._`);
       lines.push('');
     }
   }

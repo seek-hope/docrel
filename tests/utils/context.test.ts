@@ -73,7 +73,7 @@ describe('getDocHealthContext', () => {
     expect(out).toContain('7 docs stale');
     expect(out).toContain('docs/s0.md#Sec0');
     expect(out).toContain('and 2 more');
-    expect(out).toContain('Run `docrelay sync` to update.');
+    expect(out).toContain('Run `doc-relay sync` to update.');
 
     const obj = getDocHealthContextObject(db);
     expect(obj.staleDocFiles).toHaveLength(7);

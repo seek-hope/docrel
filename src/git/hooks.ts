@@ -186,14 +186,14 @@ export function installHooks(projectRoot: string, force = false): void {
   // operations (defect: hooks used to hard-fail with 'Not initialized').
   const failOpenGuard = `if [ ! -d ".docrelay" ] && [ ! -f ".git/docrelay.db" ]; then
   echo "DocRelay: project not initialized — skipping "$HOOK" check."
-  echo "DocRelay: run 'docrelay init' to enable documentation checks."
+  echo "DocRelay: run 'doc-relay init' to enable documentation checks."
   exit 0
 fi
 `;
 
   // Additional runtime guard: even when the above sentinel check passes, the
-  // docrelay status command may still fail (e.g. corrupted/missing config or
-  // DB). Treat any docrelay failure as fail-open for non-blocking hooks
+  // doc-relay status command may still fail (e.g. corrupted/missing config or
+  // DB). Treat any doc-relay failure as fail-open for non-blocking hooks
   // (post-commit, prepare-commit-msg) and as a hard gate only where a strict
   // check is explicitly intended (pre-commit/pre-push).
   const infraGuidance = `echo ""
@@ -222,7 +222,7 @@ fi
 HOOK=post-commit
 set -e
 ${failOpenGuard}# Incrementally re-scan so the post-commit DB state reflects the new code.
-${docrelayQuoted} scan --incremental || { echo "DocRelay: post-commit scan failed — run 'docrelay status' to check."; exit 0; }
+${docrelayQuoted} scan --incremental || { echo "DocRelay: post-commit scan failed — run 'doc-relay status' to check."; exit 0; }
 # Then surface the docs impacted by the changed files.
 git diff --name-only -z HEAD~1..HEAD 2>/dev/null | xargs -0 -r ${docrelayQuoted} impact -- >/dev/null || true
 exit 0
