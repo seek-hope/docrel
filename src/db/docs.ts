@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { cachedStmt } from './statements.js';
 
 export interface DocSectionRow {
   id: string;
@@ -31,7 +32,7 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
   // the row in a single statement. This avoids the TOCTOU race where a
   // concurrent DELETE between the UPSERT and a separate SELECT causes a
   // spurious "was not found after upsert" error.
-  const row = db.prepare(`
+  const row = cachedStmt(db, `
     INSERT INTO doc_sections (id, file, anchor, content_hash, doc_type, status)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET

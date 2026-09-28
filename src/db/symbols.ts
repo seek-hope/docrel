@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { cachedStmt } from './statements.js';
 import { markDocsStaleForSymbol } from './docs.js';
 
 function safeStringify(obj: unknown): string {
@@ -49,7 +50,7 @@ export function upsertSymbol(db: Database.Database, input: SymbolInput): SymbolR
   // the row in a single statement. This avoids the TOCTOU race where a
   // concurrent DELETE between the UPSERT and a separate SELECT causes a
   // spurious "was not found after upsert" error.
-  const row = db.prepare(`
+  const row = cachedStmt(db, `
     INSERT INTO symbols (id, name, kind, project, location, signature, raw_signature, metadata)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET

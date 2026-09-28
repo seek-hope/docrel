@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { cachedStmt } from './statements.js';
 
 export type ReviewStatus = 'auto' | 'confirmed' | 'rejected';
 
@@ -15,7 +16,7 @@ export interface MappingInput {
 
 export function createMapping(db: Database.Database, input: MappingInput): MappingRow {
   const status = input.review_status ?? 'auto';
-  const row = db.prepare(`
+  const row = cachedStmt(db, `
     INSERT INTO mappings (symbol_id, doc_id, rel_type, review_status)
     VALUES (?, ?, ?, ?)
     ON CONFLICT (symbol_id, doc_id, rel_type) DO UPDATE SET review_status = CASE WHEN review_status = 'auto' THEN excluded.review_status ELSE review_status END

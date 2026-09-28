@@ -6,6 +6,7 @@ import { createMapping } from '../db/mappings.js';
 import { upsertDocSection } from '../db/docs.js';
 import { docSectionId, contentHash } from '../utils/hash.js';
 import { escapeRegex } from '../utils/fs.js';
+import { cachedStmt } from '../db/statements.js';
 
 export interface AutoLinkResult {
   totalMatched: number;
@@ -44,8 +45,18 @@ function fuzzyNorm(n: string, h: string): boolean {
   // F9: Add longest common substring check to catch mid-string and suffix
   // overlaps (e.g., 'loginUser' vs 'userLogin' share 'user' in the middle).
   // Require at least 4 chars or 50% of the shorter string.
-  const lcsLen = longestCommonSubstring(n, h);
   const lcsThreshold = Math.max(4, Math.floor(minLen * 0.5));
+  // Necessary-condition prefilter: every LCS position consumes one character
+  // of n that also occurs in h, so LCS ≤ #{i : n[i] ∈ h}. When even that
+  // loose upper bound is below the threshold the O(n·m) DP cannot succeed —
+  // skip it. This preserves exact semantics while avoiding most DP runs on
+  // non-matching pairs (the common case in the symbols × sections loop).
+  let lcsUpperBound = 0;
+  for (let i = 0; i < n.length; i++) {
+    if (h.includes(n[i])) lcsUpperBound++;
+  }
+  if (lcsUpperBound < lcsThreshold) return false;
+  const lcsLen = longestCommonSubstring(n, h);
   return lcsLen >= lcsThreshold;
 }
 
@@ -485,7 +496,7 @@ function createRefMapping(db: Database.Database, symbolId: string, docId: string
     // Existence pre-check: createMapping is an UPSERT whose ON CONFLICT clause
     // would rewrite (and count as "new") an existing row — re-ingesting an
     // unchanged doc would churn the WAL and inflate the newMappings metric.
-    const existing = db.prepare(
+    const existing = cachedStmt(db,
       `SELECT 1 AS x FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes'`,
     ).get(symbolId, docId);
     if (existing) return false;
