@@ -132,7 +132,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // Strip ALL block comments (including JSDoc) first, then per-line
     // comments and strings, so JSDoc body lines (e.g., '* Processes login()')
     // do not inflate the occurrence count.
-    const contentNoComments = stripCommentsAndStrings(stripAllBlockComments(content));
+    const contentNoComments = stripCommentsAndStringsMultiline(stripAllBlockComments(content));
     // Check for empty input separately from countOccurrences returning -1
     // (which means the search string exceeds MAX_SEARCH_LENGTH).
     // Previously both cases set sigCount/docCount to -1, conflating "empty input"
@@ -239,7 +239,7 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     // false negatives when the new signature/docstring text appears in JSDoc
     // comments, string literals, or non-JSDoc comments — matching the
     // pre-replacement occurrence counting approach at lines 134 and 148.
-    if (sigInputEmpty === false && countOccurrences(stripCommentsAndStrings(stripAllBlockComments(content)), stripStringLiterals(input.newSignature)) !== 1) {
+    if (sigInputEmpty === false && countOccurrences(stripCommentsAndStringsMultiline(stripAllBlockComments(content)), stripStringLiterals(input.newSignature)) !== 1) {
       console.warn('DocRelay: updateInlineDoc post-validation failed — new signature count != 1');
       return false;
     }
@@ -1013,6 +1013,19 @@ export function stripStringLiterals(content: string): string {
   return out.join('');
 }
 
+/**
+ * Multi-line wrapper for stripCommentsAndStrings. The per-line stripper
+ * stops at the first `//` comment (by design — its contract requires
+ * pre-split input), so calling it on whole-file content silently drops
+ * everything after the first line comment. Files whose header is a line
+ * comment (this repo's convention) produced an EMPTY stripped form, and
+ * every inline sync then failed with "signature missing from source".
+ * Split-strip-rejoin preserves line structure and the per-line semantics.
+ */
+export function stripCommentsAndStringsMultiline(content: string): string {
+  return content.split('\n').map(stripCommentsAndStrings).join('\n');
+}
+
 export function stripCommentsAndStrings(line: string): string {
   // Safety: operates per-line only — each while loop is bounded by line.length.
   // Multi-line strings are not supported; input is always split by '\n' first.
@@ -1156,11 +1169,19 @@ export function generateUpdatedDocstring(
       // Fall through to the placeholder path below — the old docstring is
       // too large to split safely, so we generate from the signature alone.
     } else {
-      const oldLines = oldDocstring.split('\n');
+      // Peel the /** opener and */ closer TEXTUALLY before line processing.
+      // Both markers frequently share a line with content (`/** Summary. */`
+      // or `/** Summary\n * ...`) — the old per-line rule only recognized
+      // marker-only lines and narrative lines starting with '*', so a summary
+      // on the opener line (or an entire single-line docstring) silently
+      // vanished and the regenerated docstring replaced it with the
+      // auto-update placeholder. Dogfood: sync mangled real JSDoc this way.
+      const body = oldDocstring.trim().replace(/^\/\*\*\s?/, '').replace(/\s?\*\/$/, '');
+      const oldLines = body.split('\n');
       for (const line of oldLines) {
         if (lines.length >= MAX_NARRATIVE_LINES) break;
         const trimmed = line.trim();
-        // Skip the opening /** and closing */
+        // Skip stray marker-only lines (defensive; markers are peeled above)
         if (trimmed === '/**' || trimmed === '*/') continue;
         // Detect @param and @returns blocks — harvest descriptions before skipping
         const paramMatch = trimmed.match(/^\*\s*@param\s+(?:\{[^}]*\}\s*)?([\w$.[\]]+)\??\s*(?:[—–-]\s*)?(.*)$/);
@@ -1180,6 +1201,10 @@ export function generateUpdatedDocstring(
         // Keep user-written narrative lines (including blank * lines between sections)
         if (trimmed.startsWith('*') || trimmed === '') {
           lines.push(line);
+        } else {
+          // Content line without a leading '*' (e.g. the summary text peeled
+          // off the opener line) — keep it, normalized to docstring form.
+          lines.push(` * ${trimmed}`);
         }
       }
     }

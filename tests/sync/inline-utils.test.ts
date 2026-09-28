@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   stripAllBlockComments,
   stripCommentsAndStrings,
+  stripCommentsAndStringsMultiline,
   generateUpdatedDocstring,
 } from '../../src/sync/inline.js';
 
@@ -94,6 +95,27 @@ describe('generateUpdatedDocstring', () => {
     expect(out).toContain(' * @param mfa — boolean');
     // Return description preserved with fresh type
     expect(out).toContain(' * @returns {Promise<boolean>} true when credentials are valid');
+  });
+
+  it('preserves a single-line docstring instead of replacing it with the placeholder', () => {
+    // Regression: the narrative extractor only kept lines starting with '*',
+    // so a one-line `/** Summary. */` (starts with '/') was dropped and the
+    // regenerated docstring became the auto-update placeholder.
+    const out = generateUpdatedDocstring('login', 'function', '/** Logs a user in. */', 'export function login(user: string): boolean {');
+    expect(out).toContain('Logs a user in.');
+    expect(out).not.toContain('[auto-updated by DocRelay]');
+    expect(out).toContain(' * @param user — string');
+  });
+
+  it('preserves a summary that shares the opener line of a multi-line docstring', () => {
+    // Dogfood finding (NON_SYMBOL_KINDS): sync mangled exactly this shape.
+    const old = '/** Index node kinds that are not symbols (file structure, imports,\n *  class properties). Filtered in SQL. */';
+    const out = generateUpdatedDocstring('NON_SYMBOL_KINDS', 'variable', old, 'const NON_SYMBOL_KINDS = "a,b";');
+    expect(out).toContain('Index node kinds that are not symbols (file structure, imports,');
+    expect(out).toContain('class properties). Filtered in SQL.');
+    expect(out).not.toContain('[auto-updated by DocRelay]');
+    // No params/returns for a const — output is opener + narrative + closer.
+    expect(out).not.toContain('@param');
   });
 
   it('replaces bare-type auto-generated descriptions with fresh types', () => {
@@ -282,5 +304,17 @@ describe('generateUpdatedDocstring signature parsing', () => {
     expect(out).toContain('@param a — string');
     expect(out).toContain('@param b — number');
     expect(out.match(/@param/g)).toHaveLength(2);
+  });
+});
+
+describe('stripCommentsAndStringsMultiline', () => {
+  it('strips each line independently — a leading // comment does not eat the file', () => {
+    const src = ['// header', 'const a = 1; // trailing', 'const b = "x";', ''].join('\n');
+    expect(stripCommentsAndStringsMultiline(src)).toBe(['', 'const a = 1; ', 'const b = ;', ''].join('\n'));
+  });
+
+  it('matches the per-line map of stripCommentsAndStrings', () => {
+    const src = ['/** block */ const a = 1;', 'const t = `tpl ${x} y`;', 'regex /not-a-\/\/comment/;', ''].join('\n');
+    expect(stripCommentsAndStringsMultiline(src)).toBe(src.split('\n').map(stripCommentsAndStrings).join('\n'));
   });
 });

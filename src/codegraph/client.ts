@@ -569,7 +569,9 @@ export class CodegraphClient {
       const line = lines[i];
       if (defPattern.test(line)) {
         // Trim leading line-number prefix like "123| " or "  123| "
-        const sig = line.replace(/^\s*\d+\s*\|\s*/, '').trim();
+        // Strip line-number prefixes. Codegraph builds have emitted both
+        // `123| code` (pipe) and `67\tcode` (tab) formats; accept either.
+        const sig = line.replace(/^\s*\d+\s*[|\t]\s*/, '').trim();
         if (sig) return sig;
       }
     }

@@ -66,6 +66,65 @@ describe('updateInlineDoc', () => {
     expect(updated).toContain('function foo(x: number, y: string): void');
     expect(updated).toContain('/** Updated doc */');
   });
+
+  it('locates signatures in files that begin with a line comment (repo header convention)', () => {
+    // Regression: the occurrence-count haystack was built by calling the
+    // per-line stripCommentsAndStrings on WHOLE-FILE content. Its // branch
+    // stops at the first line comment, so a file starting with a line
+    // comment stripped to an empty string and every inline sync failed
+    // with "signature missing from source".
+    const original = [
+      '// src/widget.ts — module header comment',
+      '/** Renders the widget. */',
+      'export function renderWidget(size: number): void {',
+      '  void size;',
+      '}',
+      '',
+    ].join('\n');
+    fs.writeFileSync(testFile, original, 'utf-8');
+
+    const result = updateInlineDoc({
+      file: testFile,
+      symbolName: 'renderWidget',
+      oldSignature: 'export function renderWidget(size: number): void {',
+      newSignature: 'export function renderWidget(size: number, dpi: number): void {',
+      oldDocstring: '/** Renders the widget. */',
+      newDocstring: '/** Renders the widget at a DPI. */',
+    }, tmpDir);
+    expect(result).toBe(true);
+
+    const updated = fs.readFileSync(testFile, 'utf-8');
+    expect(updated).toContain('dpi: number');
+    expect(updated).toContain('/** Renders the widget at a DPI. */');
+  });
+
+  it('locates const signatures containing string literals after a line-comment header', () => {
+    // Dogfood finding (NON_SYMBOL_KINDS): a const whose signature is mostly
+    // a string literal, in a file with a leading // header, could not be
+    // located in the stripped haystack at all.
+    const original = [
+      '// src/kinds.ts — symbol kind constants',
+      '/** Index node kinds excluded from enumeration. */',
+      'const NON_SYMBOL_KINDS = "\'import\',\'file\',\'property\'";',
+      'export { NON_SYMBOL_KINDS };',
+      '',
+    ].join('\n');
+    fs.writeFileSync(testFile, original, 'utf-8');
+
+    const result = updateInlineDoc({
+      file: testFile,
+      symbolName: 'NON_SYMBOL_KINDS',
+      oldSignature: 'const NON_SYMBOL_KINDS = "\'import\',\'file\',\'property\'";',
+      newSignature: 'const NON_SYMBOL_KINDS = "\'import\',\'file\',\'property\',\'type_param\'";',
+      oldDocstring: '/** Index node kinds excluded from enumeration. */',
+      newDocstring: '/** Index node kinds excluded from enumeration (updated). */',
+    }, tmpDir);
+    expect(result).toBe(true);
+
+    const updated = fs.readFileSync(testFile, 'utf-8');
+    expect(updated).toContain("'type_param'");
+    expect(updated).toContain('(updated)');
+  });
 });
 
 describe('extractDocstring', () => {

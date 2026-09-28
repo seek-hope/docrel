@@ -61,8 +61,11 @@ function mapKind(kind: string): ExtractedSymbol['kind'] {
   return mapped;
 }
 
-/** Index node kinds that are not DocRelay symbols (file structure, imports,
- *  class properties). Filtered in SQL so they never reach the scanner. */
+/**
+ * Index node kinds that are not DocRelay symbols (file structure, imports,
+ *  class properties). Filtered in SQL so they never reach the scanner.
+
+ */
 const NON_SYMBOL_KINDS = "'import','file','property'";
 
 interface IndexNodeRow {

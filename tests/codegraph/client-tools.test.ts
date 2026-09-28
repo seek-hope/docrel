@@ -101,6 +101,18 @@ describe('CodegraphClient tool methods', () => {
     expect(sig).toBe('export const computeThing = (x: number) => {');
   });
 
+  it('getSymbolSignature strips tab-separated line-number prefixes (newer codegraph format)', async () => {
+    // Dogfood finding: current codegraph builds emit `67\tcode` in explore
+    // source blocks; the pipe-only strip left the prefix in place and every
+    // downstream signature occurrence check failed.
+    const sample = 'context\n67\tconst NON_SYMBOL_KINDS = "a,b";\nother';
+    const { cg } = connectedClient((name) =>
+      name === 'codegraph_status' ? ok : { content: [{ type: 'text', text: sample }] });
+
+    const sig = await cg.getSymbolSignature('NON_SYMBOL_KINDS', 'src/extractors/codegraph.ts');
+    expect(sig).toBe('const NON_SYMBOL_KINDS = "a,b";');
+  });
+
   it('getSymbolSignature returns null when no definition is present', async () => {
     const { cg } = connectedClient((name) =>
       name === 'codegraph_status' ? ok : { content: [{ type: 'text', text: 'nothing relevant here' }] });
