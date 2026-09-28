@@ -172,3 +172,77 @@ describe('generated doc sync refresh content_hash', () => {
     expect(doc.content_hash).toBe('stale-hash');
   });
 });
+
+describe('generated doc sync — post-regeneration read failures', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+  let symId: string;
+  let docId: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-genfail-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    symId = symbolId('typescript', 'src/api.ts::ApiClient', 'class');
+    docId = docSectionId('docs/api.md', '');
+    upsertSymbol(db, {
+      id: symId, name: 'ApiClient', kind: 'class', location: 'src/api.ts:1',
+      signature: contentHash('export class ApiClient {}'), raw_signature: 'export class ApiClient {}',
+    });
+    vi.clearAllMocks();
+    mockDetectGenerator.mockReturnValue('npm run docs:generate');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks the doc synced without a hash refresh when the file vanishes after regeneration', async () => {
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: '', doc_type: 'generated', content_hash: 'h', status: 'stale' });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+    // Generator "succeeds" but the file is gone when re-read.
+    mockUpdateGeneratedDoc.mockReturnValue({ success: true, output: 'ok' });
+
+    const result = await syncSymbol(db, autoConfig, symId, tmpDir);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.docsUpdated).toContain('docs/api.md');
+    expect(getDocSection(db, docId)!.status).toBe('in_sync');
+    expect(getDocSection(db, docId)!.content_hash).toBe('h'); // unchanged
+  });
+
+  it('treats a doc path that became a directory as unreadable (no hash refresh)', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'docs', 'api.md'), { recursive: true });
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: '', doc_type: 'generated', content_hash: 'h', status: 'stale' });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+    mockUpdateGeneratedDoc.mockReturnValue({ success: true, output: 'ok' });
+
+    const result = await syncSymbol(db, autoConfig, symId, tmpDir);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.docsUpdated).toContain('docs/api.md');
+    expect(getDocSection(db, docId)!.content_hash).toBe('h');
+  });
+
+  it('rejects an absolute doc path outside the project without touching anything', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-outside-gen-'));
+    upsertDocSection(db, {
+      id: docId, file: path.join(outside, 'api.md'), anchor: '',
+      doc_type: 'generated', content_hash: 'h', status: 'stale',
+    });
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'generates' });
+    mockUpdateGeneratedDoc.mockReturnValue({ success: true, output: 'ok' });
+
+    const result = await syncSymbol(db, autoConfig, symId, tmpDir);
+
+    expect(result.errors).toHaveLength(0); // marked synced, but nothing read/written outside
+    expect(fs.existsSync(path.join(outside, 'api.md'))).toBe(false);
+    fs.rmSync(outside, { recursive: true, force: true });
+  });
+});

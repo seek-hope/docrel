@@ -298,3 +298,56 @@ describe('syncSymbol — standalone auto_update write paths', () => {
     expect(getDocSection(db, docId)!.status).toBe('stale');
   });
 });
+
+describe('syncSymbol — misc engine branches', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+  const sym = symbolId('typescript', 'src/auth.ts::login', 'function');
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-engmisc-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    upsertSymbol(db, { id: sym, name: 'login', kind: 'function', location: 'src/auth.ts:1' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('warns and marks stale when no strategy is configured for a doc_type', async () => {
+    const docId = docSectionId('docs/api.md', 'auth');
+    upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone', status: 'in_sync' });
+    createMapping(db, { symbol_id: sym, doc_id: docId, rel_type: 'describes' });
+    const cfg = makeConfig();
+    delete (cfg.strategies as Record<string, unknown>).standalone;
+
+    const result = await syncSymbol(db, cfg, sym, tmpDir);
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("No strategy configured for doc_type 'standalone'"));
+    expect(result.docsStaled).toContain('docs/api.md');
+  });
+
+  it('renders DB-stored absolute in-project paths as relative in error messages', async () => {
+    // A doc row with an absolute file (corrupt/legacy DB) — the error must
+    // show the path relative to the project, not leak the absolute form.
+    const docId = docSectionId('docs/gone.md', 'auth');
+    upsertDocSection(db, {
+      id: docId,
+      file: path.join(tmpDir, 'docs', 'gone.md'),
+      anchor: 'auth',
+      doc_type: 'standalone',
+    });
+    createMapping(db, { symbol_id: sym, doc_id: docId, rel_type: 'describes' });
+
+    const result = await syncSymbol(db, makeConfig(), sym, tmpDir);
+
+    expect(result.errors.some((e) => e.includes('docs/gone.md') && !e.includes(tmpDir))).toBe(true);
+  });
+});
