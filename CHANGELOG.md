@@ -14,16 +14,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 51/43/58/54) enforced in CI.
+  (currently 54/44/62/57) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
 - Type-aware linting (typescript-eslint `recommendedTypeChecked`) and a
   `npm run typecheck` gate covering src and tests; both wired into CI.
-- Test suites for `review`, `watch`, and `update-check` (34 new tests,
-  308 total): implied-reference detection, path-traversal skips, orphan
-  cleanup safety, watcher lifecycle/PID file/stale-on-delete, debounced
-  re-scan, and the update-check cache/registry matrix.
+- Test suites for `review`, `watch`, `update-check`, `agents/context`,
+  `git/hooks`, and `extractors/codegraph` (51 new tests, 325 total):
+  implied-reference detection, path-traversal skips, orphan cleanup safety,
+  watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
+  update-check cache/registry matrix, health-context formatting, git hook
+  installation (worktree resolution, shell quoting, PATH fallback), and
+  codegraph kind/language mapping.
 - `doc-relay mcp` CLI subcommand that starts the MCP server on stdio, so the
   published package can be launched directly from agent MCP configs
   (`npx -y doc-relay mcp`). Previously the MCP server could only be started
