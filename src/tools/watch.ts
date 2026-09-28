@@ -40,6 +40,17 @@ export function getWatchStatus(): WatchStatus {
   return { ...watchStatus };
 }
 
+/** Signal-0 liveness probe: ESRCH = dead; EPERM = alive but owned by
+ *  another user (still a running watcher we must not duplicate). */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: any) {
+    return err?.code === 'EPERM';
+  }
+}
+
 /**
  * Start a file watcher that re-scans symbols/docs on file changes.
  * Returns a cleanup function to stop watching.
@@ -92,6 +103,17 @@ export async function startWatch(
       const pidDir = path.join(projectRoot, '.docrelay');
       try { fs.mkdirSync(pidDir, { recursive: true, mode: 0o700 }); } catch { /* ok */ }
       pidFile = path.join(pidDir, 'watch.pid');
+      // Single-watcher guard: a LIVE pid from an earlier --daemon run means a
+      // second watcher would duplicate every scan and race the first on the
+      // DB. A stale file (dead pid, garbage content) is leftover from a
+      // crashed watch — overwrite it.
+      try {
+        const prev = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
+        if (!Number.isNaN(prev) && prev !== process.pid && pidAlive(prev)) {
+          console.error(`DocRelay watch is already running (pid ${prev}, see ${pidFile}) — refusing to start a second watcher.`);
+          return () => {};
+        }
+      } catch { /* no pid file yet, or unreadable — treat as stale */ }
       fs.writeFileSync(pidFile, String(process.pid), { flag: 'w', mode: 0o600 });
     }
 

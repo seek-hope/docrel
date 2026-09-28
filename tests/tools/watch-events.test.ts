@@ -3,6 +3,7 @@
 // the watcher event handlers (change/debounce/ignore/error/close) directly.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { startWatch, getWatchStatus } from '../../src/tools/watch.js';
@@ -76,6 +77,62 @@ describe('startWatch event handlers (mocked chokidar)', () => {
     closeAllDbs();
     vi.restoreAllMocks();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses to start a second daemon watcher while the pid file names a live process', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    try {
+      await new Promise<void>((r) => child.once('spawn', () => r()));
+      const pidDir = path.join(tmpDir, '.docrelay');
+      fs.mkdirSync(pidDir, { recursive: true });
+      const pidFile = path.join(pidDir, 'watch.pid');
+      fs.writeFileSync(pidFile, String(child.pid));
+
+      const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { daemon: true });
+      try {
+        expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('already running'));
+        expect(getWatchStatus().running).toBe(false);
+        // The live watcher's pid file must not be clobbered.
+        expect(fs.readFileSync(pidFile, 'utf-8')).toBe(String(child.pid));
+      } finally {
+        stop();
+      }
+    } finally {
+      child.kill();
+    }
+  });
+
+  it('overwrites a stale pid file left by a crashed watcher', async () => {
+    // Deterministically dead pid: spawn a child and wait for it to exit.
+    const child = spawn(process.execPath, ['-e', '']);
+    await new Promise<void>((r) => child.once('exit', () => r()));
+    const pidDir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(pidDir, { recursive: true });
+    const pidFile = path.join(pidDir, 'watch.pid');
+    fs.writeFileSync(pidFile, String(child.pid));
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { daemon: true });
+    try {
+      expect(getWatchStatus().running).toBe(true);
+      expect(fs.readFileSync(pidFile, 'utf-8')).toBe(String(process.pid));
+    } finally {
+      stop();
+    }
+  });
+
+  it('treats a corrupt (non-numeric) pid file as stale and starts', async () => {
+    const pidDir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(pidDir, { recursive: true });
+    const pidFile = path.join(pidDir, 'watch.pid');
+    fs.writeFileSync(pidFile, 'not-a-pid');
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { daemon: true });
+    try {
+      expect(getWatchStatus().running).toBe(true);
+      expect(fs.readFileSync(pidFile, 'utf-8')).toBe(String(process.pid));
+    } finally {
+      stop();
+    }
   });
 
   it('warns and skips a doc_dir outside the project root', async () => {
