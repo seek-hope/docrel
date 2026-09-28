@@ -89,6 +89,17 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
   const symRows = db.prepare('SELECT name FROM symbols LIMIT 50000').all() as { name: string }[];
   const knownNames = new Set(symRows.map((r) => r.name));
 
+  // Precompile one word-boundary regex per symbol ONCE. The scan below is
+  // O(symbols × sections); building the RegExp inside that loop compiled
+  // millions of identical patterns (and re-escaped every name per section),
+  // which dominated review time on large projects. Insertion order matches
+  // the Set iteration order the loop previously used.
+  const symbolPatterns: { name: string; re: RegExp }[] = [];
+  for (const name of knownNames) {
+    if (name.length < 2) continue;
+    symbolPatterns.push({ name, re: new RegExp(`\\b${escapeRegex(name)}\\b`, 'i') });
+  }
+
   // Get all docs with their content (capped to prevent memory exhaustion on large projects)
   const docRows = db.prepare("SELECT id, file, anchor FROM doc_sections WHERE doc_type = 'standalone' LIMIT 50000").all() as
     { id: string; file: string; anchor: string }[];
@@ -159,9 +170,7 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
       if (impliedLineCount > MAX_IMPLIED_LINES) continue;
       const sectionLines = sectionContent.split('\n');
 
-      for (const symbolName of knownNames) {
-        if (symbolName.length < 2) continue;
-
+      for (const { name: symbolName, re: wordRegex } of symbolPatterns) {
         // Cap the references array to prevent OOM on large projects where
         // many symbol names match many section contents. The implied-reference
         // scan is O(symbols × sections) — without a push cap, a project with
@@ -169,8 +178,6 @@ function findImplied(db: Database.Database, projectRoot: string): { references: 
         if (references.length >= MAX_IMPLIED_REFERENCES) break;
 
         // Check if symbol name appears in section text (outside code blocks)
-        const escaped = escapeRegex(symbolName);
-        const wordRegex = new RegExp(`\\b${escaped}\\b`, 'i');
         const match = wordRegex.exec(sectionContent);
         if (!match) continue;
 

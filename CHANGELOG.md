@@ -217,6 +217,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   per-section loop — better-sqlite3 compiles SQL on every `prepare()`
   call, so preparing inside the loop measurably dominated ingest time
   on doc-heavy projects.
+- `review`'s implied-reference scan precompiles its per-symbol
+  word-boundary regexes once instead of inside the O(symbols ×
+  sections) loop — it previously compiled (and re-escaped) an identical
+  RegExp for every pair. Measured at the same bench scale: review
+  1094ms → 446ms (2.5×).
 
 ### Fixed
 - `init` never ingested documentation: it scanned code symbols only, so
