@@ -7,6 +7,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Fixed
+- Removed the stale `scripts/install-hooks.sh` (referenced the pre-rename
+  `docrel` binary and a superseded hook flow); the maintained installer is
+  the `doc-relay install-hooks` CLI command.
 - Inline sync could never locate signatures in files beginning with a line
   comment (this repo's header convention): the occurrence-count haystack
   passed whole-file content to the per-line `stripCommentsAndStrings`,
