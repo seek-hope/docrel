@@ -210,6 +210,44 @@ describe('MCP server (in-process)', () => {
     expect(health.healthy).toBe(true);
   });
 
+  it('review cleanup removes orphaned sections through the MCP path', async () => {
+    await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } });
+    // Orphan a doc section: delete its file from disk.
+    fs.unlinkSync(path.join(tmpDir, 'docs', 'api.md'));
+
+    const cleanup = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_review', arguments: { cleanup: true },
+    }))) as { deletedSections?: number; removedSections?: unknown[]; summary?: string };
+    // Whatever the exact shape, the orphaned docs/api.md sections must be gone.
+    const remaining = db.prepare("SELECT COUNT(*) AS c FROM doc_sections WHERE file = 'docs/api.md'").get() as { c: number };
+    expect(remaining.c).toBe(0);
+    expect(JSON.stringify(cleanup)).toBeTruthy();
+  });
+
+  it('integrate reports created files without writing when dryRun is set', async () => {
+    const result = JSON.parse(textOf(await client.callTool({
+      name: 'docrelay_integrate', arguments: { agent: 'opencode', dryRun: true },
+    }))) as { integratedAs: string; filesCreated: string[]; summary: string };
+    expect(result.integratedAs).toBe('opencode');
+    expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(path.join(tmpDir, 'OPENCODE.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('sanitizeError contract: a throwing tool returns a generic error, no internals', async () => {
+    // Make .pi a regular file so the oh-my-pi integration's mkdirSync throws
+    // ENOTDIR — the handler must catch and sanitize.
+    fs.writeFileSync(path.join(tmpDir, '.pi'), 'not a dir', 'utf-8');
+
+    const result = await client.callTool({
+      name: 'docrelay_integrate', arguments: { agent: 'oh-my-pi' },
+    });
+    expect(result.isError).toBe(true);
+    const payload = JSON.parse(textOf(result)) as { error: string };
+    expect(payload.error).toBe('Internal error — check server logs.');
+    expect(payload.error).not.toContain(tmpDir); // no path disclosure
+  });
+
   it('sync reports an error for an unknown symbol without crashing the server', async () => {
     const result = JSON.parse(textOf(await client.callTool({
       name: 'docrelay_sync', arguments: { symbol_id: 'ghost' },

@@ -35,7 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (208 new tests, 505 total):
+  branches (211 new tests, 508 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -50,7 +50,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   skips, 10 MB size limit, EACCES handling, non-regular files), agent
   integration defensive paths (oversized/null/invalid .mcp.json preserved,
   oversized rules files skipped, cursor/gemini/kiro/antigravity/hermes
-  variants, dry-run no-write guarantees, idempotency), and the generated-doc command allowlist
+  variants, dry-run no-write guarantees, idempotency), MCP handler paths
+  (review cleanup through the tool boundary, integrate dry-run reporting,
+  and the sanitizeError contract — throwing tools return a generic message
+  with no path disclosure), and the generated-doc command allowlist
   (interpreter/path/code-loading-flag rejection, npm-script resolution,
   OpenAPI/TypeDoc detection heuristics, and engine coverage for
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone
