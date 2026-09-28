@@ -26,6 +26,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- `scan` no longer reports configured-but-nonexistent doc paths (e.g. the
+  default `docs` directory) as `failedFiles` — they are now listed separately
+  as `skippedMissing`, so real parse failures stay visible.
 - Agent integration (`.mcp.json`, CLAUDE.md/OPENCODE.md/generic instructions)
   referenced `npx docrelay`, which is not a published npm package — generated
   MCP configs could not start the server. Now uses `npx -y doc-relay mcp`.

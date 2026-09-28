@@ -10,6 +10,10 @@ export interface DocScanReport {
   totalSections: number;
   totalFiles: number;
   failedFiles: string[];
+  /** Configured doc paths that do not exist — informational, NOT failures.
+   *  The default `init` config lists `docs`, which many projects don't have;
+   *  reporting it as a failure trains users to ignore real failures. */
+  skippedMissing: string[];
 }
 
 const MAX_FILES = 5000;
@@ -24,6 +28,7 @@ export async function scanDocs(
 ): Promise<{ sections: ParsedDocSection[]; report: DocScanReport }> {
   const sections: ParsedDocSection[] = [];
   const failedFiles: string[] = [];
+  const skippedMissing: string[] = [];
   let totalFiles = 0;
 
   for (const docDir of docDirs) {
@@ -42,8 +47,12 @@ export async function scanDocs(
     let realDir: string;
     try {
       realDir = fs.realpathSync(absDir);
-    } catch {
-      failedFiles.push(docDir);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        skippedMissing.push(docDir);
+      } else {
+        failedFiles.push(docDir);
+      }
       continue;
     }
     if (!realDir.startsWith(root + path.sep) && realDir !== root) {
@@ -55,8 +64,12 @@ export async function scanDocs(
     let stat: fs.Stats;
     try {
       stat = fs.statSync(absDir);
-    } catch {
-      failedFiles.push(docDir);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        skippedMissing.push(docDir);
+      } else {
+        failedFiles.push(docDir);
+      }
       continue;
     }
 
@@ -92,7 +105,7 @@ export async function scanDocs(
 
   return {
     sections,
-    report: { totalSections: sections.length, totalFiles, failedFiles },
+    report: { totalSections: sections.length, totalFiles, failedFiles, skippedMissing },
   };
 }
 

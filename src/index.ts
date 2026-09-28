@@ -315,7 +315,7 @@ server.tool(
 
       const symbolReport = await scanProject(extractor, db, config, projectRoot, true /* full */);
 
-      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
+      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[]; skippedMissing: string[] } | null = null;
       let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
 
       if (docs) {
@@ -328,6 +328,7 @@ server.tool(
           newDocSections: ingestResult.newDocSections,
           newMappings: ingestResult.newMappings,
           failedFiles: report.failedFiles,
+          skippedMissing: report.skippedMissing,
         };
 
         // Run auto-linker
@@ -459,7 +460,7 @@ server.tool(
 
       const symbolReport = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
 
-      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[] } | null = null;
+      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[]; skippedMissing: string[] } | null = null;
       let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
 
       if (full) {
@@ -472,6 +473,7 @@ server.tool(
           newDocSections: ingestResult.newDocSections,
           newMappings: ingestResult.newMappings,
           failedFiles: report.failedFiles,
+          skippedMissing: report.skippedMissing,
         };
 
         const allSymbols = listSymbols(db);

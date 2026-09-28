@@ -713,6 +713,7 @@ program
         newDocSections: number;
         newMappings: number;
         failedFiles: string[];
+        skippedMissing: string[];
       } | null = null;
       let autoLinkReport: {
         totalMatched: number;
@@ -733,6 +734,7 @@ program
           newDocSections: ingestResult.newDocSections,
           newMappings: ingestResult.newMappings,
           failedFiles: docReport.failedFiles,
+          skippedMissing: docReport.skippedMissing,
         };
 
         // Auto-link via autoLink() — creates zero-annotation symbol↔doc mappings
