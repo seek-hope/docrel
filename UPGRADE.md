@@ -1,72 +1,83 @@
-# DocRelay Upgrade Plan
+# DocRelay Roadmap & Upgrade Plan
 
 > Historical note: this plan was written when the project was called **DocSync**
-> (`docsync` commands below). The project has since been renamed to **DocRelay**
-> (`doc-relay` / `docrelay`); the milestones themselves are unchanged.
+> (`docsync`). The project has since been renamed to **DocRelay**
+> (`doc-relay` / `docrelay`); early milestone entries keep the old name.
 
-## Current State (v0.3.1)
-- 42 TypeScript source files, ~14,800 lines
-- 23 test files, 239 tests
-- MCP server (16 tools) + CLI (23 commands)
+## Current State (v0.3.1, 2026-09)
+
+- 47 TypeScript source files, ~13,400 lines (ES2023, NodeNext, pure ESM)
+- 63 test files, **1009 tests**, coverage 95.2/88.1/94.9/96.1
+  (stmts/branch/funcs/lines, ratcheting CI gate)
+- MCP server (17 tools, in-process testable via `createDocrelayServer`)
+  + CLI (27 commands, thin shim → `cli-main`)
 - Git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
 - 4 doc parsers (Markdown, RST, AsciiDoc, HTML)
-- 2 symbol extractors (Codegraph, builtin regex)
-- Agent auto-detection (Claude Code, Codex, OpenCode, Oh My Pi, Hermes)
+- 2 symbol extractors (Codegraph MCP, builtin regex fallback)
+- Agent auto-detection & integration (Claude Code, Codex, OpenCode,
+  Oh My Pi, Hermes, Cursor, Gemini, Kiro, Antigravity)
 - 4 doc types (inline, standalone, generated, architecture)
-- SQLite with WAL mode, foreign keys, atomic UPSERT
-- DA-TODO: upgrade plan — v0.2.0→v0.2.3 COMPLETE, v0.3.2+partial, v0.4.2 partial
-- 40 structured error codes, 8-point health check, incremental scanning
-- Watch daemon mode with PID file, CI/CD GitHub Actions workflow
+- SQLite schema v5 (WAL, foreign keys, atomic UPSERT, review_history)
+- 44 structured error codes, 8-point health check, incremental scanning
+- Watch daemon mode with PID file and directory-level debounce
+- npm package: 255.6 kB / 200 files, docs included, npm >= 12 ready
+  (N-API prebuilds via better-sqlite3 v13 + startup binding shim)
+- Release automation: tag push → gates → npm publish (provenance)
+  → GitHub Release (blocked only on the NPM_TOKEN secret)
 
 ---
 
 ## v0.2.0 — Polish & Robustness ✅ COMPLETE
 
 ### ✅ 0.2.0 — Error Codes & Observability
-- [x] **Structured error codes**: `DOCSYNC_E001`–`DOCSYNC_E091` in `src/utils/error-codes.ts`
-- [x] **Health check endpoint**: `docsync health` CLI + `docsync_health` MCP (8 checks)
-- [x] **Structured logging**: `logError()` with grep-able `[DOCSYNC_E*]` prefix
+- [x] Structured error codes (`DOCRELAY_E001`–`E091` family, 44 active)
+- [x] Health check endpoint (CLI + MCP, 8 checks)
+- [x] Structured logging with grep-able error-code prefix
 
 ### ✅ 0.2.1 — Config & Validation
-- [x] **Config schema versioning**: `version: 1` in config.yaml, future-version warning
-- [x] **Config validation**: `docsync config validate` + pre-flight check before scan
-- [x] **Dry-run mode**: `docsync scan --dry-run` previews without DB writes
+- [x] Config schema versioning with future-version warning
+- [x] `config validate` + pre-flight check before scan
+- [x] `scan --dry-run` preview mode
 
 ### ✅ 0.2.2 — Performance
-- [x] **Incremental scanning**: `--incremental` flag skips files with mtime <= last_scan_at
+- [x] Incremental scanning (mtime <= last_scan_at skip)
+- [x] Batch INSERT in single SQLite transactions (~21% faster)
 - [ ] Lazy symbol extraction (deferred)
-- [x] **Batch INSERT**: scan/ingest run in single SQLite transactions (~21% faster on large repos)
-- [ ] Cache warming (deferred)
-- [ ] Query optimization (deferred)
+- [ ] Cache warming / query optimization (deferred)
 
 ### ✅ 0.2.3 — Watch Mode Improvements
-- [x] **Daemon mode**: `docsync watch --daemon` writes PID file
-- [x] **Directory-level coalescing**: debounce keyed by watch-path group
-- [x] **Watch status API**: `docsync_watch_status` MCP tool
-- [x] **Auto-recovery**: `watch-failed` marker on scan errors
+- [x] Daemon mode with PID file
+- [x] Directory-level debounce coalescing
+- [x] `docrelay_watch_status` MCP tool
+- [x] Auto-recovery via `watch-failed` marker
 
 ---
 
-## v0.3.0 — Scale & Extensibility (in progress)
+## v0.3.0 — Scale & Extensibility ✅ COMPLETE (0.3.2/0.3.3 shipped; 0.3.0/0.3.1 deferred by design)
 
 ### 0.3.0 — Multi-Project Support (deferred)
-- [ ] Workspace mode
-- [ ] Cross-project references
-- [ ] Project grouping
+- [ ] Workspace mode / cross-project references / project grouping
+- Design notes: additive config (`projects: [...]`), new `projects` table,
+  single-project mode stays the default. Start after v0.4 scope is set —
+  see "Deferred design explorations" below.
 
 ### 0.3.1 — Plugin System (deferred)
-- [ ] Custom doc parsers
-- [ ] Custom extractors
-- [ ] Custom generators
+- [ ] Custom doc parsers / extractors / generators
+- Design notes: opt-in API surface must come *after* the v1.0 REST split
+  to avoid freezing a plugin ABI we would immediately break.
 
 ### ✅ 0.3.2 — CI/CD Integration
-- [x] **GitHub Actions workflow**: `.github/workflows/docsync.yml`
-- [x] **GitLab CI template**: `docs/templates/gitlab-ci.yml` + [CI/CD guide](docs/ci.md)
-- [x] **Status badges**: `docsync check --format shields` emits a shields.io endpoint payload
+- [x] GitHub Actions workflow + GitLab CI template + CI/CD guide
+- [x] Status badges (`check --format shields`)
 
-### ✅ 0.3.3 — Database Improvements (partial)
-- [x] **Backup/restore**: `docsync backup` and `docsync restore` commands
-- [ ] LibSQL backend (deferred)
+### ✅ 0.3.3 — Database Improvements
+- [x] `backup` / `restore` commands with `--keep` rotation
+- [ ] LibSQL backend (deferred — see below)
+
+### Tooling & release engineering (beyond the original 0.3 plan)
+- [x] commander 15 / eslint 10 / better-sqlite3 13 / chokidar 5
+- [x] npm >= 12 compatibility (allowScripts, binding smoke tests, CLI shim)
+- [x] Release workflow with npm provenance + GitHub Release assets
 
 ---
 
@@ -76,52 +87,59 @@
 ### 0.4.1 — Semantic Understanding (deferred)
 
 ### ✅ 0.4.2 — Review Workflow (partial)
-- [x] **Batch operations**: `docsync confirm --all`, `docsync reject --all`, `docsync reject --pattern`
+- [x] Batch operations: `confirm --all`, `reject --all`, `reject --pattern`
 - [ ] Review queue (deferred)
-- [x] **Review history**: `docsync history` / `docrelay_history` — append-only audit trail of confirm/reject decisions (CLI/MCP actor attribution, survives mapping deletion)
+- [x] Review history: append-only audit trail with CLI/MCP actor attribution
+
+---
+
+## Deferred design explorations (v0.4+ candidates)
+
+- **Multi-project workspace** — highest user demand candidate. Open
+  questions: one DB per project vs. shared DB with `project_id`; how
+  cross-project mappings interact with path containment checks.
+- **LibSQL backend** — enables team-shared state without PostgreSQL.
+  Blocked on deciding the remote-sync story (embedded replica vs.
+  server); better-sqlite3 remains the default either way.
+- **TypeScript 7 (tsgo) migration** — build/typecheck speedup. Blocked
+  on typescript-eslint peer support (`<6.1.0` as of 8.71). Re-evaluate
+  when typescript-eslint 9 ships with TS 7 support; `@types/node` stays
+  pinned to the supported runtime floor (Node 22).
+- **LLM features (0.4.0/0.4.1)** — all opt-in, graceful degradation
+  without an API key; no network calls in the default configuration.
 
 ---
 
 ## v1.0.0 — Platform (12 weeks)
 
 ### 1.0.0 — Web Dashboard
-- **Real-time health view**: Symbol/doc counts, sync status, trends
-- **Interactive graph**: D3/vis.js graph of symbol↔doc relationships
-- **Search**: Full-text search across symbols, docs, and mappings
-- **Diff viewer**: Side-by-side old/new signature comparison
-- **Dark mode**: Because developers
+- Real-time health view: symbol/doc counts, sync status, trends
+- Interactive graph of symbol↔doc relationships
+- Full-text search across symbols, docs, mappings
+- Side-by-side signature diff viewer
 
 ### 1.0.1 — Team Features
-- **Multi-user review**: Assign reviews to team members
-- **Review comments**: Threaded discussion on specific mappings
-- **Activity feed**: Who scanned/synced/reviewed what
-- **RBAC**: Admin/editor/viewer roles
+- Multi-user review assignment, threaded comments, activity feed, RBAC
 
 ### 1.0.2 — API & SDK
-- **REST API**: HTTP endpoints for all MCP tools
-- **JavaScript SDK**: `@seek-hope/docsync-client` npm package
-- **Python SDK**: `docsync-client` pip package
-- **WebSocket events**: Real-time scan/sync/review notifications
+- REST API for all MCP tools; JS/Python SDKs; WebSocket events
 
 ### 1.0.3 — Enterprise
-- **SSO/OIDC**: Authenticate via corporate identity providers
-- **Audit logging**: Immutable log of all operations
-- **Compliance reports**: Documentation coverage for SOC2/ISO27001
-- **On-prem deployment**: Docker image, Kubernetes helm chart
+- SSO/OIDC, immutable audit logging, compliance reports, on-prem images
 
 ---
 
 ## Architecture Evolution
 
 ```
-v0.1.0 (current)          v0.3.0 (extensible)       v1.0.0 (platform)
+v0.3.1 (current)          v0.4.0 (intelligence)     v1.0.0 (platform)
 ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
-│  MCP Server     │       │  MCP + REST     │       │  Web Dashboard  │
-│  CLI            │       │  CLI + CI/CD     │       │  REST API       │
-│  SQLite (local) │       │  LibSQL (remote) │       │  PostgreSQL     │
-│  4 parsers      │       │  Plugin parsers  │       │  Plugin system  │
-│  2 extractors   │       │  Plugin extract. │       │  LLM integration│
-│  Git hooks      │       │  CI templates    │       │  Team features  │
+│  MCP Server     │       │  MCP + LLM      │       │  Web Dashboard  │
+│  CLI (27 cmds)  │       │  CLI + CI/CD    │       │  REST API       │
+│  SQLite (local) │       │  SQLite/LibSQL  │       │  PostgreSQL     │
+│  4 parsers      │       │  Semantic layer │       │  Plugin system  │
+│  2 extractors   │       │  Review queue   │       │  Team features  │
+│  Git hooks      │       │  CI templates   │       │  Enterprise     │
 └─────────────────┘       └─────────────────┘       └─────────────────┘
 ```
 
@@ -129,32 +147,27 @@ v0.1.0 (current)          v0.3.0 (extensible)       v1.0.0 (platform)
 
 ## Migration Path
 
-### From v0.1.0 → v0.2.0
-- No breaking changes
-- `docsync upgrade` command to validate config compatibility
-- Database schema: v4 → v5 (add `error_codes` metadata table)
+### From v0.2.x → v0.3.x
+- No breaking changes; config is additive
+- Database: schema v4 → v5 (adds `review_history`; auto-migrated on open)
 
-### From v0.2.0 → v0.3.0
-- Workspace config is additive (single-project mode still works)
-- Plugin API is opt-in
-- Database: add `projects` table for multi-project support
-
-### From v0.3.0 → v0.4.0
-- LLM features require API key configuration
-- All AI features are opt-in with graceful degradation
+### From v0.3.x → v0.4.0
+- LLM features require API key configuration (opt-in)
 - Database: add `review_assignments` and `review_comments` tables
 
 ### From v0.4.0 → v1.0.0
 - Breaking: REST API replaces direct SQLite access for multi-user
-- Database migration: SQLite → PostgreSQL for dashboard
+- Database migration: SQLite → PostgreSQL for the dashboard
 - Backward compatibility: SQLite mode retained for single-user CLI
 
 ---
 
-## Immediate Next Steps (this week)
+## Immediate Next Steps
 
-1. **Tag v0.1.0**: `git tag v0.1.0 && git push --tags`
-2. **Publish to npm**: `npm publish` (verify package.json fields)
-3. **CHANGELOG.md**: Document all features and fixes since inception
-4. **CONTRIBUTING.md**: Developer setup guide, architecture overview
-5. **GitHub Actions CI**: Build + test + lint on push/PR
+1. **Publish v0.3.1 to npm** — add the `NPM_TOKEN` repo secret, then
+   `git tag v0.3.1 && git push --tags` (release workflow runs all gates,
+   publishes with provenance, and creates the GitHub Release).
+2. **Pick the v0.4 headline feature** — recommend exactly one of:
+   multi-project workspace (user-facing breadth) or LLM-assisted docs
+   (differentiation). Decide before opening 0.4.0 issues.
+3. **Track typescript-eslint 9** for the TS 7 (tsgo) migration window.
