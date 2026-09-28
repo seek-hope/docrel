@@ -73,7 +73,7 @@ try {
   db = getDb(projectRoot);
   runMigrations(db);
   codegraph = new CodegraphClient(config.codegraph?.command, projectRoot);
-  const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
+  const codegraphExtractor = new CodegraphExtractor(codegraph);
   const builtinExtractor = new BuiltinExtractor();
   // Try codegraph; fall back to builtin regex-based extraction
   extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;

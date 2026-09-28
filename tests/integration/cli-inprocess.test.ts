@@ -284,6 +284,27 @@ describe('CLI in-process: export / gc / config', () => {
     expect(await runCli(['gc'])).toBe(0);
   });
 
+  it('gc refuses a collapsed scan and --force overrides the guard', async () => {
+    seedProject();
+    seedDb();
+    // Track far more symbols than the builtin scan of the tiny fixture can
+    // re-discover (20 ghosts + login vs 1 found = 95% missing).
+    const db = getDb(tmpDir);
+    for (let i = 0; i < 20; i++) {
+      upsertSymbol(db, { id: `ghost-${i}`, name: `ghost${i}`, kind: 'function' });
+    }
+
+    expect(await runCli(['gc'])).toBe(1);
+    expect(errOut()).toContain('GC refused');
+    expect(errOut()).toContain('--force');
+    // Nothing was marked stale (the scan's own 'created' entry for login is fine).
+    expect(db.prepare("SELECT COUNT(*) AS c FROM changelog WHERE change_type = 'deleted'").get()).toEqual({ c: 0 });
+
+    expect(await runCli(['gc', '--force'])).toBe(0);
+    expect(errOut()).toContain('marked as stale');
+    expect((db.prepare("SELECT COUNT(*) AS c FROM changelog WHERE change_type = 'deleted'").get() as { c: number }).c).toBeGreaterThan(0);
+  });
+
   it('shows the resolved config', async () => {
     seedProject();
     expect(await runCli(['config', 'show'])).toBe(0);

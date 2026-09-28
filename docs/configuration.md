@@ -29,7 +29,8 @@ strategies:
 # Optional Codegraph backend tuning
 codegraph:
   command: codegraph   # binary name or path (must pass safety validation)
-  maxFiles: 50         # files per explore request (1–500; raise for monorepos)
+  maxFiles: 50         # deprecated — symbol enumeration now reads the codegraph
+                       # index directly; retained for config compatibility
 ```
 
 ## Strategies

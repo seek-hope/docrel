@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { shouldFallbackToBuiltin, hasSourceFiles } from '../../src/sync/scan-fallback.js';
+import { shouldFallbackToBuiltin, hasSourceFiles, assessScanCollapse } from '../../src/sync/scan-fallback.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -81,5 +81,20 @@ describe('scan fallback decision (shouldFallbackToBuiltin)', () => {
     fs.symlinkSync(path.join(tmpDir, 'src'), path.join(tmpDir, 'src', 'sub', 'loop'), 'dir');
     // No source files anywhere — the loop must not cause infinite traversal.
     expect(hasSourceFiles(['src'], tmpDir)).toBe(false);
+  });
+});
+
+describe('assessScanCollapse', () => {
+  it('flags a scan that missed most of the tracked symbols', () => {
+    expect(assessScanCollapse(423, 411).collapsed).toBe(true);
+    expect(assessScanCollapse(20, 11).collapsed).toBe(true);
+  });
+
+  it('does not flag ordinary churn or tiny databases', () => {
+    expect(assessScanCollapse(20, 10).collapsed).toBe(false); // boundary: not > half
+    expect(assessScanCollapse(423, 60).collapsed).toBe(false); // extractor-switch drift
+    expect(assessScanCollapse(19, 19).collapsed).toBe(false);  // below min DB size
+    expect(assessScanCollapse(100, 9).collapsed).toBe(false);  // below min absolute miss
+    expect(assessScanCollapse(0, 0).collapsed).toBe(false);
   });
 });

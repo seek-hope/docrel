@@ -100,8 +100,12 @@ function makeTsRules(): RegexRule[] {
  *
  * Returns the folded single-line form (backward compatible with the old
  * single-line behavior) plus the raw multi-line text.
+ *
+ * @internal exported so the codegraph index extractor can reproduce
+ * byte-identical signatures (extractor switches must not register as
+ * repository-wide signature changes).
  */
-function captureSignature(
+export function captureSignature(
   lines: string[],
   startIdx: number,
   maxLines = 10,

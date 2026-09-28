@@ -91,9 +91,16 @@ mappings and do not clear section staleness; `ack` is the missing piece of
 the sync workflow: run `sync`, review what it could not rewrite, then `ack`
 the sections that are already accurate.
 
-### `gc [--dry-run]`
+### `gc [--dry-run] [--force]`
 Garbage-collect symbols no longer found in the codebase. Two-pass: stale
 first, delete on the next run — nothing disappears without a warning period.
+
+**Scan-collapse guard**: if the pre-GC scan re-discovered fewer than half of
+the tracked symbols (and the database tracks at least 20), GC assumes the
+extractor saw a broken or stale view of the repo — not a real mass
+deletion — and refuses to run (exit 1, no changes, dry runs included).
+Re-run `doc-relay scan` (or `codegraph sync` when using Codegraph) and
+retry; pass `--force` only when the mass deletion was intentional.
 
 ## Automation
 

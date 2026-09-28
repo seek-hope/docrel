@@ -1111,6 +1111,7 @@ program
   .command('gc')
   .description('Garbage-collect symbols no longer found in the codebase (two-pass: stale then delete)')
   .option('--dry-run', 'Preview what would be removed without deleting')
+  .option('--force', 'Override the scan-collapse guard (only after an intentional mass deletion)')
   .action(async (opts) => {
     // Resolve extractor at action time (same fallback logic as `scan` command).
     // The top-level extractor may have been initialized before codegraph was
@@ -1129,7 +1130,12 @@ program
 
       console.error('Running garbage collection...');
       const { docrelayGc } = await import('./tools/gc.js');
-      const gcReport = docrelayGc(db, scanReport, opts.dryRun ?? false);
+      const gcReport = docrelayGc(db, scanReport, opts.dryRun ?? false, { force: opts.force ?? false });
+
+      if (gcReport.refused) {
+        console.error(`GC refused: ${gcReport.refused}`);
+        exit(1);
+      }
 
       if (gcReport.error) {
         console.error(`GC failed: ${gcReport.error}`);

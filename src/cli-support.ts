@@ -11,7 +11,7 @@ import type { SymbolExtractor } from './extractors/interface.js';
 import type { DocRelayConfig } from './utils/config.js';
 import { scanProject } from './discovery/scanner.js';
 import type { ScanReport } from './discovery/scanner.js';
-import { shouldFallbackToBuiltin } from './sync/scan-fallback.js';
+import { shouldFallbackToBuiltin, assessScanCollapse } from './sync/scan-fallback.js';
 import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { pruneVanishedDocSections } from './db/docs.js';
@@ -32,8 +32,8 @@ export function errMsg(e: unknown, projectRoot: string): string {
 /** Shared extractor factory — used by ensureContext, scan, and gc.
  *  Tries Codegraph first, falls back to builtin regex extractor.
  *  Diagnostics are handled by CodegraphClient.preflight(), so we stay quiet. */
-export async function createExtractor(cg: CodegraphClient, cfg: DocRelayConfig): Promise<SymbolExtractor> {
-  const codegraphExt = new CodegraphExtractor(cg, cfg.codegraph?.maxFiles);
+export async function createExtractor(cg: CodegraphClient, _cfg: DocRelayConfig): Promise<SymbolExtractor> {
+  const codegraphExt = new CodegraphExtractor(cg);
   if (await codegraphExt.isAvailable()) return codegraphExt;
   return new BuiltinExtractor();
 }
@@ -57,6 +57,17 @@ export async function scanWithFallback(
   if (shouldFallbackToBuiltin(report.totalSymbols, extractor.name, cfgConfig.code_dirs, cfgRoot)) {
     console.warn('DocRelay: codegraph returned 0 symbols, fell back to builtin extractor');
     return scanProject(new BuiltinExtractor(), cfgDb, cfgConfig, cfgRoot, fullScan);
+  }
+  // Soft counterpart of gc's collapse guard: a full scan that re-discovers
+  // only a fraction of the tracked symbols almost always means a stale or
+  // broken index, not a mass deletion. Warn early — gc would refuse anyway.
+  // Incremental scans legitimately see only changed files, so skip them.
+  if (fullScan) {
+    const { c: dbCount } = cfgDb.prepare('SELECT COUNT(*) AS c FROM symbols').get() as { c: number };
+    const collapse = assessScanCollapse(dbCount, Math.max(0, dbCount - report.scannedIds.length));
+    if (collapse.collapsed) {
+      console.warn(`DocRelay: scan re-discovered only ${report.scannedIds.length} of ${dbCount} tracked symbols (${collapse.missing} missing). The symbol index may be stale — run \`codegraph sync\` (or check .docrelayignore) before trusting \`doc-relay gc\`; gc's collapse guard would refuse to run on this scan.`);
+    }
   }
   return report;
 }

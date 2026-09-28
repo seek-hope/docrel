@@ -125,3 +125,74 @@ describe('docrelayGc', () => {
     expect(getSymbol(db, missing)).toBeTruthy();
   });
 });
+
+describe('docrelayGc scan-collapse guard', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+
+  /** Seed `n` symbols; return their ids. */
+  function seedSymbols(n: number): string[] {
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const id = symbolId('ts', `src/f.ts::s${i}`, 'function');
+      upsertSymbol(db, { id, name: `s${i}`, kind: 'function' });
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-gcguard-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses when the scan missed more than half of all tracked symbols', () => {
+    const ids = seedSymbols(20);
+    const report = docrelayGc(db, makeScanReport(ids.slice(0, 9)));
+    expect(report.refused).toContain('11 missing');
+    expect(report.refused).toContain('--force');
+    expect(report.symbolsMarkedStale).toBe(0);
+    expect(report.symbolsRemoved).toBe(0);
+    // No mutations at all — no symbols touched, no changelog entries.
+    expect(db.prepare('SELECT COUNT(*) AS c FROM symbols').get()).toEqual({ c: 20 });
+    expect(db.prepare('SELECT COUNT(*) AS c FROM changelog').get()).toEqual({ c: 0 });
+  });
+
+  it('refuses dry runs too — "would mark N stale" numbers from a collapsed scan are meaningless', () => {
+    const ids = seedSymbols(20);
+    const report = docrelayGc(db, makeScanReport(ids.slice(0, 9)), true);
+    expect(report.dryRun).toBe(true);
+    expect(report.refused).toBeDefined();
+    expect(db.prepare('SELECT COUNT(*) AS c FROM changelog').get()).toEqual({ c: 0 });
+  });
+
+  it('--force overrides the guard and applies the two-pass policy', () => {
+    const ids = seedSymbols(20);
+    const report = docrelayGc(db, makeScanReport(ids.slice(0, 9)), false, { force: true });
+    expect(report.refused).toBeUndefined();
+    expect(report.symbolsMarkedStale).toBe(11);
+  });
+
+  it('proceeds at the boundary: exactly half missing is churn, not collapse', () => {
+    const ids = seedSymbols(20);
+    const report = docrelayGc(db, makeScanReport(ids.slice(0, 10)));
+    expect(report.refused).toBeUndefined();
+    expect(report.symbolsMarkedStale).toBe(10);
+  });
+
+  it('never refuses tiny databases regardless of miss ratio', () => {
+    seedSymbols(19);
+    const report = docrelayGc(db, makeScanReport([]));
+    expect(report.refused).toBeUndefined();
+    expect(report.symbolsMarkedStale).toBe(19);
+  });
+});

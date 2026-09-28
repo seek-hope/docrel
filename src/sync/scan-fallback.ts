@@ -61,3 +61,35 @@ export function shouldFallbackToBuiltin(
     extractorName !== 'builtin' &&
     hasSourceFiles(codeDirs, projectRoot);
 }
+
+export interface ScanCollapse {
+  collapsed: boolean;
+  dbCount: number;
+  missing: number;
+}
+
+/** Minimum tracked-symbol count before the collapse assessment applies.
+ *  Below this, ratio-based judgments are noise (tiny projects legitimately
+ *  swing by large percentages). */
+export const COLLAPSE_MIN_DB = 20;
+/** Minimum absolute miss count — a handful of missing symbols is ordinary
+ *  refactoring churn, not a scan malfunction. */
+export const COLLAPSE_MIN_MISSING = 10;
+/** Missing more than half of all tracked symbols means the scan saw a
+ *  fundamentally different (almost always broken/stale) view of the repo. */
+export const COLLAPSE_RATIO = 0.5;
+
+/**
+ * Assess whether a scan result "collapsed" — i.e. failed to re-discover such
+ * a large fraction of the tracked symbols that treating the misses as
+ * deletions (gc) or a healthy state (status reports) would be destructive.
+ * Used by gc as a hard guard and by scanWithFallback as a soft warning, so
+ * both fire on exactly the same condition.
+ */
+export function assessScanCollapse(dbCount: number, missing: number): ScanCollapse {
+  const collapsed =
+    dbCount >= COLLAPSE_MIN_DB &&
+    missing >= COLLAPSE_MIN_MISSING &&
+    missing > dbCount * COLLAPSE_RATIO;
+  return { collapsed, dbCount, missing };
+}

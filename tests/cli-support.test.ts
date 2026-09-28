@@ -129,6 +129,29 @@ describe('scanWithFallback', () => {
     expect(report.totalSymbols).toBeGreaterThanOrEqual(1);
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  it('warns when a full scan re-discovers only a fraction of the tracked symbols', async () => {
+    // Seed a symbol table far larger than what the scan will find.
+    for (let i = 0; i < 20; i++) {
+      upsertSymbol(db, { id: `ghost-${i}`, name: `ghost${i}`, kind: 'function' });
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const report = await scanWithFallback(new BuiltinExtractor(), db, config, tmpDir);
+
+    expect(report.totalSymbols).toBeGreaterThanOrEqual(1); // alpha() still found
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('only 1 of 21'));
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codegraph sync'));
+  });
+
+  it('does not warn on incremental scans (changed files only) or small databases', async () => {
+    for (let i = 0; i < 20; i++) {
+      upsertSymbol(db, { id: `ghost-${i}`, name: `ghost${i}`, kind: 'function' });
+    }
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await scanWithFallback(new BuiltinExtractor(), db, config, tmpDir, false);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('runDocsPipeline', () => {

@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type { ScanReport } from '../discovery/scanner.js';
 import { assertDbOpen } from '../db/connection.js';
 import { markDocsStaleForSymbol } from '../db/docs.js';
+import { assessScanCollapse } from '../sync/scan-fallback.js';
 
 function safeStringify(obj: unknown): string {
   try {
@@ -18,6 +19,15 @@ export interface GcReport {
   dryRun: boolean;
   /** Set when the GC transaction failed — callers should check this. */
   error?: string;
+  /** Set when the scan-collapse guard refused to run. No mutations were
+   *  made; the message explains how to recover (re-scan, or --force). */
+  refused?: string;
+}
+
+export interface GcOptions {
+  /** Override the scan-collapse guard. Use only when a mass deletion of
+   *  source files was intentional. */
+  force?: boolean;
 }
 
 const STALE_MARKER = '__stale__';
@@ -38,6 +48,7 @@ export function docrelayGc(
   db: Database.Database,
   scanReport: ScanReport,
   dryRun: boolean = false,
+  opts?: GcOptions,
 ): GcReport {
   assertDbOpen(db);
 
@@ -45,6 +56,29 @@ export function docrelayGc(
 
   // Get all symbol IDs currently in the database
   const allSymbolIds = db.prepare('SELECT id FROM symbols').all() as Array<{ id: string }>;
+
+  // Scan-collapse guard: when the scan failed to re-discover most of the
+  // tracked symbols, the extractor almost certainly saw a broken/stale view
+  // of the repo (e.g. a partial codegraph index) — NOT a mass deletion.
+  // Running the two-pass policy on such a scan would mark healthy symbols
+  // stale and delete them on the next pass. Refuse unless --force was given.
+  // This applies to dry runs too: reporting "would mark N stale" for a
+  // collapsed scan trains users to trust meaningless numbers.
+  let missing = 0;
+  for (const { id } of allSymbolIds) {
+    if (!scannedSet.has(id)) missing++;
+  }
+  const collapse = assessScanCollapse(allSymbolIds.length, missing);
+  if (!opts?.force && collapse.collapsed) {
+    const pct = Math.round((missing / allSymbolIds.length) * 100);
+    const found = allSymbolIds.length - missing;
+    return {
+      symbolsRemoved: 0,
+      symbolsMarkedStale: 0,
+      dryRun,
+      refused: `scan re-discovered only ${found} of ${allSymbolIds.length} tracked symbols (${missing} missing, ${pct}%). GC would treat healthy symbols as deleted. Re-run \`doc-relay scan\` first (or \`codegraph sync\` when using codegraph), then retry — or pass --force if this mass deletion was intentional.`,
+    };
+  }
 
   let symbolsRemoved = 0;
   let symbolsMarkedStale = 0;

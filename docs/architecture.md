@@ -58,9 +58,14 @@ doc files ───▶ doc parser ──▶ doc_sections ───┘
                                               generated / architecture
 ```
 
-1. **Extraction** — `CodegraphExtractor` when a Codegraph MCP server is
-   reachable, otherwise the builtin regex extractor (37+ language grammars
-   are Codegraph's strength; the builtin covers the common cases).
+1. **Extraction** — `CodegraphExtractor` when Codegraph is available,
+   otherwise the builtin regex extractor. The codegraph extractor enumerates
+   symbols by reading the index database (`.codegraph/codegraph.db`)
+   directly — exhaustively, not via the relevance-ranked `codegraph_explore`
+   retrieval API — and re-captures signatures from source with the exact
+   routine the builtin extractor uses, so switching extractors never
+   registers as a repository-wide signature change. A missing or broken
+   index falls back to the builtin extractor automatically.
 2. **Doc parsing** — pluggable parsers for Markdown, reStructuredText,
    AsciiDoc, and HTML, producing sections with `codeRefs` (backtick
    references, `link:`/`xref:` annotations, inferred mentions).
@@ -68,7 +73,10 @@ doc files ───▶ doc parser ──▶ doc_sections ───┘
    disambiguation by file stem and confidence scoring; ambiguous matches
    are left unreviewed rather than guessed.
 4. **Change detection** — scans compare signature hashes; changed symbols
-   flip linked docs to `stale` per the CASCADE model.
+   flip linked docs to `stale` per the CASCADE model. Two guards keep a
+   broken scan from masquerading as mass change: `scan` warns when a full
+   scan re-discovers only a fraction of the tracked symbols, and `gc`
+   refuses to run on such a collapse outright (see the `gc` command).
 5. **Sync engine** — routes each stale section to its strategy:
    - `inline` rewrites the docstring/JSDoc in the source file (state-machine
      based, no regex-fragile edits; generated sections carry a hash guard)
