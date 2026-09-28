@@ -740,6 +740,9 @@ export class CodegraphClient {
       console.warn(`DocRelay: explore parsed ${files.length} files but 0 symbols — codegraph output format may have changed.`);
     }
     if (content && files.length === 0 && symbols.length > 0) {
+      // Defensive format-change canary: unreachable with the current parsers
+      // (every symbol source also registers its file), but kept so a future
+      // parser path that forgets to track files is loudly flagged.
       console.warn(`DocRelay: explore parsed ${symbols.length} symbols but 0 files — codegraph output format may have changed.`);
     }
 
@@ -811,6 +814,9 @@ function truncateLines(content: string, maxLines: number, label: string): { boun
       }
     }
   }
+  // Unreachable: lineCount >= maxLines guarantees the loop above finds the
+  // maxLines-th newline and returns. Kept as a defensive fallback so the
+  // function stays total if the counting logic is ever refactored.
   return { boundedContent: content, truncated: true };
 }
 
