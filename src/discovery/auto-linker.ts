@@ -100,7 +100,8 @@ function fileStem(filePath: string): string {
 // escapeRegex, compiled fresh RegExp objects, re-normalized both strings, and
 // re-stripped every codeRef, which dominated full-scan time on large projects.
 
-interface SymbolProfile {
+/** @internal exported for tests */
+export interface SymbolProfile {
   row: SymbolRow;
   /** name with a trailing "(...)" call signature stripped. */
   nameClean: string;
@@ -116,7 +117,8 @@ interface SymbolProfile {
   fileStemLower: string;
 }
 
-interface SectionRefProfile {
+/** @internal exported for tests */
+export interface SectionRefProfile {
   refType: string;
   symbolName: string;
   /** symbolName with a trailing "(...)" stripped. */
@@ -125,7 +127,8 @@ interface SectionRefProfile {
   refNorm: string;
 }
 
-interface SectionProfile {
+/** @internal exported for tests */
+export interface SectionProfile {
   section: ParsedDocSection;
   heading: string;
   headingLower: string;
@@ -137,7 +140,8 @@ interface SectionProfile {
   refs: SectionRefProfile[];
 }
 
-function buildSymbolProfile(symbol: SymbolRow): SymbolProfile {
+/** @internal exported for tests */
+export function buildSymbolProfile(symbol: SymbolRow): SymbolProfile {
   const nameClean = symbol.name.replace(/\(.*\)$/, '');
   const location = (symbol.location || '').toLowerCase().replace(/\\/g, '/');
   return {
@@ -152,7 +156,8 @@ function buildSymbolProfile(symbol: SymbolRow): SymbolProfile {
   };
 }
 
-function buildSectionProfile(section: ParsedDocSection): SectionProfile {
+/** @internal exported for tests */
+export function buildSectionProfile(section: ParsedDocSection): SectionProfile {
   const heading = section.anchor || '';
   const docFile = section.file.toLowerCase().replace(/\\/g, '/');
   return {
@@ -174,7 +179,8 @@ function buildSectionProfile(section: ParsedDocSection): SectionProfile {
 
 // ── Confidence scoring ───────────────────────────────────────────────────────
 
-interface ScoreResult {
+/** @internal exported for tests */
+export interface ScoreResult {
   confidence: number;
   matched: boolean;
 }
@@ -186,7 +192,8 @@ interface ScoreResult {
  * cleaned codeRefs) comes precomputed from the profiles — the rule logic
  * and confidences are unchanged.
  */
-function scoreProfile(
+/** @internal exported for tests */
+export function scoreProfile(
   sp: SymbolProfile,
   cp: SectionProfile,
   minConfidence: number,
@@ -297,7 +304,8 @@ function isCodeLikeIdentifier(name: string): boolean {
  * cheap to compute on precomputed profiles. Returns confidence (1.0, 0.9)
  * or 0 if no match.
  */
-function fastScoreProfile(sp: SymbolProfile, cp: SectionProfile): number {
+/** @internal exported for tests */
+export function fastScoreProfile(sp: SymbolProfile, cp: SectionProfile): number {
   // 1. Exact word match in heading (confidence 1.0)
   if (cp.heading.length > 0 && sp.wordRe.test(cp.heading)) {
     return 1.0;
@@ -316,6 +324,122 @@ function fastScoreProfile(sp: SymbolProfile, cp: SectionProfile): number {
   }
 
   return 0;
+}
+
+// ── Candidate prefilter (inverted 4-gram index) ──────────────────────────────
+//
+// Both pair loops below are O(symbols × sections) with a scoring call per
+// pair, which dominates full-scan time on large projects. Every rule that can
+// produce a match, however, requires one of a few forms of string evidence:
+//
+//   • refEq (backtick/codeblock/heading/bodytext refs) — EXACT, case-sensitive
+//     equality between {refClean, ref.symbolName} and {nameClean, symbol.name}
+//     → covered by exactMap.
+//   • Word-boundary and substring heading rules, and the body-text content
+//     rule — nameClean occurs in the heading/content text. Lowercasing and
+//     stripping non-alphanumerics both preserve a contiguous occurrence as a
+//     contiguous run, so nameNorm occurs in headingNorm (or the normalized
+//     content) → with both sides ≥ 4 chars this shares a 4-gram → gramMap.
+//   • fuzzyNorm(nameNorm, headingNorm | heading-ref refNorm) — direct
+//     containment, ≥4-char prefix overlap, or ≥4-char longest common
+//     substring. The prefix/LCS thresholds are floored at 4, so each implies
+//     a SHARED 4-gram when both sides are ≥ 4 chars → gramMap. Direct
+//     containment has no length floor on the haystack side, so sections with
+//     a short (1–3 char) normalized heading or heading-ref can match without
+//     any shared gram → the `always` bucket.
+//   • The 0.4-confidence rules (body-text content scan, bodytext/heading
+//     word matches) only reach minConfidence > 0.4 via the equal-fileStem
+//     boost → stemMap.
+//
+// Symbols whose own nameNorm is < 4 chars can containment-match any haystack
+// with no shared gram, and codeLike symbols match the content scan without a
+// boost once minConfidence ≤ 0.4 — both fall back to the full section list.
+// The filter is a proven SUPERSET of all matchable pairs: it only ever skips
+// pairs that cannot score, so link outcomes are identical to brute force.
+
+const GRAM = 4;
+
+/** @internal exported for tests */
+export interface SectionIndex {
+  /** exact ref text (case-sensitive) → section indices — every refEq rule. */
+  exactMap: Map<string, number[]>;
+  /** shared 4-gram over headingNorm + heading-ref refNorms → section indices. */
+  gramMap: Map<string, number[]>;
+  /** sections with a 1–3 char normalized heading or heading-ref — candidates
+   *  for every symbol (fuzzyNorm direct containment has no length floor). */
+  always: number[];
+  /** doc fileStem → section indices — boosted 0.4-confidence rules. */
+  stemMap: Map<string, number[]>;
+}
+
+function gramsOf(norm: string): string[] {
+  if (norm.length < GRAM) return [];
+  const out: string[] = [];
+  for (let i = 0; i + GRAM <= norm.length; i++) out.push(norm.slice(i, i + GRAM));
+  return out;
+}
+
+function addPosting(map: Map<string, number[]>, key: string, idx: number): void {
+  const list = map.get(key);
+  if (list) list.push(idx);
+  else map.set(key, [idx]);
+}
+
+/** @internal exported for tests */
+export function buildSectionIndex(sectionProfiles: SectionProfile[]): SectionIndex {
+  const exactMap = new Map<string, number[]>();
+  const gramMap = new Map<string, number[]>();
+  const always: number[] = [];
+  const stemMap = new Map<string, number[]>();
+  sectionProfiles.forEach((cp, idx) => {
+    if (cp.hasFile && cp.fileStemLower) addPosting(stemMap, cp.fileStemLower, idx);
+    let short = cp.headingNorm.length > 0 && cp.headingNorm.length < GRAM;
+    for (const g of new Set(gramsOf(cp.headingNorm))) addPosting(gramMap, g, idx);
+    for (const ref of cp.refs) {
+      // refEq compares against both the raw ref text and its call-stripped
+      // form, case-sensitively — index both spellings.
+      if (ref.symbolName) addPosting(exactMap, ref.symbolName, idx);
+      if (ref.refClean && ref.refClean !== ref.symbolName) addPosting(exactMap, ref.refClean, idx);
+      // fuzzyNorm applies to heading-captured refs only; other ref types use
+      // exact matching (covered by exactMap), so their grams would add noise.
+      if (ref.refType === 'heading') {
+        if (ref.refNorm.length > 0 && ref.refNorm.length < GRAM) short = true;
+        for (const g of new Set(gramsOf(ref.refNorm))) addPosting(gramMap, g, idx);
+      }
+    }
+    if (short) always.push(idx);
+  });
+  return { exactMap, gramMap, always, stemMap };
+}
+
+/**
+ * Indices into sectionProfiles of every section that could match `sp`, or
+ * null when the symbol cannot be filtered safely and all sections must be
+ * scored. See the watertightness proof above buildSectionIndex.
+ * @internal exported for tests
+ */
+export function candidateSections(
+  ix: SectionIndex,
+  sp: SymbolProfile,
+  passTwo: boolean,
+  minConfidence: number,
+): number[] | null {
+  // Short normalized names defeat the gram index: a 1–3 char needle can
+  // containment-match a long haystack with no shared 4-gram.
+  if (sp.nameNorm.length < GRAM) return null;
+  // The body-text content scan (0.4) matches WITHOUT the stem boost once
+  // minConfidence ≤ 0.4 — code-like symbols can then match any section.
+  if (passTwo && sp.codeLike && minConfidence <= 0.4) return null;
+
+  const out = new Set<number>(ix.always);
+  const addAll = (list?: number[]) => { if (list) for (const i of list) out.add(i); };
+  addAll(ix.exactMap.get(sp.nameClean));
+  addAll(ix.exactMap.get(sp.row.name));
+  for (const g of new Set(gramsOf(sp.nameNorm))) addAll(ix.gramMap.get(g));
+  // The 0.4-confidence content scan only reaches minConfidence > 0.4 via the
+  // equal-fileStem boost.
+  if (passTwo && sp.hasLocation && sp.fileStemLower) addAll(ix.stemMap.get(sp.fileStemLower));
+  return [...out];
 }
 
 /** Create a mapping and update confidence counters. Returns true on success. */
@@ -413,16 +537,17 @@ export function autoLink(
   const sectionProfiles = docSections.map(buildSectionProfile);
 
   // ── Pass 1: Exact matches only (heading word boundary + backtick) ──────
-  // This pass is O(symbols × sections) but each comparison is cheap (no
-  // fuzzy substring, no codeRef iteration beyond backtick). For a 2000×500
-  // project (1M pairs), pass 1 runs in under a second.
+  // The candidate prefilter (proven superset of every matchable pair — see
+  // buildSectionIndex) reduces both passes from O(symbols × sections)
+  // scoring calls to O(symbols × candidates): only sections sharing exact
+  // ref text, a 4-gram, a short-haystack bucket, or (pass 2) a file stem
+  // are ever scored. Unfilterable symbols (short nameNorm, or codeLike
+  // symbols at minConfidence ≤ 0.4) fall back to the full section list.
+  const sectionIndex = buildSectionIndex(sectionProfiles);
 
-  const totalPairs = symbols.length * docSections.length;
-  let evaluatedPairs = 0;
   for (const sp of symbolProfiles) {
     if (timedOut()) {
-      const dropped = totalPairs - evaluatedPairs;
-      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results (${dropped} symbol×section pairs not evaluated).`);
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results.`);
       return {
         totalMatched: counters.high + counters.medium + counters.low,
         highConfidence: counters.high,
@@ -432,8 +557,10 @@ export function autoLink(
       };
     }
 
-    for (const cp of sectionProfiles) {
-      evaluatedPairs++;
+    const cand = candidateSections(sectionIndex, sp, false, minConfidence);
+    const n = cand ? cand.length : sectionProfiles.length;
+    for (let k = 0; k < n; k++) {
+      const cp = sectionProfiles[cand ? cand[k] : k];
       const conf = fastScoreProfile(sp, cp);
       if (conf === 0) continue;
 
@@ -455,13 +582,14 @@ export function autoLink(
     if (linkedSymbolIds.has(sp.row.id)) continue;
 
     if (timedOut()) {
-      const dropped = totalPairs - evaluatedPairs;
-      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results (${dropped} symbol×section pairs not evaluated).`);
+      console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 2 — returning partial results.`);
       break;
     }
 
-    for (const cp of sectionProfiles) {
-      evaluatedPairs++;
+    const cand = candidateSections(sectionIndex, sp, true, minConfidence);
+    const n = cand ? cand.length : sectionProfiles.length;
+    for (let k = 0; k < n; k++) {
+      const cp = sectionProfiles[cand ? cand[k] : k];
       const score = scoreProfile(sp, cp, minConfidence);
       if (!score.matched) continue;
 
