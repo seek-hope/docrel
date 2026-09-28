@@ -125,6 +125,19 @@ export async function startWatch(
       return `${inCode ? 'code' : 'docs'}/${topDir}`;
     }
 
+    // Serialize debounced scans across groups. Debounce timers are per-group,
+    // so two groups can fire while an earlier scan is still running — and two
+    // concurrent scans would read the same pre-scan state and duplicate
+    // changelog/symbol-created rows, interleave writes, and double-hit the
+    // codegraph stdio client. Chaining onto the previous scan's promise keeps
+    // per-group debounce but makes execution strictly serial. The second
+    // callback keeps the chain alive even if a task ever rejected (bodies are
+    // try/catch wrapped, so this is defense-in-depth).
+    let scanChain: Promise<void> = Promise.resolve();
+    const enqueueScan = (task: () => Promise<void>): void => {
+      scanChain = scanChain.then(task, task);
+    };
+
     const handleChange = (eventType: string, filePath: string) => {
       const rel = path.relative(projectRoot, filePath);
 
@@ -139,11 +152,9 @@ export async function startWatch(
         clearTimeout(debounceTimers.get(key));
       }
 
-      // The debounced scan runs as a fire-and-forget async task; its body is
-      // fully wrapped in try/catch (errors are recorded in watchStatus), so
-      // the floating promise can never reject unhandled.
-      debounceTimers.set(key, setTimeout(() => { void (async () => {
+      debounceTimers.set(key, setTimeout(() => {
         debounceTimers.delete(key);
+        enqueueScan(async () => {
         watchStatus.eventsProcessed++;
         watchStatus.lastEventAt = new Date().toISOString();
         const now = new Date().toLocaleTimeString();
@@ -188,7 +199,8 @@ export async function startWatch(
             }));
           } catch { /* best-effort marker */ }
         }
-      })(); }, debounceMs));
+        });
+      }, debounceMs));
     };
 
     watcher.on('add', (p: string) => handleChange('add', p));

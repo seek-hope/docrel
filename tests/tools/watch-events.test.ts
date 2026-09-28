@@ -7,6 +7,7 @@ import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { startWatch, getWatchStatus } from '../../src/tools/watch.js';
 import { BuiltinExtractor } from '../../src/extractors/builtin.js';
+import type { SymbolExtractor } from '../../src/extractors/interface.js';
 import type { DocRelayConfig } from '../../src/utils/config.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -100,6 +101,58 @@ describe('startWatch event handlers (mocked chokidar)', () => {
       // Only the non-ignored file produced a scan.
       expect(getWatchStatus().eventsProcessed).toBe(1);
     } finally {
+      stop();
+    }
+  });
+
+  it('serializes debounced scans from different groups — no concurrent scans', async () => {
+    // Two groups' debounce timers can fire while an earlier scan is still
+    // running. The watcher must chain scans so a second never enters the
+    // extractor before the first finishes (concurrent scans would read the
+    // same pre-scan state and duplicate changelog/symbol-created rows).
+    fs.mkdirSync(path.join(tmpDir, 'lib'), { recursive: true });
+    const order: string[] = [];
+    let gateResolve!: () => void;
+    const gate = new Promise<void>((r) => { gateResolve = r; });
+    let extractCalls = 0;
+    const gatedExtractor: SymbolExtractor = {
+      name: 'builtin',
+      isAvailable: async () => true,
+      extract: async (dir: string) => {
+        extractCalls++;
+        const n = extractCalls;
+        order.push(`start:${path.basename(dir)}#${n}`);
+        if (n === 1) await gate; // hold the FIRST scan inside the extractor
+        order.push(`end:#${n}`);
+        return [];
+      },
+    };
+    const config = makeConfig(tmpDir, { code_dirs: ['src', 'lib'] });
+    const stop = await startWatch(tmpDir, db, gatedExtractor, config, { debounceMs: 10 });
+    try {
+      hoisted.state.watcher!.emit('add', path.join(tmpDir, 'src', 'a.ts'));
+      hoisted.state.watcher!.emit('add', path.join(tmpDir, 'lib', 'b.ts'));
+
+      // Wait for the first scan to reach the extractor, then let both
+      // debounce timers definitely fire (100ms >> debounceMs).
+      await vi.waitFor(() => { expect(order.length).toBeGreaterThan(0); }, { timeout: 2000, interval: 20 });
+      await sleep(100);
+      // While the gate holds, at most ONE scan may be inside extract().
+      expect(order.filter((l) => l.startsWith('start')).length).toBe(1);
+      expect(order.some((l) => l.startsWith('end'))).toBe(false);
+
+      gateResolve();
+      await vi.waitFor(() => { expect(getWatchStatus().eventsProcessed).toBe(2); }, { timeout: 3000, interval: 20 });
+
+      // 2 scans × 2 code_dirs = 4 extract calls, strictly non-overlapping:
+      // every 'start' is answered by its 'end' before the next 'start'.
+      expect(order).toHaveLength(8);
+      for (let i = 0; i < order.length; i += 2) {
+        expect(order[i]).toMatch(/^start:/);
+        expect(order[i + 1]).toMatch(/^end:/);
+      }
+    } finally {
+      gateResolve();
       stop();
     }
   });
