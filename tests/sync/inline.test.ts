@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from '../../src/sync/inline.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -458,5 +458,545 @@ describe('generateUpdatedDocstring', () => {
 
     expect(result).toContain('@returns {string}');
     expect(result).not.toContain('@param');
+  });
+});
+
+// ── updateInlineDoc guard paths ────────────────────────────────────────────
+
+describe('updateInlineDoc guard paths', () => {
+  let tmpDir: string;
+  let testFile: string;
+
+  const baseInput = {
+    symbolName: 'foo',
+    oldSignature: '',
+    newSignature: '',
+    oldDocstring: '',
+    newDocstring: '',
+  };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-inline-guard-'));
+    testFile = path.join(tmpDir, 'test.ts');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('refuses to update a directory', () => {
+    const dir = path.join(tmpDir, 'adir');
+    fs.mkdirSync(dir);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({ ...baseInput, file: dir }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('not a regular file'), expect.anything());
+  });
+
+  it('refuses files exceeding the 10MB size limit', () => {
+    fs.writeFileSync(testFile, Buffer.alloc(10 * 1024 * 1024 + 1, 97));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({ ...baseInput, file: testFile }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('exceeds size limit'), expect.anything(), expect.anything(),
+    );
+  });
+
+  it('returns false when the file cannot be read', () => {
+    fs.writeFileSync(testFile, 'function foo() {}', 'utf-8');
+    vi.spyOn(fs, 'openSync').mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({ ...baseInput, file: testFile }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not read file'), expect.anything(), expect.anything(),
+    );
+  });
+
+  it('skips non-JSDoc updates when docstrings are empty', () => {
+    const pyFile = path.join(tmpDir, 'mod.py');
+    fs.writeFileSync(pyFile, 'def foo():\n    """Doc."""\n    pass\n', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({ ...baseInput, file: pyFile }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('skipped docstring — old or new docstring is empty'),
+    );
+  });
+
+  it('refuses python updates when the new docstring would not be unique', () => {
+    const pyFile = path.join(tmpDir, 'mod.py');
+    const original = [
+      'def foo():',
+      '    """Old."""',
+      '    pass',
+      '',
+      '"""New."""',
+      '',
+    ].join('\n');
+    fs.writeFileSync(pyFile, original, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: pyFile,
+      oldDocstring: '"""Old."""',
+      newDocstring: '"""New."""',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('post-validation failed — new docstring count != 1'),
+    );
+    expect(fs.readFileSync(pyFile, 'utf-8')).toBe(original);
+  });
+
+  it('skips replacement when the old signature exceeds the search limit', () => {
+    fs.writeFileSync(testFile, '/** Doc */\nfunction foo() {}', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'x'.repeat(10_001),
+      newSignature: 'y',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('old signature exceeds 10000 chars'));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('skipped docstring — old or new docstring is empty'),
+    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('had nothing to replace'));
+  });
+
+  it('skips replacement when the old docstring exceeds the search limit', () => {
+    fs.writeFileSync(testFile, '/** Doc */\nfunction foo() {}', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: 'x'.repeat(10_001),
+      newDocstring: 'y',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('old docstring exceeds 10000 chars'));
+  });
+
+  it('logs a diagnostic when stripped and full signature counts diverge', () => {
+    const content = [
+      '/**',
+      ' * Calls function foo(x: number): void internally.',
+      ' * Also see function foo(x: number): void for details.',
+      ' */',
+      'function bar() {}',
+    ].join('\n');
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'function foo(x: number): void',
+      newSignature: 'function foo(x: number, y: string): void',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('occurrence count differs'));
+  });
+
+  it('skips signature replacement when the full-content count disagrees', () => {
+    const content = [
+      'function foo(x: number): void {}',
+      '// Old sig: function foo(x: number): void',
+    ].join('\n');
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'function foo(x: number): void',
+      newSignature: 'function foo(x: string): void',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('count mismatch (non-comment: 1, full: 2)'),
+    );
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('refuses partial updates when the signature is ambiguous but the docstring matched', () => {
+    const content = [
+      '/** Doc */',
+      'function dup(x: number): void {}',
+      'function dup(x: number): void {}',
+    ].join('\n');
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile, symbolName: 'dup',
+      oldSignature: 'function dup(x: number): void',
+      newSignature: 'function dup(x: number, y: string): void',
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('old signature count is 2 (expected 1)'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('signature ambiguous, refusing partial update'));
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('skips the docstring when it appears more than once', () => {
+    const content = '/** Doc */\nfunction foo() {}\n/** Doc */\nfunction bar() {}';
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('old docstring count is 2 (expected 1)'));
+  });
+
+  it('refuses partial updates when the signature is missing from the source', () => {
+    const content = '/** Doc */\nfunction foo() {}';
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'function missing(): void',
+      newSignature: 'function missing(a: string): void',
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('signature missing from source, refusing partial update'),
+    );
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('fails post-validation when the new signature is stripped as a comment', () => {
+    const content = 'function foo(x: number): void {}';
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'function foo(x: number): void',
+      newSignature: 'function foo(x: number /* weasel */): void',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('post-validation failed — new signature count != 1'),
+    );
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('fails post-validation when the new docstring appears more than once', () => {
+    const content = '/** Old */\nfunction foo() {}\n/** New */\nfunction bar() {}';
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: '/** Old */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('post-validation failed — new docstring count != 1'),
+    );
+    expect(fs.readFileSync(testFile, 'utf-8')).toBe(content);
+  });
+
+  it('returns false when the temp directory cannot be created', () => {
+    fs.writeFileSync(testFile, '/** Old */\nfunction foo() {}', 'utf-8');
+    // A regular file at .docrelay makes the recursive tmp mkdir fail.
+    fs.writeFileSync(path.join(tmpDir, '.docrelay'), 'not a directory', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: '/** Old */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not create temp directory'), expect.anything(),
+    );
+  });
+
+  it('returns false when the atomic write fails', () => {
+    fs.writeFileSync(testFile, '/** Old */\nfunction foo() {}', 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Installed after setup — only the temp-file write inside updateInlineDoc
+    // goes through the throwing mock; the missing-temp unlink is best-effort.
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(() => {
+      throw new Error('ENOSPC: no space left on device');
+    });
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: '/** Old */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('atomic write failed'), expect.anything());
+  });
+
+  it('aborts occurrence counting at the 100k match limit', () => {
+    fs.writeFileSync(testFile, 'a'.repeat(100_001), 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldSignature: 'a',
+      newSignature: 'b',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('countOccurrences aborted'));
+  });
+
+  it('handles string literals while counting docstring occurrences', () => {
+    const content = [
+      '/** Doc */',
+      'function foo() {',
+      '  const d = "has /* no */ \\" escaped";',
+      "  const s = 'it\\'s fine';",
+      '  const t = `tpl ${nest(`inner`)} end`;',
+      '  const u = `esc \\` tick`;',
+      '  return d;',
+      '}',
+    ].join('\n');
+    fs.writeFileSync(testFile, content, 'utf-8');
+    const result = updateInlineDoc({
+      ...baseInput, file: testFile,
+      oldDocstring: '/** Doc */',
+      newDocstring: '/** New */',
+    }, tmpDir);
+    expect(result).toBe(true);
+    expect(fs.readFileSync(testFile, 'utf-8')).toContain('/** New */');
+  });
+});
+
+// ── extractDocstring guard paths ───────────────────────────────────────────
+
+describe('extractDocstring guard paths', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-extract-guard-'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns null for an empty project root', () => {
+    expect(extractDocstring('file.ts', 'foo', '')).toBeNull();
+  });
+
+  it('returns null for a directory target', () => {
+    const dir = path.join(tmpDir, 'adir');
+    fs.mkdirSync(dir);
+    expect(extractDocstring(dir, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('warns and returns null on non-ENOENT read failures', () => {
+    const file = path.join(tmpDir, 'fn.ts');
+    fs.writeFileSync(file, 'function foo() {}', 'utf-8');
+    vi.spyOn(fs, 'openSync').mockImplementation(() => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(extractDocstring(file, 'foo', tmpDir)).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('extractDocstring failed'), expect.anything());
+  });
+
+  it('returns null for JSDoc files exceeding 100k lines', () => {
+    const file = path.join(tmpDir, 'big.ts');
+    fs.writeFileSync(file, '/** d */\nfunction foo() {}\n' + 'x\n'.repeat(100_001), 'utf-8');
+    expect(extractDocstring(file, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('handles strings ending in a backslash while stripping block comments', () => {
+    const doubleFile = path.join(tmpDir, 'double.ts');
+    fs.writeFileSync(doubleFile, 'const s = "ab\\', 'utf-8');
+    expect(extractDocstring(doubleFile, 'foo', tmpDir)).toBeNull();
+
+    const singleFile = path.join(tmpDir, 'single.ts');
+    fs.writeFileSync(singleFile, "const s = 'ab\\", 'utf-8');
+    expect(extractDocstring(singleFile, 'foo', tmpDir)).toBeNull();
+
+    const tplFile = path.join(tmpDir, 'tpl.ts');
+    fs.writeFileSync(tplFile, 'const t = `ab\\', 'utf-8');
+    expect(extractDocstring(tplFile, 'foo', tmpDir)).toBeNull();
+  });
+});
+
+// ── python docstring extraction edge cases ─────────────────────────────────
+
+describe('python docstring extraction edge cases', () => {
+  let tmpDir: string;
+  let pyFile: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-py-edge-'));
+    pyFile = path.join(tmpDir, 'mod.py');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns null when the symbol is not defined', () => {
+    fs.writeFileSync(pyFile, 'def bar():\n    """Doc."""\n', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('skips inline comments after the def colon', () => {
+    fs.writeFileSync(pyFile, 'def foo():  # inline note\n    """Real doc."""\n', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBe('"""Real doc."""');
+  });
+
+  it('returns null for a def at end-of-file with whitespace only', () => {
+    fs.writeFileSync(pyFile, 'def foo():\n    ', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('skips blank and comment lines before the docstring', () => {
+    fs.writeFileSync(pyFile, 'def foo():\n\n    # a comment\n    """doc"""\n', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBe('"""doc"""');
+  });
+
+  it('returns null for an unterminated docstring', () => {
+    fs.writeFileSync(pyFile, 'def foo():\n    """unterminated\n', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('returns null when the body ends after comments', () => {
+    fs.writeFileSync(pyFile, 'def foo():\n    # only a comment\n', 'utf-8');
+    expect(extractDocstring(pyFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('fails updates when the def header has no colon', () => {
+    const content = 'def foo(x)  # missing colon\n    """doc"""\n';
+    fs.writeFileSync(pyFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      file: pyFile,
+      symbolName: 'foo',
+      oldSignature: '',
+      newSignature: '',
+      oldDocstring: '"""doc"""',
+      newDocstring: '"""new"""',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not replace python docstring'),
+    );
+    expect(fs.readFileSync(pyFile, 'utf-8')).toBe(content);
+  });
+});
+
+// ── go and rust docstring extraction edge cases ────────────────────────────
+
+describe('go and rust docstring extraction edge cases', () => {
+  let tmpDir: string;
+  let goFile: string;
+  let rsFile: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-gors-edge-'));
+    goFile = path.join(tmpDir, 'mod.go');
+    rsFile = path.join(tmpDir, 'mod.rs');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns null when the go symbol is not defined', () => {
+    fs.writeFileSync(goFile, 'package main\n\nfunc Bar() {}\n', 'utf-8');
+    expect(extractDocstring(goFile, 'Foo', tmpDir)).toBeNull();
+  });
+
+  it('returns null for go files exceeding 100k lines', () => {
+    fs.writeFileSync(
+      goFile,
+      'package main\n\n// Doc.\nfunc Foo() {}\n' + '\n'.repeat(100_001),
+      'utf-8',
+    );
+    expect(extractDocstring(goFile, 'Foo', tmpDir)).toBeNull();
+  });
+
+  it('stops go comment collection at a blank line above the doc block', () => {
+    const content = 'package main\n\n// Doc.\n\n// Real doc.\nfunc Foo() {}\n';
+    fs.writeFileSync(goFile, content, 'utf-8');
+    expect(extractDocstring(goFile, 'Foo', tmpDir)).toBe('// Real doc.');
+  });
+
+  it('returns null for a go func without a doc comment', () => {
+    fs.writeFileSync(goFile, 'package main\n\nfunc Foo() {}\n', 'utf-8');
+    expect(extractDocstring(goFile, 'Foo', tmpDir)).toBeNull();
+  });
+
+  it('refuses go updates when the old comment mismatches', () => {
+    const content = '// Actual.\nfunc Foo() {}\n';
+    fs.writeFileSync(goFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      file: goFile,
+      symbolName: 'Foo',
+      oldSignature: '',
+      newSignature: '',
+      oldDocstring: '// Wrong.',
+      newDocstring: '// New.',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not replace go docstring'),
+    );
+    expect(fs.readFileSync(goFile, 'utf-8')).toBe(content);
+  });
+
+  it('returns null when the rust symbol is not defined', () => {
+    fs.writeFileSync(rsFile, 'fn bar() {}\n', 'utf-8');
+    expect(extractDocstring(rsFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('returns null for rust files exceeding 100k lines', () => {
+    fs.writeFileSync(rsFile, '/// Doc.\nfn foo() {}\n' + '\n'.repeat(100_001), 'utf-8');
+    expect(extractDocstring(rsFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('stops rust comment collection at a blank line above the doc block', () => {
+    const content = 'use std::io;\n\n/// Doc.\nfn foo() {}\n';
+    fs.writeFileSync(rsFile, content, 'utf-8');
+    expect(extractDocstring(rsFile, 'foo', tmpDir)).toBe('/// Doc.');
+  });
+
+  it('stops rust comment collection at code lines', () => {
+    const content = 'const X: i32 = 1;\n/// Doc.\nfn foo() {}\n';
+    fs.writeFileSync(rsFile, content, 'utf-8');
+    expect(extractDocstring(rsFile, 'foo', tmpDir)).toBe('/// Doc.');
+  });
+
+  it('returns null for a rust fn without a doc comment', () => {
+    fs.writeFileSync(rsFile, 'fn foo() {}\n', 'utf-8');
+    expect(extractDocstring(rsFile, 'foo', tmpDir)).toBeNull();
+  });
+
+  it('refuses rust updates when the old comment mismatches', () => {
+    const content = '/// Actual.\nfn foo() {}\n';
+    fs.writeFileSync(rsFile, content, 'utf-8');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = updateInlineDoc({
+      file: rsFile,
+      symbolName: 'foo',
+      oldSignature: '',
+      newSignature: '',
+      oldDocstring: '/// Wrong.',
+      newDocstring: '/// New.',
+    }, tmpDir);
+    expect(result).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('could not replace rust docstring'),
+    );
+    expect(fs.readFileSync(rsFile, 'utf-8')).toBe(content);
   });
 });

@@ -11,13 +11,13 @@ export default defineConfig({
       include: ['src/**/*.ts'],
       exclude: ['src/version.ts'],
       // Baseline thresholds pinned just below the measured level
-      // (stmts 76.5, branch 69.2, funcs 79.4, lines 78.7 as of v0.3.1) —
+      // (stmts 80.6, branch 74.5, funcs 79.6, lines 81.3 as of v0.3.1) —
       // ratchet UP as coverage improves; never lower without justification.
       thresholds: {
-        statements: 76.4,
-        branches: 69,
-        functions: 79.3,
-        lines: 78.7,
+        statements: 80.6,
+        branches: 74.4,
+        functions: 79.6,
+        lines: 81.2,
       },
     },
   },
