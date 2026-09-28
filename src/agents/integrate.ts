@@ -15,10 +15,12 @@ export interface IntegrationResult {
 }
 
 // ── MCP server entry for .mcp.json ───────────────────────────────────
+// `docrelay` (no dash) is not a published npm package — the MCP server must
+// be launched through the published `doc-relay` package's `mcp` subcommand.
 const DOCRELAY_MCP_ENTRY = {
   docrelay: {
     command: 'npx',
-    args: ['docrelay'],
+    args: ['-y', 'doc-relay', 'mcp'],
   },
 };
 
@@ -76,7 +78,7 @@ Add this to your \`.mcp.json\`:
   "mcpServers": {
     "docrelay": {
       "command": "npx",
-      "args": ["docrelay"]
+      "args": ["-y", "doc-relay", "mcp"]
     }
   }
 }
@@ -102,7 +104,7 @@ DocRelay keeps your code symbols and documentation in sync.
 Add this to your shell profile (~/.zshrc or ~/.bashrc):
 
 \`\`\`sh
-alias docrelay='npx docrelay'
+alias docrelay='npx -y doc-relay'
 \`\`\`
 
 ## Commands
@@ -132,7 +134,7 @@ Add this to your MCP configuration:
   "mcpServers": {
     "docrelay": {
       "command": "npx",
-      "args": ["docrelay"]
+      "args": ["-y", "doc-relay", "mcp"]
     }
   }
 }
@@ -140,7 +142,7 @@ Add this to your MCP configuration:
 
 ### 2. Shell Alias
 \`\`\`sh
-alias docrelay='npx docrelay'
+alias docrelay='npx -y doc-relay'
 \`\`\`
 
 ### 3. Recommended Workflow

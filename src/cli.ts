@@ -153,7 +153,7 @@ program
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
       const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
       const docrelayDir = path.join(projectRoot, '.docrelay');
-      let steps: string[] = [];
+      const steps: string[] = [];
 
       // 1. Create .docrelay/ directory with restrictive permissions (0o700)
       fs.mkdirSync(docrelayDir, { recursive: true, mode: 0o700 });
@@ -313,7 +313,7 @@ program
   .action(async (opts) => {
     try {
       await ensureContext();
-      const report = docrelayCheck(db, opts.strict);
+      const report = docrelayCheck(db);
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count or output format.
       if (report.error) {
@@ -1232,12 +1232,34 @@ program
     }
   });
 
+// ── MCP server mode ────────────────────────────────────────────────
+// `doc-relay mcp` starts the stdio MCP server in-process. The server module
+// (index.ts) self-initializes and connects its transport on import, then
+// stays alive on the event loop — so the trailing cleanup below must be
+// skipped, or it would close the server's database connections out from
+// under it.
+let mcpServerStarted = false;
+
+program
+  .command('mcp')
+  .description('Start the DocRelay MCP server on stdio (for AI agent integration)')
+  .action(async () => {
+    mcpServerStarted = true;
+    await import('./index.js');
+  });
+
 // parseAsync returns when the command action completes, then we clean up
 // the CodeGraph MCP connection so the event loop can drain and the process
 // exits cleanly. Without this, the stdio transport keeps the process alive
 // indefinitely after every CLI command.
 await program.parseAsync();
-if (codegraph) {
-  try { await codegraph.close(); } catch { /* codegraph may already be closed */ }
+if (mcpServerStarted) {
+  // The MCP server owns the process lifetime from here on (it registers its
+  // own signal handlers and shuts down cleanly on stdin close). Do not run
+  // CLI cleanup — closing the shared DB handles would break the server.
+} else {
+  if (codegraph) {
+    try { await codegraph.close(); } catch { /* codegraph may already be closed */ }
+  }
+  closeAllDbs();
 }
-closeAllDbs();

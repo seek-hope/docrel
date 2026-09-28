@@ -32,7 +32,7 @@ const FUNC_CALL_PREFIX_RE = /`([\w][\w\d_.]*\()/g;
  *  character and returns the full expression like 'foo(bar(baz))' or null. */
 function extractPlainFuncCall(text: string, openParenIdx: number): string | null {
   // Walk backward from openParenIdx to find the function name start
-  let nameEnd = openParenIdx;
+  const nameEnd = openParenIdx;
   let nameStart = openParenIdx - 1;
   while (nameStart >= 0 && /[\w\d_.]/.test(text[nameStart])) nameStart--;
   nameStart++;
@@ -667,7 +667,7 @@ function extractAsciidocLinkRefs(text: string, baseLine: number): CodeRef[] {
 
   for (let i = 0; i < lines.length; i++) {
     // link:xxx[...] and xref:xxx[...]
-    for (const m of lines[i].matchAll(/(?:link|xref):([^\[]+)\[/g)) {
+    for (const m of lines[i].matchAll(/(?:link|xref):([^[]+)\[/g)) {
       const target = m[1].trim();
       if (target && !seen.has(target)) {
         seen.add(target);

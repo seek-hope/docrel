@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
-import { loadConfig } from '../../src/utils/config.js';
 import { docrelayStatus } from '../../src/tools/status.js';
 import { docrelayCheck } from '../../src/tools/check.js';
 import { docrelayLink } from '../../src/tools/link.js';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
-import { createMapping } from '../../src/db/mappings.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -75,14 +73,14 @@ describe('DocRelay E2E', () => {
     expect(status.linkedPercentage).toBe(100);
 
     // 5. Check passes (doc is in_sync)
-    const checkBefore = docrelayCheck(db, true);
+    const checkBefore = docrelayCheck(db);
     expect(checkBefore.passed).toBe(true);
 
     // 6. Simulate code change — mark doc stale
     db.prepare("UPDATE doc_sections SET status = 'stale' WHERE id = ?").run(docId);
 
     // 7. Check fails in strict mode
-    const checkAfter = docrelayCheck(db, true);
+    const checkAfter = docrelayCheck(db);
     expect(checkAfter.passed).toBe(false);
     expect(checkAfter.staleDocs).toHaveLength(1);
     expect(checkAfter.staleDocs[0].file).toBe('docs/api.md');

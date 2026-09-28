@@ -693,7 +693,7 @@ export class CodegraphClient {
           if (!files.includes(currentFile)) files.push(currentFile);
           continue;
         }
-        const lineNumMatch = line.match(/^\s*(\d+)\s*[|\|]\s*/);
+        const lineNumMatch = line.match(/^\s*(\d+)\s*[|]\s*/);
         if (lineNumMatch) {
           currentLine = parseInt(lineNumMatch[1], 10);
         }

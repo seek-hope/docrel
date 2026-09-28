@@ -280,7 +280,7 @@ export function detectGenerator(file: string, projectRoot: string): string | nul
   const isOpenApiFile = (file.endsWith('.yaml') || file.endsWith('.yml')) && (
     file.toLowerCase().includes('openapi') ||
     file.toLowerCase().includes('swagger') ||
-    /\/api[-\/]?(docs|spec|schema)/i.test(file) ||
+    /\/api[-/]?(docs|spec|schema)/i.test(file) ||
     /\/openapi\//i.test(file)
   );
   // When filename/path heuristics miss (e.g. spec.yaml in a non-standard dir),

@@ -182,7 +182,7 @@ describe('sync fixes', () => {
     markDocStale(db, docId);
 
     // Non-strict: passed reflects the TRUE stale state (no longer always true).
-    const report = docrelayCheck(db, false);
+    const report = docrelayCheck(db);
     expect(report.passed).toBe(false);
     expect(report.staleDocs).toHaveLength(1);
   });

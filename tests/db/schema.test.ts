@@ -19,7 +19,7 @@ describe('getDb', () => {
   });
 
   it('creates docrelay.db inside .git directory', () => {
-    const db = getDb(tmpDir);
+    getDb(tmpDir);
     expect(fs.existsSync(path.join(tmpDir, '.git', 'docrelay.db'))).toBe(true);
   });
 

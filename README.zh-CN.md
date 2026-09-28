@@ -2,7 +2,8 @@
 
 [**English**](README.md)
 
-[![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)](https://github.com/seek-hope/docrel/actions)
+[![CI](https://github.com/seek-hope/docrel/actions/workflows/ci.yml/badge.svg)](https://github.com/seek-hope/docrel/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/doc-relay)](https://www.npmjs.com/package/doc-relay)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
@@ -53,11 +54,20 @@ doc-relay status
 | `doc-relay check` | 列出过期文档。`--strict` 时退出码为 1（CI 友好） |
 | `doc-relay impact <文件...>` | 展示哪些文档受代码变更影响 |
 | `doc-relay sync --symbol <id>` | CASCADE 更新某个符号关联的文档 |
+| `doc-relay confirm` / `doc-relay reject` | 批准或拒绝待处理的同步建议（支持 `--all`、`--pattern`） |
 | `doc-relay link create --symbol <id> --doc <id>` | 手动创建映射 |
 | `doc-relay diff <符号id>` | 查看符号的变更历史 |
-| `doc-relay scan` | 通过 codegraph 扫描代码库发现所有符号 |
+| `doc-relay scan` | 扫描代码库发现符号（`--incremental`、`--dry-run`） |
+| `doc-relay review` | 过期/待处理文档的审查队列 |
+| `doc-relay watch` | 监听代码库并在变更时重新扫描（`--daemon` 后台运行） |
+| `doc-relay health` | 8 项健康检查（配置、数据库、hooks、codegraph、新鲜度） |
 | `doc-relay export-mappings` | 导出 `.docrelay/mappings.json` 供 CodeGraph 集成 |
 | `doc-relay install-hooks` | 安装 pre-commit / post-commit / pre-push hooks |
+| `doc-relay integrate` | 自动检测 AI Agent 并写入 DocRelay 配置 |
+| `doc-relay gc` | 回收代码库中已不存在的符号 |
+| `doc-relay backup` / `doc-relay restore` | 备份 / 恢复 DocRelay 数据库 |
+| `doc-relay config show/validate/reset` | 查看、校验或重置配置 |
+| `doc-relay mcp` | 在 stdio 上启动 MCP server（供 Agent MCP 配置使用） |
 | `doc-relay update` | 通过 npm 更新 DocRelay 到最新版本 |
 
 ### MCP Server 用法
@@ -67,9 +77,9 @@ doc-relay status
 ```json
 {
   "mcpServers": {
-    "doc-relay": {
-      "command": "node",
-      "args": ["dist/index.js"],
+    "docrelay": {
+      "command": "npx",
+      "args": ["-y", "doc-relay", "mcp"],
       "env": {
         "DOCRELAY_PROJECT_ROOT": "${workspaceFolder}"
       }
@@ -78,7 +88,9 @@ doc-relay status
 }
 ```
 
-DocRelay 提供 6 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_link`、`docrelay_diff`。
+运行 `doc-relay integrate` 可自动写入该配置（自动检测 Claude Code、Codex、OpenCode、Oh My Pi 等）。
+
+DocRelay 提供 16 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_sync_all`、`docrelay_link`、`docrelay_confirm`、`docrelay_reject`、`docrelay_diff`、`docrelay_scan`、`docrelay_review`、`docrelay_integrate`、`docrelay_watch`、`docrelay_watch_status`、`docrelay_refresh`、`docrelay_health`。
 
 ### 配置（`.docrelay/config.yaml`）
 
@@ -127,7 +139,7 @@ pre-commit hook: docrelay_check --strict
 
 | Hook | 行为 |
 |------|------|
-| **pre-commit** | `doc-relay check --quick` — 暂存文件关联文档过期则阻止提交 |
+| **pre-commit** | `doc-relay check --strict` — 存在过期文档则阻止提交 |
 | **post-commit** | `doc-relay impact` — 标记受影响文档为过期 |
 | **pre-push** | `doc-relay check --strict` — 有过期文档则阻止推送 |
 
@@ -159,7 +171,7 @@ pre-commit hook: docrelay_check --strict
 | 符号后端 | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
 | Git | `simple-git` + 原生 hooks |
-| 测试 | `vitest`（50 测试，9 套件，~4700 行源码） |
+| 测试 | `vitest`（239 测试，23 套件） |
 
 ## Codegraph 集成
 
@@ -189,17 +201,18 @@ doc-relay export-mappings
 
 **可以自定义同步策略吗？** 可以。每种文档类型有独立策略：`auto_update`、`mark_stale`、`prompt`、`ignore`。
 
-**能用于生产环境吗？** DocRelay 处于早期开发阶段（v0.1.0）。核心 DB 层、MCP Server 和 CLI 已稳定可用。持续完善中的包括文件监听集成、大规模性能优化、更广泛的语言生态测试。
+**能用于生产环境吗？** DocRelay 处于 beta 阶段（v0.3.x）。DB 层、MCP Server、CLI、git hooks 与 watch 模式均由 239 个自动化测试覆盖，并在 CI（Node 20/22）中持续验证。持续完善中的包括超大规模性能优化与更广泛的语言生态测试。
 
 ## 参与贡献
 
-完整设计文档见 [docs/superpowers/specs/2026-06-23-doc-relay-design.md](docs/superpowers/specs/2026-06-23-doc-relay-design.md)，实现计划见 [docs/superpowers/plans/2026-06-23-doc-relay-implementation.md](docs/superpowers/plans/2026-06-23-doc-relay-implementation.md)。
+发布历史见 [CHANGELOG.md](CHANGELOG.md)，工程路线图见 [UPGRADE.md](UPGRADE.md)。
 
 ```bash
-git clone https://github.com/seek-hope/doc-relay.git
-cd doc-relay
+git clone https://github.com/seek-hope/docrel.git
+cd docrel
 npm install
-npm test          # 50 tests
+npm test          # 239 tests
+npm run lint      # eslint（flat config）
 npm run build     # → dist/
 ```
 

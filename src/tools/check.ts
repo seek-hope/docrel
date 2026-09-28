@@ -15,7 +15,11 @@ export interface CheckReport {
   error?: string;
 }
 
-export function docrelayCheck(db: Database.Database, strict = false): CheckReport {
+// `passed` reflects the true documentation-health state: it is `true` only
+// when NO docs are stale. Strict-mode gating (exit codes) is handled by
+// callers — this function intentionally has no `strict` parameter because
+// it never altered the result and was misleading at call sites.
+export function docrelayCheck(db: Database.Database): CheckReport {
   try {
     assertDbOpen(db);
     const staleRows = db.prepare(`
@@ -43,10 +47,6 @@ export function docrelayCheck(db: Database.Database, strict = false): CheckRepor
     }
     const staleDocs = [...docMap.values()];
 
-    // `passed` reflects the true documentation-health state: it is `true` only
-    // when NO docs are stale, regardless of strict mode. Callers that need
-    // strict-mode-only gating (e.g. CLI/MCP exit codes) use `strict` separately;
-    // this makes `passed` a reliable signal for callers in non-strict mode.
     const passed = staleDocs.length === 0;
 
     let summary: string;

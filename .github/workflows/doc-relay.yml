@@ -18,28 +18,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
-      - name: Install DocRelay
-        run: npm install -g doc-relay
+      # Dogfood the CURRENT source, not the published package — installing
+      # doc-relay from npm here would silently test a stale release.
+      - name: Build DocRelay from source
+        run: |
+          npm ci
+          npm run build
 
       - name: Initialize DocRelay
-        run: doc-relay init --no-hooks
+        run: node dist/cli.js init --no-hooks
 
       - name: Scan codebase
-        run: doc-relay scan
+        run: node dist/cli.js scan
 
       - name: Check documentation health
-        run: doc-relay check --strict --format ci
+        run: node dist/cli.js check --strict --format ci
 
       - name: Impact analysis (changed files)
         run: |
           CHANGED=$(git diff --name-only HEAD~1..HEAD)
           if [ -n "$CHANGED" ]; then
-            echo "$CHANGED" | xargs doc-relay impact --format ci
+            echo "$CHANGED" | xargs node dist/cli.js impact --format ci
           fi
 
       - name: Health dashboard
-        run: doc-relay health --format ci
+        run: node dist/cli.js health --format ci
 
       - name: Review summary
-        run: doc-relay review --format markdown >> $GITHUB_STEP_SUMMARY
+        run: node dist/cli.js review --format markdown >> $GITHUB_STEP_SUMMARY

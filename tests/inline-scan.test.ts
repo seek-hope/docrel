@@ -256,7 +256,7 @@ describe('inline docstring collection', () => {
     // Incremental scan must parse the (legacy) value and collect the new inline doc.
     report = await scanProject(new BuiltinExtractor(), db, config, tmpDir, false);
     expect(report.scannedIds.length).toBeGreaterThan(0);
-    const secondSymId = findSymbolId(db, report, 'second');
+    findSymbolId(db, report, 'second');
     const secondDoc = getDocSection(db, docSectionId('src/mod2.ts', 'inline:second'));
     expect(secondDoc).toBeTruthy();
     expect(secondDoc!.doc_type).toBe('inline');

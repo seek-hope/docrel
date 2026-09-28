@@ -3,5 +3,7 @@ node_modules/
 dist/
 *.db
 *.db-journal
+*.tgz
 .codegraph/
 .docrelay/
+.pi/

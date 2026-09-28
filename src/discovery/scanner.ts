@@ -152,7 +152,7 @@ export async function scanProject(
           // same file::name exists (kind guesses without signatures would
           // otherwise double-list the symbol under a second kind).
           const baseFqn = `${baseFile}::${baseName}`;
-          const baseId = symbolId(lang, baseFqn, sym.kind);
+
           const sigHere = contentHash(sym.signature ?? '');
           let sigSet = seenSignaturesById.get(baseFqn);
           if (sigSet?.has(sigHere)) continue;
@@ -262,6 +262,7 @@ export async function scanProject(
         }
       }
     } catch (err: any) {
+      // eslint-disable-next-line no-control-regex -- intentionally strips control chars from paths before they reach logs
       const safeName = codeDir.replace(/[\x00-\x1f\x7f]/g, '');
       failedDirs.push(safeName);
       // Sanitize error message — extract only the meaningful part (first 200 chars,

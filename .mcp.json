@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "docrelay": {
+      "command": "node",
+      "args": [
+        "dist/index.js"
+      ]
+    }
+  }
+}

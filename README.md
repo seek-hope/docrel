@@ -2,7 +2,8 @@
 
 [**中文**](README.zh-CN.md)
 
-[![Tests](https://img.shields.io/badge/tests-50%20passed-brightgreen)](https://github.com/seek-hope/docrel/actions)
+[![CI](https://github.com/seek-hope/docrel/actions/workflows/ci.yml/badge.svg)](https://github.com/seek-hope/docrel/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/doc-relay)](https://www.npmjs.com/package/doc-relay)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 
@@ -64,11 +65,20 @@ doc-relay status
 | `doc-relay check` | List stale documentation. `--strict` exits code 1 for CI |
 | `doc-relay impact <files...>` | Show which docs are affected by changed files |
 | `doc-relay sync --symbol <id>` | CASCADE-update docs linked to a symbol |
+| `doc-relay confirm` / `doc-relay reject` | Approve or reject pending sync suggestions (supports `--all`, `--pattern`) |
 | `doc-relay link create --symbol <id> --doc <id>` | Create a manual mapping |
 | `doc-relay diff <symbol_id>` | View change history for a symbol |
-| `doc-relay scan` | Scan codebase via codegraph and discover all symbols |
+| `doc-relay scan` | Scan codebase and discover symbols (`--incremental`, `--dry-run`) |
+| `doc-relay review` | Review queue for stale/pending documentation |
+| `doc-relay watch` | Watch the codebase and re-scan on change (`--daemon` for background) |
+| `doc-relay health` | 8-point health check (config, DB, hooks, codegraph, freshness) |
 | `doc-relay export-mappings` | Export `.docrelay/mappings.json` for CodeGraph integration |
 | `doc-relay install-hooks` | Install pre-commit, post-commit, pre-push hooks |
+| `doc-relay integrate` | Auto-detect your AI agent and write its DocRelay config |
+| `doc-relay gc` | Garbage-collect symbols no longer found in the codebase |
+| `doc-relay backup` / `doc-relay restore` | Back up or restore the DocRelay database |
+| `doc-relay config show/validate/reset` | Inspect, validate, or reset configuration |
+| `doc-relay mcp` | Start the MCP server on stdio (used by agent MCP configs) |
 | `doc-relay update` | Update DocRelay to the latest version via npm |
 
 ### MCP Server (AI Agent Integration)
@@ -78,9 +88,9 @@ Add to your agent's MCP configuration:
 ```json
 {
   "mcpServers": {
-    "doc-relay": {
-      "command": "node",
-      "args": ["dist/index.js"],
+    "docrelay": {
+      "command": "npx",
+      "args": ["-y", "doc-relay", "mcp"],
       "env": {
         "DOCRELAY_PROJECT_ROOT": "${workspaceFolder}"
       }
@@ -89,7 +99,9 @@ Add to your agent's MCP configuration:
 }
 ```
 
-DocRelay exposes 6 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_link`, `docrelay_diff`.
+Running `doc-relay integrate` writes this configuration for you (Claude Code, Codex, OpenCode, Oh My Pi, and others are auto-detected).
+
+DocRelay exposes 16 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_sync_all`, `docrelay_link`, `docrelay_confirm`, `docrelay_reject`, `docrelay_diff`, `docrelay_scan`, `docrelay_review`, `docrelay_integrate`, `docrelay_watch`, `docrelay_watch_status`, `docrelay_refresh`, `docrelay_health`.
 
 ### Configuration (`.docrelay/config.yaml`)
 
@@ -164,8 +176,8 @@ Commit auto-annotated:
 
 ```
 src/
-├── index.ts              # MCP Server entry (6 tools, stdio transport)
-├── cli.ts                # CLI entry (8 commands, commander.js)
+├── index.ts              # MCP Server entry (16 tools, stdio transport)
+├── cli.ts                # CLI entry (23 commands, commander.js)
 ├── db/                   # SQLite data layer
 │   ├── connection.ts     # Singleton connection (WAL mode, FK enabled)
 │   ├── schema.ts         # 4 tables + indexes + migrations
@@ -195,7 +207,7 @@ src/
 | Symbol Backend | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
 | Git | `simple-git` + native hooks |
-| Tests | `vitest` (50 tests, 9 suites) |
+| Tests | `vitest` (239 tests, 23 suites) |
 
 ## Codegraph Integration
 
@@ -225,17 +237,18 @@ doc-relay export-mappings
 
 **Can I customize sync behavior?** Yes. Each doc type (inline, standalone, generated, architecture) has its own strategy in `.docrelay/config.yaml` — choose between `auto_update`, `mark_stale`, `prompt`, or `ignore`.
 
-**Is this ready for production?** DocRelay is in early development (v0.1.0). The core DB layer, MCP server, and CLI are solid. Areas still maturing: file watcher integration, performance at scale, and broader language ecosystem testing.
+**Is this ready for production?** DocRelay is beta-quality (v0.3.x). The DB layer, MCP server, CLI, git hooks, and watch mode are covered by 239 automated tests and run in CI on Node 20/22. Areas still maturing: performance at very large scale and broader language ecosystem testing.
 
 ## Contributing
 
-See [docs/superpowers/specs/2026-06-23-doc-relay-design.md](docs/superpowers/specs/2026-06-23-doc-relay-design.md) for the full design spec and [docs/superpowers/plans/2026-06-23-doc-relay-implementation.md](docs/superpowers/plans/2026-06-23-doc-relay-implementation.md) for the implementation plan.
+See [CHANGELOG.md](CHANGELOG.md) for release history and [UPGRADE.md](UPGRADE.md) for the engineering roadmap.
 
 ```bash
-git clone https://github.com/seek-hope/doc-relay.git
-cd doc-relay
+git clone https://github.com/seek-hope/docrel.git
+cd docrel
 npm install
-npm test          # 50 tests
+npm test          # 239 tests
+npm run lint      # eslint (flat config)
 npm run build     # → dist/
 ```
 

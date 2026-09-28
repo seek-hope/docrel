@@ -25,7 +25,7 @@ describe('docrelayCheck', () => {
   });
 
   it('passes when no stale docs', () => {
-    const report = docrelayCheck(db, true);
+    const report = docrelayCheck(db);
     expect(report.passed).toBe(true);
   });
 
@@ -34,7 +34,7 @@ describe('docrelayCheck', () => {
     upsertDocSection(db, { id: docId, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
     markDocStale(db, docId);
 
-    const report = docrelayCheck(db, true);
+    const report = docrelayCheck(db);
     expect(report.passed).toBe(false);
     expect(report.staleDocs).toHaveLength(1);
   });

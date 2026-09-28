@@ -3,7 +3,7 @@ import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol, type SymbolRow } from '../../src/db/symbols.js';
 import { upsertDocSection } from '../../src/db/docs.js';
-import { autoLink, ingestDocSections, type AutoLinkResult } from '../../src/discovery/auto-linker.js';
+import { autoLink, ingestDocSections } from '../../src/discovery/auto-linker.js';
 import type { ParsedDocSection } from '../../src/discovery/doc-parser.js';
 import { symbolId, docSectionId, contentHash } from '../../src/utils/hash.js';
 import { listAllMappings } from '../../src/db/mappings.js';
@@ -405,7 +405,7 @@ describe('ingestDocSections disambiguation', () => {
   }
 
   it('links when a name is unique (one symbol of that name)', () => {
-    const sym = makeSymbol('login', 'src/auth.ts:42');
+    makeSymbol('login', 'src/auth.ts:42');
     const section = makeSection('docs/api.md', 'Overview', '', [
       { symbolName: 'login', refType: 'backtick', confidence: 0.6, lineInDoc: 1 },
     ]);

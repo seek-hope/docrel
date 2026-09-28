@@ -103,7 +103,7 @@ server.tool(
   },
   async ({ strict, file }) => {
     try {
-      const report = docrelayCheck(db, strict);
+      const report = docrelayCheck(db);
       if (file) {
         // Propagate error context into filtered responses so MCP clients
         // can detect that the check failed, even when file-filtering would

@@ -84,7 +84,7 @@ function longestCommonSubstring(a: string, b: string): number {
 function fileStem(filePath: string): string {
   const lastDot = filePath.lastIndexOf('.');
   const noExt = lastDot > filePath.lastIndexOf('/') ? filePath.slice(0, lastDot) : filePath;
-  return noExt.toLowerCase().replace(/[\/\\]+/g, '');
+  return noExt.toLowerCase().replace(/[/\\]+/g, '');
 }
 
 // ── Confidence scoring ───────────────────────────────────────────────────────

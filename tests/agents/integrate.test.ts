@@ -45,6 +45,10 @@ describe('integrate', () => {
     const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
     expect(mcp.mcpServers.docrelay).toBeDefined();
     expect(mcp.mcpServers.docrelay.command).toBe('npx');
+    // The generated entry must resolve to the PUBLISHED package and start the
+    // MCP server — `npx docrelay` (no dash) is not a real npm package and
+    // `npx doc-relay` alone launches the CLI, not the server.
+    expect(mcp.mcpServers.docrelay.args).toEqual(['-y', 'doc-relay', 'mcp']);
   });
 
   it('is idempotent for claude-code integration', async () => {

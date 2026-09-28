@@ -18,6 +18,7 @@
 export function validateCommandSafety(cmd: string, maxLength = 1024): boolean {
   if (typeof cmd !== 'string') return false;
   if (cmd.length > maxLength) return false;
+  // eslint-disable-next-line no-control-regex -- control chars are exactly what we must reject (shell injection defense)
   if (/[;&|`$()<>!]/.test(cmd) || /[\x00-\x1f\x7f]/.test(cmd)) return false;
   return true;
 }

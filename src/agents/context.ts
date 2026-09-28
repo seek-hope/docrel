@@ -95,7 +95,7 @@ export function getDocHealthContext(db: Database.Database): string {
         output += ` and ${ctx.staleDocDetails.length - 5} more`;
       }
 
-      output += '. Run \`docrelay sync\` to update.';
+      output += '. Run `docrelay sync` to update.';
     }
 
     return output;

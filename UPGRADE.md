@@ -1,9 +1,13 @@
-# DocSync Upgrade Plan
+# DocRelay Upgrade Plan
 
-## Current State (v0.2.3)
-- 42 TypeScript source files, ~10,100 lines
-- 15 test files, 186 tests
-- MCP server (12 tools) + CLI (19 commands)
+> Historical note: this plan was written when the project was called **DocSync**
+> (`docsync` commands below). The project has since been renamed to **DocRelay**
+> (`doc-relay` / `docrelay`); the milestones themselves are unchanged.
+
+## Current State (v0.3.1)
+- 42 TypeScript source files, ~14,800 lines
+- 23 test files, 239 tests
+- MCP server (16 tools) + CLI (23 commands)
 - Git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
 - 4 doc parsers (Markdown, RST, AsciiDoc, HTML)
 - 2 symbol extractors (Codegraph, builtin regex)

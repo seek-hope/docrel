@@ -284,7 +284,7 @@ export async function syncSymbol(
                 pushPair(symbol.raw_signature, curSig.signature);
               }
 
-              let surgicalAttempted = pairs.length > 0;
+              const surgicalAttempted = pairs.length > 0;
               let genuineFailure: string | null = null;
               let replacedOk = false;
               for (const pair of pairs) {

@@ -1,121 +1,9 @@
-import { simpleGit } from 'simple-git';
 import { execFileSync } from 'node:child_process';
 import type Database from 'better-sqlite3';
-import type { SymbolExtractor } from '../extractors/interface.js';
-import type { DocRelayConfig } from '../utils/config.js';
-import { docrelayCheck } from '../tools/check.js';
-import { scanProject } from '../discovery/scanner.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export async function preCommitHook(
-  projectRoot: string,
-  db: Database.Database,
-  extractor: SymbolExtractor,
-  config: DocRelayConfig,
-): Promise<{ allowed: boolean; message: string }> {
-  try {
-    const git = simpleGit(projectRoot);
-    const status = await git.status();
-    // Only staged files matter for pre-commit — do NOT include
-    // created (untracked) files which would cause false positives.
-    const staged = status.staged;
-
-    if (staged.length === 0) {
-      return { allowed: true, message: 'No staged files.' };
-    }
-
-    const report = docrelayCheck(db, true);
-
-    // If the database query failed, report.error is set — treat as hard
-    // failure to prevent silently allowing commits with unverified docs.
-    if (report.error) {
-      return { allowed: false, message: `DocRelay: database query failed — documentation health cannot be verified. ${report.error}` };
-    }
-
-    // Check if any staged files correspond to stale docs
-    const staleFiles = new Set(report.staleDocs.map((d) => d.file));
-    const conflictFiles = staged.filter((f) => staleFiles.has(f));
-
-    if (conflictFiles.length > 0) {
-      return {
-        allowed: false,
-        message: `DocRelay: ${conflictFiles.length} staged file(s) have stale documentation:\n${conflictFiles.map((f) => `  - ${f}`).join('\n')}\n\nRun 'docrelay sync' to update them, or use --no-verify to skip.`,
-      };
-    }
-
-    return { allowed: true, message: 'DocRelay: all docs in sync.' };
-  } catch (err: any) {
-    // Distinguish transient SQLITE_BUSY from permanent failures.
-    // If the database is locked by another process (e.g., concurrent scan),
-    // blocking the commit would be a denial-of-service. Allow commits on BUSY
-    // with a prominent warning so the developer can check manually.
-    const isBusy = (err as any)?.code === 'SQLITE_BUSY' ||
-      (typeof (err as any)?.message === 'string' && /\bdatabase.*locked\b/i.test((err as any).message));
-    if (isBusy) {
-      console.warn('DocRelay: database locked — skipping pre-commit check. Run `docrelay check` manually to verify documentation.');
-      return { allowed: true, message: 'DocRelay: database locked — pre-commit check skipped. Run `docrelay check` manually.' };
-    }
-    console.error(`DocRelay pre-commit hook error:`, err);
-    return { allowed: false, message: 'DocRelay: pre-commit check failed: internal error — check docrelay logs for details.' };
-  }
-}
-
-export async function postCommitHook(
-  projectRoot: string,
-  db: Database.Database,
-  extractor: SymbolExtractor,
-  config: DocRelayConfig,
-): Promise<void> {
-  try {
-    const git = simpleGit(projectRoot);
-
-    // Get the diff of the last commit
-    const log = await git.log({ maxCount: 1 });
-    if (!log.latest) return;
-
-    // Check if the commit has a parent (fails on first commit).
-    // Differentiate 'unknown revision' (no parent) from real errors (e.g. corrupt repo, I/O error).
-    let hasParent = false;
-    try {
-      await git.raw(['rev-parse', `${log.latest.hash}^`]);
-      hasParent = true;
-    } catch (err: any) {
-      // Only ignore 'unknown revision or path' — surface real errors
-      if (!err?.message) {
-        console.error('DocRelay post-commit: unexpected error checking parent commit:', err);
-        return;
-      }
-      if (!/unknown revision|ambiguous argument/i.test(err.message)) {
-        console.error(`DocRelay post-commit: cannot check parent commit: ${err.message}`);
-        return;
-      }
-    }
-
-    if (!hasParent) return;
-
-    // Always re-scan after a commit, even when git reports an empty diff
-    // (merge commits, empty commits, or amended commits can leave docs stale).
-    // We fetch the diff to verify git connectivity but always do a full re-scan.
-    void await git.diff([`${log.latest.hash}^`, log.latest.hash]);
-
-    // Re-scan affected symbols and mark docs as stale where needed
-    await scanProject(extractor, db, config, projectRoot, false /* incremental */);
-  } catch (err: any) {
-    // Log a prominent warning with actionable next steps. If the scan fails
-    // (e.g., codegraph not running), the commit succeeds but docs are not
-    // updated. Write a marker file that docrelay status can detect so the user
-    // is not silently left with potentially stale documentation.
-    console.error(`DocRelay post-commit hook failed: ${err.message}`);
-    console.warn('DocRelay: Post-commit scan failed — your documentation may be stale. Run `docrelay status` to check.');
-    try {
-      const markerDir = path.join(projectRoot, '.docrelay');
-      fs.mkdirSync(markerDir, { recursive: true });
-      fs.writeFileSync(path.join(markerDir, 'post-commit-failed'), Date.now().toString());
-    } catch { /* best-effort marker */ }
-  }
-}
 
 export function prepareCommitMsg(db: Database.Database): string {
   const pendingChanges = (db.prepare(
@@ -133,31 +21,6 @@ export function prepareCommitMsg(db: Database.Database): string {
   return `DocRelay: ${pendingChanges} symbols changed, ${syncedDocs} docs synced, ${flaggedForReview} docs flagged for review`;
 }
 
-export async function prePushHook(
-  projectRoot: string,
-  db: Database.Database,
-): Promise<{ allowed: boolean; message: string }> {
-  try {
-    const report = docrelayCheck(db, true);
-
-    // If the database query failed, treat as hard failure
-    if (report.error) {
-      return { allowed: false, message: `DocRelay: database query failed — documentation health cannot be verified. ${report.error}` };
-    }
-
-    if (!report.passed) {
-      return {
-        allowed: false,
-        message: `DocRelay: Cannot push — ${report.staleDocs.length} doc section(s) are stale.\n\nRun 'docrelay check' for details.`,
-      };
-    }
-
-    return { allowed: true, message: 'DocRelay: all docs in sync.' };
-  } catch (err: any) {
-    console.error(`DocRelay pre-push hook error:`, err);
-    return { allowed: false, message: 'DocRelay: pre-push check failed: internal error — check docrelay logs for details.' };
-  }
-}
 
 export function installHooks(projectRoot: string, force = false): void {
   // Resolve the real git directory (handles worktrees where .git is a file).
@@ -314,8 +177,8 @@ export function installHooks(projectRoot: string, force = false): void {
   // neither .docrelay/ nor .git/docrelay.db exists — e.g. fresh git worktrees
   // or pre-init clones. When so, warn and exit 0 so we never block git
   // operations (defect: hooks used to hard-fail with 'Not initialized').
-  const failOpenGuard = `if [ ! -d \".docrelay\" ] && [ ! -f \".git/docrelay.db\" ]; then
-  echo "DocRelay: project not initialized — skipping \"$HOOK\" check."
+  const failOpenGuard = `if [ ! -d ".docrelay" ] && [ ! -f ".git/docrelay.db" ]; then
+  echo "DocRelay: project not initialized — skipping "$HOOK" check."
   echo "DocRelay: run 'docrelay init' to enable documentation checks."
   exit 0
 fi
