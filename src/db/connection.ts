@@ -112,7 +112,7 @@ export function getDb(projectRoot: string): Database.Database {
     const sanitized = err instanceof Error
       ? err.message.replace(new RegExp(escapeRegex(resolved), 'g'), '<projectRoot>')
       : String(err);
-    throw new Error(`Failed to initialize DocRelay database in .docrelay/: ${sanitized}`);
+    throw new Error(`Failed to initialize DocRelay database in .docrelay/: ${sanitized}`, { cause: err });
   }
 
   connections.set(resolved, db);

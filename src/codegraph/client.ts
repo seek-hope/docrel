@@ -184,7 +184,7 @@ export class CodegraphClient {
     // Always resolve and validate the binary path, whether it comes from
     // the default 'codegraph' or from user config. Skipping validation
     // for user-configured commands undermines the PATH hijacking defense.
-    let realStat: { ino: number; dev: number } | null = null;
+    let realStat: { ino: number; dev: number } | null;
     try {
       const { execFileSync } = await import('node:child_process');
       cmd = execFileSync('which', ['--', cmd], { encoding: 'utf-8', timeout: 5000 }).trim();
@@ -208,9 +208,9 @@ export class CodegraphClient {
         realStat = { ino: st.ino, dev: st.dev };
       } catch (err: any) {
         if (err.code === 'ENOENT') {
-          throw new Error(`codegraph binary not found at ${cmd}`);
+          throw new Error(`codegraph binary not found at ${cmd}`, { cause: err });
         }
-        throw new Error(`Cannot stat codegraph binary: ${err.message}`);
+        throw new Error(`Cannot stat codegraph binary: ${err.message}`, { cause: err });
       }
 
       // Validate resolved path is in expected installation locations.
@@ -224,7 +224,7 @@ export class CodegraphClient {
         throw new Error(`codegraph resolved to unexpected path: ${cmd}`);
       }
     } catch (err: any) {
-      throw new Error(`Cannot resolve codegraph binary: ${err.message}`);
+      throw new Error(`Cannot resolve codegraph binary: ${err.message}`, { cause: err });
     }
 
     // TOCTOU guard: verify the binary hasn't been swapped since realpathSync.
@@ -561,13 +561,11 @@ export class CodegraphClient {
     // layout is still accepted as a fallback below.
     const symbols: ExploreResult['symbols'] = [];
     const files: string[] = [];
-    let truncated = false;
 
     if (!content) return { symbols: [], files: [] };
 
     const MAX_OUTPUT_LINES = 100_000;
-    const { boundedContent: bounded, truncated: wasTruncated } = truncateLines(content, MAX_OUTPUT_LINES, 'explore');
-    truncated = wasTruncated;
+    const { boundedContent: bounded, truncated } = truncateLines(content, MAX_OUTPUT_LINES, 'explore');
     const lines = bounded.split('\n');
 
     // ── Pass 1: blast-radius bullets give authoritative name + file:line ────

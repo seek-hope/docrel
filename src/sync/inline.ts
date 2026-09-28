@@ -112,7 +112,8 @@ export function updateInlineDoc(input: InlineSyncInput, projectRoot: string): bo
     }
 
     content = result;
-    replaced = true;
+    // NOTE: no `replaced = true` here — the replaced flag is only consulted by
+    // the JSDoc branch below; this branch falls through to the atomic write.
 
     // Post-replacement sanity: verify new docstring appears exactly once
     if (countOccurrences(content, input.newDocstring) !== 1) {

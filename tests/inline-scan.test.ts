@@ -229,7 +229,7 @@ describe('inline docstring collection', () => {
     ].join('\n'));
 
     // Full scan writes an ISO-8601 last_scan_at.
-    let report = await scanProject(new BuiltinExtractor(), db, config, tmpDir, true);
+    await scanProject(new BuiltinExtractor(), db, config, tmpDir, true);
     const stored = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
     expect(stored?.value).toBeTruthy();
     expect(stored!.value).toMatch(/^\d{4}-\d{2}-\d{2}T/); // ISO-8601
@@ -254,7 +254,7 @@ describe('inline docstring collection', () => {
     ].join('\n'));
 
     // Incremental scan must parse the (legacy) value and collect the new inline doc.
-    report = await scanProject(new BuiltinExtractor(), db, config, tmpDir, false);
+    const report = await scanProject(new BuiltinExtractor(), db, config, tmpDir, false);
     expect(report.scannedIds.length).toBeGreaterThan(0);
     findSymbolId(db, report, 'second');
     const secondDoc = getDocSection(db, docSectionId('src/mod2.ts', 'inline:second'));

@@ -66,7 +66,7 @@ export function loadConfig(projectRoot: string): DocRelayConfig {
     if (!fs.statSync(projectRoot).isDirectory()) throw new Error(`projectRoot is not a directory: ${projectRoot}`);
   } catch (err: any) {
     if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      throw new Error(`projectRoot does not exist: ${projectRoot}`);
+      throw new Error(`projectRoot does not exist: ${projectRoot}`, { cause: err });
     }
     throw err;
   }

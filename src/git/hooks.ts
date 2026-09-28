@@ -76,7 +76,7 @@ export function installHooks(projectRoot: string, force = false): void {
   try {
     fs.mkdirSync(hooksDir, { recursive: true });
   } catch (err: any) {
-    throw new Error(`Failed to create hooks directory ${hooksDir}: ${err.message}`);
+    throw new Error(`Failed to create hooks directory ${hooksDir}: ${err.message}`, { cause: err });
   }
 
   // Resolve docrelay binary path. When process.argv[1] is undefined (e.g., MCP
@@ -102,10 +102,10 @@ export function installHooks(projectRoot: string, force = false): void {
       try {
         execFileSync(docrelayBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
       } catch (verr: any) {
-        throw new Error(`docrelay binary at ${docrelayBin} does not appear to work: ${verr.message}`);
+        throw new Error(`docrelay binary at ${docrelayBin} does not appear to work: ${verr.message}`, { cause: verr });
       }
     } catch (err: any) {
-      throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`);
+      throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`, { cause: err });
     }
   } else {
     // When argv1 is defined (CLI mode), trust the binary if it is the
@@ -135,7 +135,7 @@ export function installHooks(projectRoot: string, force = false): void {
         docrelayBin = realBin;
       }
     } catch (err: any) {
-      throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`);
+      throw new Error(`Cannot locate docrelay binary: ${err.message}. Install docrelay globally or use --no-hooks.`, { cause: err });
     }
   }
 
@@ -150,7 +150,7 @@ export function installHooks(projectRoot: string, force = false): void {
   try {
     execFileSync(docrelayBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
   } catch (err: any) {
-    throw new Error(`Resolved docrelay binary at ${docrelayBin} does not appear to work: ${err.message}`);
+    throw new Error(`Resolved docrelay binary at ${docrelayBin} does not appear to work: ${err.message}`, { cause: err });
   }
 
   // Re-verify the binary just before shell quoting to close the TOCTOU window
@@ -160,7 +160,7 @@ export function installHooks(projectRoot: string, force = false): void {
   try {
     execFileSync(docrelayBin, ['--version'], { timeout: 5000, encoding: 'utf-8' });
   } catch (err: any) {
-    throw new Error(`Re-verification of docrelay binary at ${docrelayBin} failed: ${err.message}`);
+    throw new Error(`Re-verification of docrelay binary at ${docrelayBin} failed: ${err.message}`, { cause: err });
   }
 
   // Properly escape the binary path for single-quoted shell context using the
@@ -252,7 +252,7 @@ exit 0
     for (const p of installed) {
       try { fs.unlinkSync(p); } catch { /* best effort */ }
     }
-    throw new Error(`Failed to install hooks: ${err.message}. Removed ${installed.length} partially installed hooks.`);
+    throw new Error(`Failed to install hooks: ${err.message}. Removed ${installed.length} partially installed hooks.`, { cause: err });
   }
 
   console.log(`DocRelay hooks installed in ${hooksDir}/`);
