@@ -191,6 +191,14 @@ doc-relay export-mappings
 # "doc_refs": [{"doc_file": "docs/api.md", "symbol_name": "login", ...}]
 ```
 
+## 文档
+
+- [快速上手](docs/getting-started.md) — 安装、初始化、日常工作流
+- [CLI 参考](docs/cli-reference.md) — 全部 23 个命令及参数
+- [配置说明](docs/configuration.md) — `.docrelay/config.yaml` 配置项
+- [MCP 集成](docs/mcp-integration.md) — Agent 接入与全部 16 个工具
+- [架构](docs/architecture.md) — 关系型同步模型
+
 ## 常见问题
 
 **需要手动标注代码吗？** 不需要。DocRelay 是零标注的。Codegraph 自动发现符号，DocRelay 解析文档中的代码引用，映射自动建立。

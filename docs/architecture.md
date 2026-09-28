@@ -1,0 +1,91 @@
+# DocRelay Architecture
+
+DocRelay applies relational-database concepts to code↔documentation
+synchronization. This document explains the model and the major components.
+
+## The relational model
+
+| Database concept | DocRelay equivalent |
+|------------------|---------------------|
+| Primary key | Stable symbol ID — `SHA256(lang:fqn:kind)`, invariant across renames and moves |
+| Foreign key | `mappings` join table linking symbols to doc sections |
+| ON UPDATE CASCADE | Code change → automatic update of linked docs (per-type strategy) |
+| CHECK constraint | Git hooks blocking commits with stale documentation |
+| WAL log | `changelog` table recording every symbol mutation |
+
+Symbol identity is the key idea. A symbol's fully-qualified name
+(`file::name`) plus its language and kind produces an ID that survives
+refactoring: when `login()` moves to `auth/session.ts`, the signature hash
+changes but the identity-tracking in Codegraph (or the builtin extractor's
+heuristics) lets DocRelay follow it, and the doc links follow too.
+
+## Database schema (SQLite, WAL mode)
+
+The database lives at `.git/docrelay.db` (local state, never committed).
+
+- **symbols** — one row per discovered code symbol (id, name, kind, project,
+  location, signature hash, timestamps)
+- **doc_sections** — one row per parsed documentation section (id, file,
+  anchor, content hash, doc type, status: `in_sync` / `stale` / `pending`)
+- **mappings** — foreign keys with `ON DELETE CASCADE`; review status:
+  `auto` (generated), `confirmed` (human-approved), `rejected`
+- **changelog** — append-only record of symbol mutations and sync outcomes
+- **metadata** — key/value store (schema version, last scan time)
+
+Foreign keys are enforced (`PRAGMA foreign_keys = ON`), so deleting a symbol
+or doc section cascades to its mappings automatically.
+
+## Pipeline
+
+```
+code files ──▶ extractors ──▶ symbols table ──┐
+                                               ├─▶ auto-linker ──▶ mappings
+doc files ───▶ doc parser ──▶ doc_sections ───┘
+                                               │
+        change detection ◀─────────────────────┘
+               │
+               ▼
+        sync engine ──▶ per-type strategy ──▶ inline / standalone /
+                                              generated / architecture
+```
+
+1. **Extraction** — `CodegraphExtractor` when a Codegraph MCP server is
+   reachable, otherwise the builtin regex extractor (37+ language grammars
+   are Codegraph's strength; the builtin covers the common cases).
+2. **Doc parsing** — pluggable parsers for Markdown, reStructuredText,
+   AsciiDoc, and HTML, producing sections with `codeRefs` (backtick
+   references, `link:`/`xref:` annotations, inferred mentions).
+3. **Auto-linking** — matches doc references to symbols by name, with
+   disambiguation by file stem and confidence scoring; ambiguous matches
+   are left unreviewed rather than guessed.
+4. **Change detection** — scans compare signature hashes; changed symbols
+   flip linked docs to `stale` per the CASCADE model.
+5. **Sync engine** — routes each stale section to its strategy:
+   - `inline` rewrites the docstring/JSDoc in the source file (state-machine
+     based, no regex-fragile edits; generated sections carry a hash guard)
+   - `standalone` rewrites Markdown-style sections (or `prompt`/`mark_stale`)
+   - `generated` re-runs the detected generator (TypeDoc, OpenAPI)
+   - `architecture` is only ever flagged for human review
+
+## Surfaces
+
+| Surface | Entry point | Consumers |
+|---------|-------------|-----------|
+| CLI (23 commands) | `doc-relay` / `docrelay` binaries | humans, CI, shell-driven agents |
+| MCP server (16 tools) | `doc-relay mcp` (stdio) | MCP-capable AI agents |
+| Git hooks (4) | `.git/hooks/` | every commit/push |
+| Watch daemon | `doc-relay watch [--daemon]` | long-running local sync |
+
+All four surfaces share the same `src/tools/` implementations, so behavior
+is identical whether a human, a hook, or an agent drives it.
+
+## Failure philosophy
+
+- **Fail open where blocking would be worse**: git hooks skip their checks
+  (with a warning) when the project is uninitialized or the DB is locked.
+- **Fail closed where correctness matters**: a database error during
+  `check` is reported as unhealthy, never as "all docs in sync".
+- **Never guess mappings**: ambiguous auto-link candidates stay unreviewed;
+  only explicit or high-confidence links are created.
+- **Sanitize at boundaries**: error messages shown to MCP/CLI clients never
+  contain absolute paths; full details stay in server-side logs.

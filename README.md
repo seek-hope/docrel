@@ -227,6 +227,14 @@ doc-relay export-mappings
 # "doc_refs": [{"doc_file": "docs/api.md", "symbol_name": "login", ...}]
 ```
 
+## Documentation
+
+- [Getting started](docs/getting-started.md) — install, init, the daily loop
+- [CLI reference](docs/cli-reference.md) — all 23 commands and flags
+- [Configuration](docs/configuration.md) — `.docrelay/config.yaml` options
+- [MCP integration](docs/mcp-integration.md) — agent setup and all 16 tools
+- [Architecture](docs/architecture.md) — the relational sync model
+
 ## FAQ
 
 **Do I need to annotate my code?** No. DocRelay is zero-annotation. Codegraph discovers symbols, DocRelay parses docs for code references, and mappings are built automatically.

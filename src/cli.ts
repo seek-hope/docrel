@@ -17,6 +17,7 @@ import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
 import { docrelayDiff, formatDiffMarkdown } from './tools/diff.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
+import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject } from './discovery/scanner.js';
 import type { ScanReport } from './discovery/scanner.js';
@@ -1114,6 +1115,7 @@ program
   .command('backup')
   .description('Backup the DocRelay database to a timestamped file')
   .option('--output <path>', 'Output path (default: .docrelay/backup-<timestamp>.db)')
+  .option('--keep <n>', 'Keep only the N most recent backups after this one (0 disables pruning)', '10')
   .action(async (opts) => {
     try {
       await ensureContext();
@@ -1145,6 +1147,20 @@ program
 
       fs.copyFileSync(srcPath, resolvedDest);
       console.log(`Backed up to ${path.relative(projectRoot, destPath)}`);
+
+      // Rotate: prune older backups so .docrelay/ does not grow unbounded.
+      // Runs after the new backup exists, so the fresh copy is always kept.
+      const keep = Number.parseInt(String(opts.keep), 10);
+      if (Number.isNaN(keep) || keep < 0) {
+        console.error('--keep must be a non-negative integer (0 disables pruning)');
+        exit(1);
+      }
+      if (keep > 0) {
+        const { removed } = pruneBackups(path.dirname(resolvedDest), keep);
+        if (removed.length > 0) {
+          console.log(`Pruned ${removed.length} old backup(s); kept the ${keep} most recent.`);
+        }
+      }
     } catch (err: any) {
       console.error('Backup failed:', errMsg(err));
       exit(1);

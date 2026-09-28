@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Added
+- Release workflow (`.github/workflows/release.yml`): tag push verifies the
+  version, runs all gates, publishes to npm with provenance, and creates a
+  GitHub Release with the packed tarball (requires the `NPM_TOKEN` secret).
+- Backup rotation: `doc-relay backup --keep <n>` prunes older `backup-*.db`
+  files after a successful backup (default 10, `0` disables), so `.docrelay/`
+  no longer grows unbounded.
+- Coverage gate: `npm run coverage` (v8 provider) with baseline thresholds
+  (44/38/50/47) enforced in CI.
+- User documentation set in `docs/`: getting started, CLI reference,
+  configuration, MCP integration, architecture — linked from both READMEs
+  and now tracked by DocRelay's own scan.
 - Type-aware linting (typescript-eslint `recommendedTypeChecked`) and a
   `npm run typecheck` gate covering src and tests; both wired into CI.
 - `doc-relay mcp` CLI subcommand that starts the MCP server on stdio, so the
