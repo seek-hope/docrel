@@ -170,6 +170,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   upgrading vitest 2 → 5, vite → 8, and refreshing transitive dependencies.
 
 ### Changed
+- Dependency overhaul: commander 13→15, chokidar 4→5, better-sqlite3
+  12→13 (+ @types/better-sqlite3 7→9), eslint 9→10 (+ @eslint/js 10);
+  removed the unused `simple-git` dependency. ESLint 10's new
+  `preserve-caught-error` / `no-useless-assignment` rules were adopted by
+  fixing all 16 flagged sites (error `cause` chains preserved at 11
+  rethrow sites, 5 dead assignments removed). Deliberately deferred:
+  `typescript@7` (typescript-eslint peer range is `<6.1.0`) and
+  `@types/node@26` (types track the supported runtime floor, Node 22).
 - CLI decision logic (`errMsg` sanitization, extractor selection,
   codegraph→builtin scan fallback, init detection) extracted from `cli.ts`
   into a new unit-tested `src/cli-support.ts`; `cli.ts` is now thin
