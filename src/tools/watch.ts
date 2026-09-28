@@ -2,9 +2,8 @@
 import type Database from 'better-sqlite3';
 import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelayConfig } from '../utils/config.js';
-import { scanProject } from '../discovery/scanner.js';
 import { readLastScanAt } from '../discovery/scanner.js';
-import { runDocsPipeline } from '../cli-support.js';
+import { runDocsPipeline, scanWithFallback } from '../cli-support.js';
 import { isIgnored } from '../utils/ignore.js';
 import { escapeLike } from '../utils/fs.js';
 import fs from 'node:fs';
@@ -157,7 +156,10 @@ export async function startWatch(
             // one-file code edit no longer triggers a full O(symbols ×
             // sections) re-link on every debounced event.
             const prevScanAt = readLastScanAt(db);
-            const report = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
+            // scanWithFallback: a present-but-unindexed codegraph would
+            // otherwise yield 0 symbols and the watcher would silently never
+            // update symbols (same fallback semantics as the CLI scan).
+            const report = await scanWithFallback(extractor, db, config, projectRoot, false /* incremental */);
             const pipeline = await runDocsPipeline(db, config, projectRoot, prevScanAt, report.scannedIds);
             console.log(`[${now}] Done: ${pipeline.autoLink.totalMatched} new mappings`);
           } else {

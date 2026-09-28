@@ -16,6 +16,7 @@ import os from 'node:os';
 const sdkMock = vi.hoisted(() => ({
   connectImpl: { current: (_transport: unknown): Promise<void> => Promise.resolve() },
   lastClient: null as { close: ReturnType<typeof vi.fn> } | null,
+  lastTransportOpts: null as Record<string, unknown> | null,
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
@@ -28,7 +29,7 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: class { constructor(_opts: unknown) {} },
+  StdioClientTransport: class { constructor(opts: unknown) { sdkMock.lastTransportOpts = opts as Record<string, unknown>; } },
 }));
 
 // client.ts resolves fs via `await import('node:fs')` — spying on the CJS
@@ -294,6 +295,7 @@ describe('doConnect SDK flow', () => {
     process.env.PATH = `${binDir}${path.delimiter}${savedPath ?? ''}`;
     sdkMock.connectImpl.current = () => Promise.resolve();
     sdkMock.lastClient = null;
+    sdkMock.lastTransportOpts = null;
   });
 
   afterEach(() => {
@@ -307,6 +309,22 @@ describe('doConnect SDK flow', () => {
     await cg.connect();
     expect(sdkMock.lastClient).not.toBeNull();
     await expect(cg.search('anything')).resolves.toBeDefined();
+  });
+
+  it('spawns the codegraph server rooted at the configured project cwd', async () => {
+    // The server resolves its .codegraph/ index from its own working
+    // directory — without an explicit cwd, a docrelay process running inside
+    // a DIFFERENT indexed project (MCP hosts, DOCRELAY_PROJECT_ROOT
+    // overrides) would silently ingest that project's symbols.
+    const cg = new CodegraphClient('codegraph', '/data/my-project');
+    await cg.connect();
+    expect(sdkMock.lastTransportOpts?.cwd).toBe('/data/my-project');
+  });
+
+  it('leaves the server cwd at the process default when no root is configured', async () => {
+    const cg = new CodegraphClient('codegraph');
+    await cg.connect();
+    expect(sdkMock.lastTransportOpts?.cwd).toBeUndefined();
   });
 
   it('surfaces the real connect error (not a timeout)', async () => {

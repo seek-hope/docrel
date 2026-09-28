@@ -55,7 +55,16 @@ export class CodegraphClient {
   private connectGeneration = 0;
   private livenessInProgress = false;
 
-  constructor(private command?: string) {}
+  /**
+   * @param command  codegraph binary name/path (config: codegraph.command).
+   * @param cwd      Project root to spawn the codegraph server in. The server
+   *                 resolves its `.codegraph/` index from its own working
+   *                 directory — WITHOUT this, a docrelay process whose cwd
+   *                 sits inside a DIFFERENT indexed project (IDE/MCP hosts,
+   *                 DOCRELAY_PROJECT_ROOT overrides) silently reads that
+   *                 project's index and ingests foreign symbols.
+   */
+  constructor(private command?: string, private cwd?: string) {}
 
   async connect(): Promise<void> {
     if (this.client) {
@@ -246,6 +255,11 @@ export class CodegraphClient {
     const transport = new StdioClientTransport({
       command: cmd,
       args: ['serve', '--mcp'],
+      // Root the server at the docrelay project root so its index resolution
+      // (nearest .codegraph/ at or above cwd) matches the project being
+      // scanned — see the constructor doc. Undefined falls back to the
+      // process cwd (legacy behavior).
+      cwd: this.cwd,
     });
 
     const client = new Client(

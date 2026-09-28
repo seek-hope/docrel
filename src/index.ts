@@ -20,8 +20,8 @@ import { docrelayImpact } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink } from './tools/link.js';
 import { docrelayDiff } from './tools/diff.js';
-import { scanProject, readLastScanAt } from './discovery/scanner.js';
-import { runDocsPipeline } from './cli-support.js';
+import { readLastScanAt } from './discovery/scanner.js';
+import { runDocsPipeline, scanWithFallback } from './cli-support.js';
 import type { DocsPipelineReport } from './cli-support.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
@@ -72,7 +72,7 @@ try {
   config = loadConfig(projectRoot);
   db = getDb(projectRoot);
   runMigrations(db);
-  codegraph = new CodegraphClient(config.codegraph?.command);
+  codegraph = new CodegraphClient(config.codegraph?.command, projectRoot);
   const codegraphExtractor = new CodegraphExtractor(codegraph, config.codegraph?.maxFiles);
   const builtinExtractor = new BuiltinExtractor();
   // Try codegraph; fall back to builtin regex-based extraction
@@ -362,7 +362,10 @@ server.tool(
         };
       }
 
-      const symbolReport = await scanProject(extractor, db, config, projectRoot, true /* full */);
+      // scanWithFallback: present-but-unindexed codegraph returns 0 symbols;
+      // fall back to the builtin extractor exactly like the CLI scan so MCP
+      // and CLI produce identical results.
+      const symbolReport = await scanWithFallback(extractor, db, config, projectRoot, true /* full */);
 
       let docReport: DocsPipelineReport['docs'] | null = null;
       let linkResult: DocsPipelineReport['autoLink'] | null = null;
@@ -509,7 +512,7 @@ server.tool(
       // poll does zero O(symbols × sections) matching work.
       const prevScanAt = readLastScanAt(db);
 
-      const symbolReport = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
+      const symbolReport = await scanWithFallback(extractor, db, config, projectRoot, false /* incremental */);
 
       let docReport: DocsPipelineReport['docs'] | null = null;
       let linkResult: DocsPipelineReport['autoLink'] | null = null;

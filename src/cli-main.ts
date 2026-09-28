@@ -13,7 +13,7 @@ import { docrelayImpact, formatImpactMarkdown } from './tools/impact.js';
 import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { exportMappingsJson } from './db/mappings.js';
-import { scanProject, readLastScanAt } from './discovery/scanner.js';
+import { readLastScanAt } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCRELAY_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
@@ -94,7 +94,7 @@ async function ensureContext(opts?: { allowUninitialized?: boolean }): Promise<v
     config = loadConfig(projectRoot);
     db = getDb(projectRoot);
     runMigrations(db);
-    codegraph = new CodegraphClient(config.codegraph?.command);
+    codegraph = new CodegraphClient(config.codegraph?.command, projectRoot);
     extractor = await createExtractor(codegraph, config);
     _ctxReady = true;
   } catch (err: any) {
@@ -1096,7 +1096,12 @@ program
       const gcExtractor = await createExtractor(codegraph, config);
 
       console.error('Scanning codebase for GC...');
-      const scanReport = await scanProject(gcExtractor, db, config, projectRoot);
+      // scanWithFallback (not raw scanProject): when the codegraph binary
+      // exists but the project has no usable index, a raw scan returns 0
+      // symbols and GC would mark EVERY symbol stale (deleting them on the
+      // next pass). Fall back to the builtin extractor exactly like the
+      // `scan` command does.
+      const scanReport = await scanWithFallback(gcExtractor, db, config, projectRoot);
 
       console.error('Running garbage collection...');
       const { docrelayGc } = await import('./tools/gc.js');

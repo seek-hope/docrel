@@ -51,7 +51,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (733 new tests, 1030 total):
+  branches (739 new tests, 1036 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -273,6 +273,37 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   three surfaces is the new shared `readLastScanAt()` helper.
 
 ### Fixed
+- Standalone `auto_update` sync only rewrote docs that quoted the full raw
+  declaration (`export function login(user: string): boolean {`). Docs
+  written in the natural bare form (`login(user: string): boolean`) matched
+  no candidate, so the section stayed stale forever — silently. Replacement
+  candidates now include the derived bare form (declaration prefix cut at
+  the symbol name, rejected when the prefix is not modifier-like) for both
+  changelog and `raw_signature` sources, and the brace-stripped variant also
+  covers Python's trailing colon.
+- `sync --all-stale` processed every symbol mapped to a stale doc, including
+  symbols whose signature never changed: each emitted a spurious "requires
+  manual/agent rewrite" error AND marked its mapped sections stale, dragging
+  previously in_sync sections into the stale set on every run. Symbols with
+  a live signature and no recorded signature difference are now skipped
+  silently; the rewrite error (which now includes the underlying reason)
+  only fires when the current signature cannot be read at all, e.g. the
+  symbol was deleted. Conversely, when a recorded signature change genuinely
+  cannot be located in a stale section, sync now says so in a warning
+  instead of failing silently.
+- The codegraph MCP server was spawned without a working directory, so it
+  resolved its `.codegraph/` index from docrelay's own cwd. Running a scan
+  from inside a different indexed project (IDE/MCP hosts, or
+  `DOCRELAY_PROJECT_ROOT` pointing elsewhere) silently ingested THAT
+  project's symbols into the database — after which `gc` marked every real
+  symbol stale and deleted it on the next pass. The server is now spawned
+  rooted at the docrelay project root.
+- `gc`, the watcher's incremental scan, and the MCP `docrelay_scan` /
+  `docrelay_refresh` tools called the raw scanner without the builtin
+  fallback the `scan` command has: with a codegraph binary present but no
+  usable project index, scans returned 0 symbols — for `gc` a data-loss path
+  that stales (then deletes) every symbol. All three surfaces now share
+  `scanWithFallback` with the CLI scan.
 - MCP scan responses leaked the internal `scannedIds` working set: a
   full `docrelay_scan` returned one hash per project symbol (a ~160 KB
   JSON array on a 4000-symbol project) inside `symbols.scannedIds`.
