@@ -123,13 +123,15 @@ export async function scanProject(
       db.transaction(() => {
       for (const sym of symbols) {
         reportProgress(++symIdx);
-        // Skip symbols whose source file matches a .docrelayignore pattern
-        if (isIgnored(sym.file, projectRoot)) continue;
 
         // Wrap per-symbol processing in its own try/catch to prevent a single
         // malformed symbol (e.g., undefined fields from a changed codegraph
-        // response) from aborting the entire directory's scan.
+        // response) from aborting the entire directory's scan. The isIgnored
+        // check lives INSIDE this guard: a symbol with a null/undefined file
+        // would otherwise throw here and kill the whole directory scan.
         try {
+          // Skip symbols whose source file matches a .docrelayignore pattern
+          if (isIgnored(sym.file, projectRoot)) continue;
           if (++dirSymbolCount > MAX_SYMBOLS_PER_DIR) {
             console.warn(`DocRelay: scan of '${codeDir}' exceeded ${MAX_SYMBOLS_PER_DIR} symbols — stopping to prevent memory pressure`);
             break;

@@ -26,7 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 68/60/76/71) enforced in CI.
+  (currently 69/61/77/71) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -35,7 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (211 new tests, 508 total):
+  branches (242 new tests, 539 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -106,6 +106,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- A malformed extractor result (e.g. a symbol with a null file from a changed
+  codegraph response) no longer aborts the entire directory scan: the
+  `.docrelayignore` check moved inside the per-symbol guard, so the bad
+  symbol is skipped with a warning and the remaining symbols are processed,
+  matching the documented fault-isolation design.
 - Update check no longer reports an older registry version as an available
   update when the installed build is ahead of npm (e.g. a locally built
   pre-release): the fetch path now applies the same `isNewer()` gate as the
