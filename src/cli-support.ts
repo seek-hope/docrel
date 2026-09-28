@@ -12,6 +12,9 @@ import type { DocRelayConfig } from './utils/config.js';
 import { scanProject } from './discovery/scanner.js';
 import type { ScanReport } from './discovery/scanner.js';
 import { shouldFallbackToBuiltin } from './sync/scan-fallback.js';
+import { scanDocs } from './discovery/doc-scanner.js';
+import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
+import { listSymbols } from './db/symbols.js';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
@@ -61,4 +64,90 @@ export async function scanWithFallback(
 export function isProjectInitialized(projectRoot: string): boolean {
   return fs.existsSync(path.join(projectRoot, '.docrelay')) ||
          fs.existsSync(path.join(projectRoot, '.git', 'docrelay.db'));
+}
+
+/** Report shape returned by runDocsPipeline (mirrors the scan command output). */
+export interface DocsPipelineReport {
+  docs: {
+    totalFiles: number;
+    totalSections: number;
+    newDocSections: number;
+    newMappings: number;
+    failedFiles: string[];
+    skippedMissing: string[];
+  };
+  autoLink: {
+    totalMatched: number;
+    highConfidence: number;
+    mediumConfidence: number;
+    lowConfidence: number;
+  };
+}
+
+/**
+ * Documentation half of a scan: parse doc dirs, ingest sections, and
+ * auto-link symbol↔doc mappings. Shared by `init` (full run) and `scan`
+ * (delta-filtered on --incremental) so both entry points produce identical
+ * database state — previously init scanned symbols only and docs were never
+ * ingested until the first explicit `scan`.
+ *
+ * Delta contract (incremental runs):
+ *   - docs whose mtime predates prevScanAt (minus a 1s filesystem-granularity
+ *     tolerance, mirroring the extractor cutoff) are skipped for ingest;
+ *   - auto-link evaluates only pairs that can produce something new:
+ *     changed symbols × ALL sections, then ALL symbols × changed sections;
+ *   - a no-change incremental scan does zero O(N×M) matching work.
+ * Pass prevScanAt=undefined for a full run (everything counts as changed).
+ */
+export async function runDocsPipeline(
+  db: Database.Database,
+  config: DocRelayConfig,
+  projectRoot: string,
+  prevScanAt: number | undefined,
+  scannedIds: string[],
+): Promise<DocsPipelineReport> {
+  const { sections, report: docReport } = await scanDocs(config.doc_dirs, projectRoot);
+
+  const changedSections = prevScanAt === undefined
+    ? sections
+    : sections.filter((section) => {
+        try {
+          const mtime = fs.statSync(path.join(projectRoot, section.file)).mtimeMs;
+          return mtime + 1000 > prevScanAt;
+        } catch {
+          return true; // stat failure: include (correctness over speed)
+        }
+      });
+  const ingestResult = ingestDocSections(db, changedSections);
+
+  const allSymbols = listSymbols(db);
+  const scannedIdSet = new Set(scannedIds);
+  const changedSymbols = scannedIdSet.size === allSymbols.length
+    ? allSymbols
+    : allSymbols.filter((s) => scannedIdSet.has(s.id));
+  const linkCounters = { totalMatched: 0, highConfidence: 0, mediumConfidence: 0, lowConfidence: 0 };
+  const mergeLinkResult = (r: typeof linkCounters) => {
+    linkCounters.totalMatched += r.totalMatched;
+    linkCounters.highConfidence += r.highConfidence;
+    linkCounters.mediumConfidence += r.mediumConfidence;
+    linkCounters.lowConfidence += r.lowConfidence;
+  };
+  if (changedSymbols.length > 0 && sections.length > 0) {
+    mergeLinkResult(autoLink(db, changedSymbols, sections));
+  }
+  if (changedSections.length > 0 && allSymbols.length > 0) {
+    mergeLinkResult(autoLink(db, allSymbols, changedSections));
+  }
+
+  return {
+    docs: {
+      totalFiles: docReport.totalFiles,
+      totalSections: docReport.totalSections,
+      newDocSections: ingestResult.newDocSections,
+      newMappings: ingestResult.newMappings,
+      failedFiles: docReport.failedFiles,
+      skippedMissing: docReport.skippedMissing,
+    },
+    autoLink: linkCounters,
+  };
 }

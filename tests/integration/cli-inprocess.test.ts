@@ -361,6 +361,26 @@ describe('CLI in-process: scan / review / integrate', () => {
     expect(await runCli(['scan', '--no-docs'])).toBe(0);
   });
 
+  it('scans incrementally using the previous scan timestamp', async () => {
+    seedProject();
+    expect(await runCli(['scan'])).toBe(0);
+    expect(await runCli(['scan', '--incremental'])).toBe(0);
+    expect(errOut()).toContain('Scanning codebase...');
+  });
+
+  it('treats a first-time incremental scan as a full scan', async () => {
+    seedProject();
+    expect(await runCli(['scan', '--incremental'])).toBe(0);
+  });
+
+  it('falls back to a full scan when last_scan_at is unparsable', async () => {
+    seedProject();
+    seedDb();
+    const db = getDb(tmpDir);
+    db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_scan_at', 'not-a-date')").run();
+    expect(await runCli(['scan', '--incremental'])).toBe(0);
+  });
+
   it('renders the review report in markdown and json', async () => {
     seedProject();
     seedDb();

@@ -58,8 +58,10 @@ their cascaded mappings, and rejected mappings older than 30 days.
 
 ### `scan [--no-docs] [--dry-run] [--incremental]`
 Scan code and docs, update the database, and run the auto-linker.
-`--incremental` skips files unchanged since the last scan; `--dry-run`
-previews without writing.
+`--incremental` skips files unchanged since the last scan — including
+doc ingest and auto-linking, which are delta-filtered the same way, so
+an unchanged project re-scans in a fraction of the full-scan time;
+`--dry-run` previews without writing.
 
 ### `sync --symbol <id>` | `sync --all-stale`
 Apply CASCADE updates to documentation linked to a symbol (or every stale

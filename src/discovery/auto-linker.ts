@@ -417,6 +417,13 @@ export interface IngestResult {
  */
 function createRefMapping(db: Database.Database, symbolId: string, docId: string): boolean {
   try {
+    // Existence pre-check: createMapping is an UPSERT whose ON CONFLICT clause
+    // would rewrite (and count as "new") an existing row — re-ingesting an
+    // unchanged doc would churn the WAL and inflate the newMappings metric.
+    const existing = db.prepare(
+      `SELECT 1 AS x FROM mappings WHERE symbol_id = ? AND doc_id = ? AND rel_type = 'describes'`,
+    ).get(symbolId, docId);
+    if (existing) return false;
     createMapping(db, {
       symbol_id: symbolId,
       doc_id: docId,
@@ -425,7 +432,7 @@ function createRefMapping(db: Database.Database, symbolId: string, docId: string
     });
     return true;
   } catch {
-    return false; // duplicate or other constraint — skip
+    return false; // constraint or other failure — skip
   }
 }
 
@@ -448,6 +455,11 @@ export function ingestDocSections(
   // auto-commit individually (a WAL flush each), which dominates ingest time
   // on doc-heavy projects. Per-section errors are caught inside the loop, so
   // one corrupted section does not roll back the batch.
+  // Prepare statements once — better-sqlite3 compiles SQL on every prepare()
+  // call, so preparing inside the per-section loop measurably dominates
+  // ingest time on doc-heavy projects.
+  const existingSectionStmt = db.prepare('SELECT id FROM doc_sections WHERE id = ?');
+  const sameNameStmt = db.prepare('SELECT id, location FROM symbols WHERE name = ? OR name = ?');
   db.transaction(() => {
   for (const section of sections) {
     // Wrap per-section processing in try/catch to prevent a single corrupted
@@ -458,7 +470,7 @@ export function ingestDocSections(
       if (!id) continue;
 
       const hash = contentHash(section.content);
-      const existing = db.prepare('SELECT id FROM doc_sections WHERE id = ?').get(id) as { id: string } | undefined;
+      const existing = existingSectionStmt.get(id) as { id: string } | undefined;
       upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
       if (!existing) newDocs++;
 
@@ -469,9 +481,7 @@ export function ingestDocSections(
         // same mapping. Now: if exactly one symbol has this name, link it as
         // before; if several do, only link when the symbol's source file stem
         // uniquely equals the doc file stem — otherwise skip (no link).
-        const sameNameRows = db.prepare(
-          'SELECT id, location FROM symbols WHERE name = ? OR name = ?'
-        ).all(cleanName, ref.symbolName) as Array<{ id: string; location: string }>;
+        const sameNameRows = sameNameStmt.all(cleanName, ref.symbolName) as Array<{ id: string; location: string }>;
 
         if (sameNameRows.length === 1) {
           if (createRefMapping(db, sameNameRows[0].id, id)) newMappings++;

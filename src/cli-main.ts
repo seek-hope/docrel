@@ -17,10 +17,7 @@ import { docrelayHistory, formatHistoryMarkdown } from './tools/history.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
-import { scanProject } from './discovery/scanner.js';
-import { scanDocs } from './discovery/doc-scanner.js';
-import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
-import { listSymbols } from './db/symbols.js';
+import { scanProject, parseLastScanAt } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCRELAY_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
@@ -33,6 +30,7 @@ import {
   createExtractor,
   scanWithFallback,
   isProjectInitialized as isProjectInitializedSupport,
+  runDocsPipeline,
 } from './cli-support.js';
 
 const program = new Command();
@@ -200,12 +198,16 @@ strategies:
         steps.push('Skipped agent integration (run \'docrelay integrate\' later)');
       }
 
-      // 6. Scan codebase (unless --no-scan)
+      // 6. Scan codebase (unless --no-scan) — symbols AND documentation, so a
+      // freshly initialized project has doc sections and mappings immediately
+      // (previously docs were only ingested by the first explicit `scan`).
       if (opts.scan) {
         const available = await extractor.isAvailable();
         if (available) {
           const report = await scanWithFallback(extractor, db, config, projectRoot);
+          const pipeline = await runDocsPipeline(db, config, projectRoot, undefined, report.scannedIds);
           steps.push(`Scanned codebase: ${report.totalSymbols} symbols, ${report.newSymbols} new`);
+          steps.push(`Scanned docs: ${pipeline.docs.totalSections} sections, ${pipeline.autoLink.totalMatched} auto-linked`);
         } else {
           steps.push('Skipped scan: no extractor available (run \'docrelay scan\' later)');
         }
@@ -710,6 +712,16 @@ program
 
       // Scan symbols via extractor
       console.error('Scanning codebase...');
+      // Read the PREVIOUS scan timestamp before scanProject overwrites it —
+      // an incremental run uses it to delta-filter doc ingest and auto-link
+      // below. Undefined means "treat everything as changed" (first scan,
+      // unparsable legacy value, or a non-incremental full scan).
+      const prevScanAt = opts.incremental
+        ? (() => {
+            const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
+            return row?.value ? parseLastScanAt(row.value) : undefined;
+          })()
+        : undefined;
       const symbolReport = opts.dryRun
         ? { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs: [], scannedIds: [] }
         : await scanWithFallback(scanExtractor, db, config, projectRoot, !opts.incremental);
@@ -730,23 +742,14 @@ program
       } | null = null;
 
       if (opts.docs !== false) {
-        // Scan docs via scanDocs()
         console.error('Scanning documentation...');
-        const { sections, report: docReport } = await scanDocs(config.doc_dirs, projectRoot);
-        const ingestResult = ingestDocSections(db, sections);
-
-        docSectionReport = {
-          totalFiles: docReport.totalFiles,
-          totalSections: docReport.totalSections,
-          newDocSections: ingestResult.newDocSections,
-          newMappings: ingestResult.newMappings,
-          failedFiles: docReport.failedFiles,
-          skippedMissing: docReport.skippedMissing,
-        };
-
-        // Auto-link via autoLink() — creates zero-annotation symbol↔doc mappings
-        const allSymbols = listSymbols(db);
-        autoLinkReport = autoLink(db, allSymbols, sections);
+        // Shared with init. Delta-filtered on --incremental: unchanged docs
+        // are skipped for ingest, and auto-link only evaluates
+        // changed-symbols×all-sections plus all-symbols×changed-sections —
+        // a no-change incremental scan does zero O(N×M) matching work.
+        const pipeline = await runDocsPipeline(db, config, projectRoot, prevScanAt, symbolReport.scannedIds);
+        docSectionReport = pipeline.docs;
+        autoLinkReport = pipeline.autoLink;
       }
 
       // Report full results as a single JSON object.

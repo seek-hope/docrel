@@ -37,6 +37,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Backup rotation: `doc-relay backup --keep <n>` prunes older `backup-*.db`
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
+- Benchmark harness: `scripts/bench.mjs` builds a synthetic repo
+  (configurable file/doc counts, 4000 symbols / 500+ sections by default)
+  and times init, full/incremental scans, status, check, and review —
+  used to drive the incremental-scan work below.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
   (currently 95.1/88.1/94.9/96.05) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
@@ -47,7 +51,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (710 new tests, 1007 total):
+  branches (722 new tests, 1019 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -197,7 +201,33 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `doc-relay mcp` and direct `node dist/index.js` execution are unchanged.
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
+### Performance
+- Incremental scans skip unchanged documentation work. `scan
+  --incremental` now delta-filters doc ingest by file mtime (same 1s
+  filesystem-granularity tolerance as the extractor cutoff) and
+  auto-links only the pairs that can produce something new —
+  changed-symbols × all-sections, then all-symbols × changed-sections —
+  so a no-change incremental scan does zero O(N×M) matching. Measured
+  with `scripts/bench.mjs` (4000 symbols / 550 sections): no-op
+  incremental 3839ms → 182ms (21×), 5%-changed incremental 3997ms →
+  390ms (10×). The end state is identical to a full scan; the docs
+  pipeline is shared between `init` and `scan` as `runDocsPipeline` in
+  `src/cli-support.ts`.
+- Doc-section ingest hoists its `SELECT` statement prepares out of the
+  per-section loop — better-sqlite3 compiles SQL on every `prepare()`
+  call, so preparing inside the loop measurably dominated ingest time
+  on doc-heavy projects.
+
 ### Fixed
+- `init` never ingested documentation: it scanned code symbols only, so
+  doc sections and symbol↔doc mappings did not exist until the first
+  explicit `scan`. Init now runs the full docs pipeline and reports
+  "Scanned docs: N sections, M auto-linked" in its summary.
+- Re-ingesting an unchanged doc inflated the `newMappings` metric and
+  churned the WAL: the ingest code-reference linker went through
+  `createMapping`'s UPSERT, whose ON CONFLICT clause rewrote (and
+  counted as new) existing rows. It now existence-checks first and
+  skips true duplicates.
 - The MCP server's shutdown exit-code escalation dropped crashes that
   arrived after a clean shutdown had already started: `shutdown(1)`
   following `shutdown(0)` updated the internal `exitCode` variable (read
