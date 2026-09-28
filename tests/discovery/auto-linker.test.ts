@@ -715,6 +715,37 @@ describe('ingestDocSections edge paths', () => {
     expect(listAllMappings(db)).toHaveLength(0);
   });
 
+  it('performs no write when re-ingesting an unchanged section', () => {
+    const section: ParsedDocSection = { file: 'docs/api.md', anchor: 'Overview', content: 'Some content.', codeRefs: [] };
+    ingestDocSections(db, [section]);
+    const id = docSectionId('docs/api.md', 'Overview');
+    db.prepare("UPDATE doc_sections SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(id);
+
+    // Second ingest with identical content: must skip the upsert entirely —
+    // updated_at stays backdated, proving no write hit the row.
+    const result = ingestDocSections(db, [section]);
+
+    expect(result.newDocSections).toBe(0);
+    const row = db.prepare('SELECT updated_at FROM doc_sections WHERE id = ?').get(id) as { updated_at: string };
+    expect(row.updated_at).toBe('2020-01-01 00:00:00');
+  });
+
+  it('writes when content changed, preserving the stale-mark timestamp', () => {
+    const original: ParsedDocSection = { file: 'docs/api.md', anchor: 'Overview', content: 'Old content.', codeRefs: [] };
+    ingestDocSections(db, [original]);
+    const id = docSectionId('docs/api.md', 'Overview');
+    db.prepare("UPDATE doc_sections SET status = 'stale', updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(id);
+
+    const edited: ParsedDocSection = { file: 'docs/api.md', anchor: 'Overview', content: 'New content.', codeRefs: [] };
+    ingestDocSections(db, [edited]);
+
+    const row = db.prepare('SELECT content_hash, status, updated_at FROM doc_sections WHERE id = ?').get(id) as
+      { content_hash: string; status: string; updated_at: string };
+    expect(row.content_hash).toBe(contentHash('New content.'));
+    expect(row.status).toBe('stale');
+    expect(row.updated_at).toBe('2020-01-01 00:00:00');
+  });
+
   it('skips malformed sections with a warning instead of aborting the batch', () => {
     const good: ParsedDocSection = { file: 'docs/good.md', anchor: 'Good', content: 'ok', codeRefs: [] };
     const bad: ParsedDocSection = { file: '', anchor: 'Bad', content: 'no file', codeRefs: [] };

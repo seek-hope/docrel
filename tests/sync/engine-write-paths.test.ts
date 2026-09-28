@@ -11,6 +11,7 @@ import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
 import { upsertDocSection, getDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
+import { ingestDocSections } from '../../src/discovery/auto-linker.js';
 import { syncSymbol } from '../../src/sync/engine.js';
 import { symbolId, docSectionId, contentHash } from '../../src/utils/hash.js';
 import type { DocRelayConfig } from '../../src/utils/config.js';
@@ -319,6 +320,35 @@ describe('syncSymbol — standalone auto_update write paths', () => {
     // File mtime must be newer than doc.updated_at to prove a real rewrite.
     const future = new Date(Date.now() + 60_000);
     fs.utimesSync(docPath, future, future);
+
+    const result = await syncSymbol(db, makeConfig(), sym, tmpDir);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.docsChecked).toContain('docs/api.md');
+    expect(getDocSection(db, docId)!.status).toBe('in_sync');
+  });
+
+  it('recovers an agent-fixed stale doc even when a scan ran between edit and sync', async () => {
+    // Regression: ingest used to bump updated_at on every re-observation,
+    // so a scan between the agent's edit and sync made the mtime-recovery
+    // unsatisfiable (file mtime < scan time = updated_at) and the doc was
+    // stuck stale. updated_at must stay the stale-mark timestamp.
+    const sectionContent = '## auth\n\nAlready accurate docs.\n';
+    const docPath = path.join(tmpDir, 'docs', 'api.md');
+    fs.writeFileSync(docPath, sectionContent, 'utf-8');
+    const docId = linkStandaloneDoc();
+    recordOldSig();
+    // Timeline: doc staled 3s ago, agent rewrote the file 2s ago, scan+sync now.
+    db.prepare("UPDATE doc_sections SET updated_at = datetime('now', '-3 seconds') WHERE id = ?").run(docId);
+    const twoSecondsAgo = new Date(Date.now() - 2_000);
+    fs.utimesSync(docPath, twoSecondsAgo, twoSecondsAgo);
+
+    // The scan re-parses the edited file and ingests it (content changed).
+    ingestDocSections(db, [{ file: 'docs/api.md', anchor: 'auth', content: sectionContent, codeRefs: [] }]);
+    // Sanity: ingest recorded the new hash but kept the stale-mark timestamp.
+    const scanned = getDocSection(db, docId)!;
+    expect(scanned.content_hash).toBe(contentHash(sectionContent));
+    expect(scanned.status).toBe('stale');
 
     const result = await syncSymbol(db, makeConfig(), sym, tmpDir);
 

@@ -811,7 +811,7 @@ export function ingestDocSections(
   // Prepare statements once — better-sqlite3 compiles SQL on every prepare()
   // call, so preparing inside the per-section loop measurably dominates
   // ingest time on doc-heavy projects.
-  const existingSectionStmt = db.prepare('SELECT id FROM doc_sections WHERE id = ?');
+  const existingSectionStmt = db.prepare('SELECT id, file, anchor, content_hash, doc_type FROM doc_sections WHERE id = ?');
   const sameNameStmt = db.prepare('SELECT id, location FROM symbols WHERE name = ? OR name = ?');
   db.transaction(() => {
   for (const section of sections) {
@@ -823,8 +823,21 @@ export function ingestDocSections(
       if (!id) continue;
 
       const hash = contentHash(section.content);
-      const existing = existingSectionStmt.get(id) as { id: string } | undefined;
-      upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+      const existing = existingSectionStmt.get(id) as
+        | { id: string; file: string; anchor: string; content_hash: string; doc_type: string }
+        | undefined;
+      // Skip the write entirely when nothing changed: a no-change upsert
+      // still dirties the WAL on every scan, and (for in_sync docs) bumps
+      // updated_at with no semantic change. Same convention as scanProject,
+      // which only upserts symbols that are new or signature-changed.
+      const unchanged = existing !== undefined &&
+        existing.file === section.file &&
+        existing.anchor === section.anchor &&
+        existing.content_hash === hash &&
+        existing.doc_type === 'standalone';
+      if (!unchanged) {
+        upsertDocSection(db, { id, file: section.file, anchor: section.anchor, content_hash: hash, doc_type: 'standalone' });
+      }
       if (!existing) newDocs++;
 
       for (const ref of section.codeRefs) {

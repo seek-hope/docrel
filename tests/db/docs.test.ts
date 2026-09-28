@@ -58,6 +58,45 @@ describe('db/docs', () => {
     expect(listDocSections(db, { doc_type: 'standalone', status: 'stale' })).toHaveLength(0);
   });
 
+  it('re-upserting a stale doc preserves updated_at (the stale-mark timestamp)', () => {
+    const id = docSectionId('docs/api.md', 'auth');
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h1', doc_type: 'standalone', status: 'stale' });
+    db.prepare("UPDATE doc_sections SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(id);
+
+    // A scan re-observes the (edited) stale doc: content_hash updates, status
+    // stays stale — and updated_at must stay the stale-mark, because the sync
+    // engine's mtime-recovery compares the file mtime against it.
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h2', doc_type: 'standalone' });
+
+    const row = getDocSection(db, id)!;
+    expect(row.content_hash).toBe('h2');
+    expect(row.status).toBe('stale');
+    expect(row.updated_at).toBe('2020-01-01 00:00:00');
+  });
+
+  it('re-upserting an in_sync doc refreshes updated_at', () => {
+    const id = docSectionId('docs/api.md', 'auth');
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h1', doc_type: 'standalone' });
+    db.prepare("UPDATE doc_sections SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(id);
+
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h2', doc_type: 'standalone' });
+
+    const row = getDocSection(db, id)!;
+    expect(row.content_hash).toBe('h2');
+    expect(row.status).toBe('in_sync');
+    expect(row.updated_at > '2020-01-01 00:00:00').toBe(true);
+  });
+
+  it('re-upserting a draft doc preserves updated_at', () => {
+    const id = docSectionId('docs/api.md', 'auth');
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h1', doc_type: 'standalone', status: 'draft' });
+    db.prepare("UPDATE doc_sections SET updated_at = '2020-01-01 00:00:00' WHERE id = ?").run(id);
+
+    upsertDocSection(db, { id, file: 'docs/api.md', anchor: 'auth', content_hash: 'h2', doc_type: 'standalone' });
+
+    expect(getDocSection(db, id)!.updated_at).toBe('2020-01-01 00:00:00');
+  });
+
   it('markDocStale warns and returns false for a missing doc', () => {
     expect(markDocStale(db, 'no-such-doc')).toBe(false);
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('markDocStale called for non-existent doc'));

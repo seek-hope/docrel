@@ -33,6 +33,14 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
   // the row in a single statement. This avoids the TOCTOU race where a
   // concurrent DELETE between the UPSERT and a separate SELECT causes a
   // spurious "was not found after upsert" error.
+  //
+  // updated_at mirrors the status rule for stale/draft docs: it is the
+  // stale-mark timestamp, NOT the last observation time. The sync engine's
+  // standalone mtime-recovery compares the doc file's mtime against
+  // updated_at to decide whether the file was rewritten after staling —
+  // bumping it on every scan (which always re-observes the file) would make
+  // that comparison impossible to satisfy and leave agent-fixed docs
+  // permanently stale (see sync/engine.ts, the standalone 'stale' branch).
   const row = cachedStmt(db, `
     INSERT INTO doc_sections (id, file, anchor, content_hash, doc_type, status)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -42,7 +50,7 @@ export function upsertDocSection(db: Database.Database, input: DocSectionInput):
       content_hash = excluded.content_hash,
       doc_type = excluded.doc_type,
       status = CASE WHEN doc_sections.status IN ('stale', 'draft') THEN doc_sections.status ELSE excluded.status END,
-      updated_at = datetime('now')
+      updated_at = CASE WHEN doc_sections.status IN ('stale', 'draft') THEN doc_sections.updated_at ELSE datetime('now') END
     RETURNING *
   `).get(input.id, input.file, input.anchor ?? '', input.content_hash ?? '', input.doc_type, input.status ?? 'in_sync') as DocSectionRow | undefined;
 
