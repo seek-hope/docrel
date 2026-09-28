@@ -138,10 +138,11 @@ export async function checkForUpdates(currentVersion: string): Promise<string | 
 
     writeCache({ lastCheck: Date.now(), latestVersion: latest });
 
-    if (latest !== currentVersion) {
-      return latest;
-    }
-    return null;
+    // Only report genuinely newer versions. The cached path already enforces
+    // this via isNewer(); the fetch path must too, otherwise a user running
+    // ahead of the registry (e.g. a local build newer than the latest npm
+    // publish) would be told to "update" to an older version.
+    return isNewer(currentVersion, latest) ? latest : null;
   } catch {
     // Network errors, timeouts, etc. — silently ignore
     return null;

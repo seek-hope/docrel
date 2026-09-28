@@ -13,13 +13,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Backup rotation: `doc-relay backup --keep <n>` prunes older `backup-*.db`
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
-- Coverage gate: `npm run coverage` (v8 provider) with baseline thresholds
-  (44/38/50/47) enforced in CI.
+- Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
+  (currently 51/43/58/54) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
 - Type-aware linting (typescript-eslint `recommendedTypeChecked`) and a
   `npm run typecheck` gate covering src and tests; both wired into CI.
+- Test suites for `review`, `watch`, and `update-check` (34 new tests,
+  308 total): implied-reference detection, path-traversal skips, orphan
+  cleanup safety, watcher lifecycle/PID file/stale-on-delete, debounced
+  re-scan, and the update-check cache/registry matrix.
 - `doc-relay mcp` CLI subcommand that starts the MCP server on stdio, so the
   published package can be launched directly from agent MCP configs
   (`npx -y doc-relay mcp`). Previously the MCP server could only be started
@@ -39,6 +43,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Minimum Node.js version is now 22.12 (Node 20 reached EOL in April 2026).
 
 ### Fixed
+- Update check no longer reports an older registry version as an available
+  update when the installed build is ahead of npm (e.g. a locally built
+  pre-release): the fetch path now applies the same `isNewer()` gate as the
+  cached path.
 - Scan and doc-ingest now wrap their per-directory/per-batch database writes
   in a single transaction instead of auto-committing every row — first scan
   of a 10,000-symbol project is ~21% faster (1901ms → 1502ms in
