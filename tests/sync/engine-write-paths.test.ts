@@ -245,6 +245,52 @@ describe('syncSymbol — standalone auto_update write paths', () => {
     expect(doc.content_hash).not.toBe('');
   });
 
+  it('surgically replaces a signature documented in bare form (no declaration prefix)', async () => {
+    // Docs written by humans (and agents) usually quote the bare signature —
+    // `login(user: string): boolean` — without the `export function` prefix
+    // and trailing brace. The recorded old_sig is the full raw form, so the
+    // candidates must include the derived bare form or the replacement never
+    // matches and the doc stays stale forever.
+    fs.writeFileSync(
+      path.join(tmpDir, 'docs', 'api.md'),
+      '## auth\n\n`login(user: string): boolean`\n\nAuthenticates a user.\n',
+      'utf-8',
+    );
+    const docId = linkStandaloneDoc();
+    recordOldSig();
+
+    const result = await syncSymbol(db, makeConfig(), sym, tmpDir);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.docsUpdated).toContain('docs/api.md');
+    const content = fs.readFileSync(path.join(tmpDir, 'docs', 'api.md'), 'utf-8');
+    expect(content).toContain('`login(user: string, pass: string): boolean`');
+    expect(getDocSection(db, docId)!.status).toBe('in_sync');
+  });
+
+  it('warns when a recorded signature change cannot be located in the section', async () => {
+    // A signature change IS recorded for this symbol, but the section quotes
+    // none of the recoverable old forms and the content is unchanged — the
+    // doc must stay stale AND the user must be told why (previously the
+    // failure was completely silent while unchanged co-mapped symbols
+    // spammed rewrite errors).
+    const sectionContent = '## auth\n\nDescribes the login flow in prose only.\n';
+    const docPath = path.join(tmpDir, 'docs', 'api.md');
+    fs.writeFileSync(docPath, sectionContent, 'utf-8');
+    const docId = linkStandaloneDoc();
+    db.prepare('UPDATE doc_sections SET content_hash = ? WHERE id = ?').run(contentHash(sectionContent), docId);
+    recordOldSig();
+    // mtime far in the past — the file was not rewritten by an agent either.
+    const past = new Date(Date.now() - 3_600_000);
+    fs.utimesSync(docPath, past, past);
+
+    const result = await syncSymbol(db, makeConfig(), sym, tmpDir);
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes('could not locate documented signature text for login'))).toBe(true);
+    expect(getDocSection(db, docId)!.status).toBe('stale');
+  });
+
   it('records a sync when an agent already rewrote the section (hash accounting)', async () => {
     // Section already shows the NEW signature — old text is gone, so surgical
     // replacement finds nothing, but the hash differs from the DB record.

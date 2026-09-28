@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
-import { upsertDocSection } from '../../src/db/docs.js';
+import { upsertDocSection, getDocSection } from '../../src/db/docs.js';
 import { createMapping } from '../../src/db/mappings.js';
 import { syncSymbol } from '../../src/sync/engine.js';
 import { findSectionContent } from '../../src/sync/standalone.js';
@@ -393,22 +393,40 @@ describe('syncSymbol error paths', () => {
     expect(result.errors).toHaveLength(0);
   });
 
-  it('reports when a standalone doc with unrecoverable old-signature text cannot be marked stale', async () => {
-    // raw_signature already equals the on-disk signature and there is no
-    // changelog history, so no surgical candidate pairs exist
-    // (surgicalAttempted === false → engine.ts:330 branch). The proxy then
-    // fails markDocStale, hitting the 338 error push — whose message text is
-    // identical to the genuineFailure branch's, so also assert the
-    // branch-specific "Cannot determine old signature text" error.
+  it('reports when an unreadable-signature standalone doc cannot be marked stale', async () => {
+    // The symbol's source file is missing, so the current signature cannot be
+    // extracted (curSig.signature === null → the manual/agent-rewrite error
+    // branch). The proxy then fails markDocStale, hitting the follow-up error
+    // push — whose message text is identical to the genuineFailure branch's,
+    // so also assert the branch-specific auto-update error.
     seedStandaloneHappy();
+    fs.rmSync(path.join(tmpDir, 'src', 'auth.ts'));
     const result = await syncSymbol(
       proxyDb(db, "SET status = 'stale'"),
       makeConfig({ standalone: 'auto_update' }),
       sym,
       tmpDir,
     );
-    expect(result.errors.some((e) => e.includes('Cannot determine old signature text'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('Cannot auto-update standalone doc'))).toBe(true);
     expect(result.errors.some((e) => e.includes('Failed to mark standalone doc') && e.includes('as stale'))).toBe(true);
+  });
+
+  it('skips silently when the symbol has no recorded signature change', async () => {
+    // raw_signature already equals the on-disk signature and there is no
+    // changelog history → this symbol has nothing to propagate; the doc was
+    // staled by something else (another co-mapped symbol, or externally).
+    // Previously this emitted a spurious "requires manual/agent rewrite"
+    // error and re-staled the doc on every sync run.
+    seedStandaloneHappy();
+    const docId = docSectionId('docs/api.md', 'auth');
+    const result = await syncSymbol(db, makeConfig({ standalone: 'auto_update' }), sym, tmpDir);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toHaveLength(0);
+    expect(result.docsStaled).toHaveLength(0);
+    expect(result.docsUpdated).toHaveLength(0);
+    // The doc's status is left to whatever staled it; the file is untouched.
+    expect(getDocSection(db, docId)!.status).toBe('stale');
+    expect(fs.readFileSync(path.join(tmpDir, 'docs', 'api.md'), 'utf-8')).toContain('login(user: string): boolean');
   });
 
   it('reports inline sync for a non-numeric line number', async () => {

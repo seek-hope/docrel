@@ -115,14 +115,14 @@ describe('syncSymbol — strategy branches', () => {
     expect(getDocSection(db, docId)!.status).toBe('stale');
   });
 
-  it('fails standalone auto_update when the old signature text is unrecoverable', async () => {
+  it('fails standalone auto_update when the current signature cannot be read', async () => {
     fs.writeFileSync(path.join(tmpDir, 'docs', 'api.md'), '## auth\n\ndocs here\n', 'utf-8');
     const docId = linkDoc('docs/api.md', 'auth', 'standalone');
     // Symbol location file does not exist → current signature cannot be read,
     // and no changelog/raw_signature candidates exist → surgical impossible.
     const result = await syncSymbol(db, makeConfig({ standalone: 'auto_update' }), sym, tmpDir);
 
-    expect(result.errors.some((e) => e.includes('Cannot determine old signature text'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('Cannot auto-update standalone doc'))).toBe(true);
     expect(result.warnings.some((w) => w.includes('requires manual/agent rewrite'))).toBe(true);
     expect(getDocSection(db, docId)!.status).toBe('stale');
   });
@@ -275,5 +275,71 @@ describe('syncAllStale', () => {
     // re-read / re-strip / re-split the file.
     expect(cache.size).toBe(1);
     expect([...cache.keys()][0].endsWith(path.join('src', 'shared.ts'))).toBe(true);
+  });
+
+  it('does not error or re-stale sections for co-mapped symbols whose signature did not change', async () => {
+    // Realistic mixed graph: sections 'Login flow' and 'Session refresh' are
+    // both mapped to the UNCHANGED `Session` interface; 'Login flow' is also
+    // mapped to `authenticate`, whose signature genuinely changed (and the doc
+    // quotes it in bare form, without the `export function` prefix). Sync must
+    // update the changed symbol's text while leaving the unchanged symbol —
+    // and the in_sync 'Session refresh' section — completely alone. Previously
+    // every unchanged co-mapped symbol produced a spurious "requires
+    // manual/agent rewrite" error AND dragged its in_sync sections into the
+    // stale set, so staleness metastasized across sync runs.
+    fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'src', 'auth.ts'),
+      'export interface Session { token: string; }\n\nexport function authenticate(username: string, password: string, mfaCode?: string): Session {\n  return { token: username };\n}\n',
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'docs', 'auth.md'),
+      '# Auth\n\n## Login flow\n\n`authenticate(username: string, password: string): Session`\n\n## Session refresh\n\nUses `Session` objects.\n',
+      'utf-8',
+    );
+
+    const symAuth = symbolId('typescript', 'src/auth.ts::authenticate', 'function');
+    const symSess = symbolId('typescript', 'src/auth.ts::Session', 'interface');
+    upsertSymbol(db, {
+      id: symAuth, name: 'authenticate', kind: 'function', location: 'src/auth.ts:3',
+      raw_signature: 'export function authenticate(username: string, password: string, mfaCode?: string): Session {',
+    });
+    upsertSymbol(db, {
+      id: symSess, name: 'Session', kind: 'interface', location: 'src/auth.ts:1',
+      raw_signature: 'export interface Session { token: string; }',
+    });
+    const login = docSectionId('docs/auth.md', 'Login flow');
+    const refresh = docSectionId('docs/auth.md', 'Session refresh');
+    upsertDocSection(db, { id: login, file: 'docs/auth.md', anchor: 'Login flow', doc_type: 'standalone', status: 'stale' });
+    upsertDocSection(db, { id: refresh, file: 'docs/auth.md', anchor: 'Session refresh', doc_type: 'standalone', status: 'in_sync' });
+    createMapping(db, { symbol_id: symAuth, doc_id: login, rel_type: 'describes' });
+    createMapping(db, { symbol_id: symSess, doc_id: login, rel_type: 'describes' });
+    createMapping(db, { symbol_id: symSess, doc_id: refresh, rel_type: 'describes' });
+    // The recorded signature change that staled 'Login flow'.
+    db.prepare(
+      "INSERT INTO changelog (symbol_id, change_type, old_sig, new_sig) VALUES (?, 'signature_changed', ?, ?)",
+    ).run(
+      symAuth,
+      'export function authenticate(username: string, password: string): Session {',
+      'export function authenticate(username: string, password: string, mfaCode?: string): Session {',
+    );
+
+    const out = await syncAllStale(db, fakeCodegraph, makeConfig({ standalone: 'auto_update' }), tmpDir);
+
+    expect(out.totalStale).toBe(1);
+    const byId = new Map(out.synced.map((r) => [r.symbolId, r]));
+    // Changed symbol: the bare-form candidate updates the doc, no errors.
+    expect(byId.get(symAuth)!.errors).toHaveLength(0);
+    expect(byId.get(symAuth)!.docsUpdated).toContain('docs/auth.md');
+    // Unchanged co-mapped symbol: no spurious rewrite error, nothing re-staled.
+    expect(byId.get(symSess)!.errors).toHaveLength(0);
+    expect(byId.get(symSess)!.docsStaled).toHaveLength(0);
+    const after = fs.readFileSync(path.join(tmpDir, 'docs', 'auth.md'), 'utf-8');
+    expect(after).toContain('authenticate(username: string, password: string, mfaCode?: string): Session');
+    // 'Login flow' is back in sync; 'Session refresh' was never dragged in.
+    expect(getDocSection(db, login)!.status).toBe('in_sync');
+    expect(getDocSection(db, refresh)!.status).toBe('in_sync');
   });
 });

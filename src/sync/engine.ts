@@ -257,9 +257,27 @@ export async function syncSymbol(
               //  2. symbol.raw_signature, when it still holds the pre-change
               //     signature (pre-scan state).
               // For each candidate, try both the full form (with trailing
-              // `{`/`=>`/`;`) and the stripped declaration form, since docs
-              // commonly show the signature without the opening brace.
-              const stripTail = (s: string) => s.replace(/\s*(\{|=>|;)\s*$/, '').trim();
+              // `{`/`=>`/`;`/`:`, the last for Python) and the stripped
+              // declaration form, since docs commonly show the signature
+              // without the opening brace.
+              const stripTail = (s: string) => s.replace(/\s*(\{|=>|;|:)\s*$/, '').trim();
+              // Docs are usually written in "bare" form — `login(user: string):
+              // boolean` — without the `export function` / `async def` /
+              // `pub fn` / `func (r *T)` declaration prefix. Derive that form
+              // by cutting everything before the symbol name, but only when
+              // the prefix looks like declaration modifiers: prefixes
+              // containing `=`, braces, quotes, … mean the name match is not
+              // a declaration (e.g. inside a default value or string).
+              const bareOf = (s?: string | null): string | null => {
+                if (!s) return null;
+                const m = new RegExp(`(^|[^\\w$])${escapeRegex(symbol.name)}(?![\\w$])`).exec(s);
+                if (!m) return null;
+                const idx = m.index + m[1].length;
+                if (idx === 0) return null; // already bare — the full-form pair covers it
+                const prefix = s.slice(0, idx);
+                if (/[=;{}"'`#/\\]/.test(prefix)) return null;
+                return s.slice(idx);
+              };
               const pairs: Array<{ oldText: string; newText: string }> = [];
               const pushPair = (o?: string | null, n?: string | null) => {
                 if (!o || !n || o === n) return;
@@ -274,8 +292,13 @@ export async function syncSymbol(
                 const chgs = db.prepare(
                   "SELECT DISTINCT old_sig FROM changelog WHERE symbol_id = ? AND change_type = 'signature_changed' ORDER BY timestamp DESC LIMIT 5"
                 ).all(symbol.id) as Array<{ old_sig: string }>;
-                for (const c of chgs) pushPair(c.old_sig, curSig.signature);
+                const bareNew = bareOf(curSig.signature);
+                for (const c of chgs) {
+                  pushPair(c.old_sig, curSig.signature);
+                  pushPair(bareOf(c.old_sig), bareNew);
+                }
                 pushPair(symbol.raw_signature, curSig.signature);
+                pushPair(bareOf(symbol.raw_signature), bareNew);
               }
 
               const surgicalAttempted = pairs.length > 0;
@@ -322,10 +345,23 @@ export async function syncSymbol(
               }
 
               if (!surgicalAttempted) {
-                // Cannot determine the old signature text — do NOT silently
-                // succeed. Flag it as requiring a manual/agent rewrite.
-                result.errors.push(`Cannot determine old signature text for standalone auto_update of ${symbol.name} in ${relPath(doc.file, projectRoot)} (section '${doc.anchor}') — requires manual/agent rewrite`);
-                result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: requires manual/agent rewrite (old signature text not recoverable).`);
+                if (curSig.signature !== null) {
+                  // This symbol has a live signature and no recorded signature
+                  // difference (no changelog history; raw_signature already
+                  // current) — the doc was staled by another co-mapped symbol
+                  // or externally, and there is nothing for THIS symbol to
+                  // propagate. Skip silently: emitting a rewrite error here
+                  // (and re-staling the section) produced pure noise for every
+                  // unchanged symbol co-mapped to a stale doc, and could drag
+                  // previously in_sync sections into the stale set.
+                  break;
+                }
+                // The current signature cannot be read at all (symbol deleted
+                // from source, file missing, extraction failure) — the doc
+                // genuinely cannot be auto-updated. Flag it as requiring a
+                // manual/agent rewrite rather than silently succeeding.
+                result.errors.push(`Cannot auto-update standalone doc for ${symbol.name} in ${relPath(doc.file, projectRoot)} (section '${doc.anchor}'): ${curSig.reason ?? 'could not extract current signature'} — requires manual/agent rewrite`);
+                result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)}: requires manual/agent rewrite (current signature unreadable).`);
                 if (markDocStale(db, doc.id)) {
                   result.docsStaled.push(doc.file);
                 } else {
@@ -389,6 +425,15 @@ export async function syncSymbol(
                   } else {
                     result.errors.push(`Failed to mark standalone doc ${doc.id} as synced — doc may have been deleted concurrently`);
                   }
+                } else {
+                  // Reaching here means candidate pairs existed — i.e. there
+                  // IS a recorded signature difference for this symbol — but
+                  // none of the old forms appear in the section, the content
+                  // is unchanged, and the file was not rewritten. The
+                  // documented text is in a form we cannot recover (or the
+                  // section was restructured). Surface that explicitly
+                  // instead of leaving the doc stale with no signal.
+                  result.warnings.push(`Standalone doc ${relPath(doc.file, projectRoot)} (section '${doc.anchor}'): could not locate documented signature text for ${symbol.name} — left stale for manual/agent update`);
                 }
               }
             } else {

@@ -246,7 +246,7 @@ describe('extractCurrentSignature — failure guards (via standalone sync)', () 
     createMapping(db, { symbol_id: id, doc_id: docId, rel_type: 'describes' });
 
     const result = await syncSymbol(db, config, id, tmpDir);
-    expect(result.errors.some((e) => e.includes('Cannot determine old signature text'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('Cannot auto-update standalone doc'))).toBe(true);
     return result;
   }
 
