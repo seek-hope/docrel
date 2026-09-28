@@ -63,6 +63,33 @@ doc-relay scan                # Rescan codebase
 \`\`\`
 `;
 
+// ── AGENTS.md section (Codex) ────────────────────────────────────────
+// Codex reads AGENTS.md (project-root chain + ~/.codex/AGENTS.md) — NOT
+// .claude/CODEX.md. The section is workflow prose (no Claude hook names).
+const CODEX_DOCRELAY_SECTION = `
+
+## DocRelay — Code-Documentation Sync
+
+DocRelay tracks code symbols and their linked documentation, keeping everything
+in sync as the codebase evolves.
+
+- At session start, run \`doc-relay status\` to see documentation health.
+- After code changes, run \`doc-relay impact <file>\` to check affected docs.
+- Run \`doc-relay check --strict\` before committing to catch stale docs.
+- Prefer the \`docrelay_*\` MCP tools when connected (status, check, impact,
+  sync, scan, review) over shelling out.
+
+### CLI Quick Reference
+\`\`\`
+doc-relay status              # Health dashboard
+doc-relay check               # Find stale docs
+doc-relay check --strict      # Exit 1 if any stale docs
+doc-relay impact src/foo.ts   # What docs are affected?
+doc-relay sync --symbol <id>  # Sync docs for a symbol
+doc-relay scan                # Rescan codebase
+\`\`\`
+`;
+
 // ── OPENCODE.md section ──────────────────────────────────────────────
 const OPENCODE_DOCRELAY_SECTION = `
 
@@ -262,6 +289,67 @@ function upsertMcpJson(projectRoot: string): boolean {
 }
 
 // ── Per-agent integration ────────────────────────────────────────────
+
+/** Idempotency probe for an existing [mcp_servers.docrelay] TOML table. */
+const CODEX_MCP_TABLE_RE = /^\s*\[mcp_servers\.docrelay\]\s*$/m;
+
+const CODEX_MCP_TOML_BLOCK = `[mcp_servers.docrelay]
+command = "npx"
+args = ["-y", "doc-relay", "mcp"]
+`;
+
+/**
+ * Codex integration. Codex reads AGENTS.md for instructions and
+ * .codex/config.toml ([mcp_servers.<name>] TOML tables) for MCP servers —
+ * NOT .claude/CODEX.md and NOT .mcp.json (those are Claude Code/Cursor
+ * conventions an earlier DocRelay version mistakenly used for Codex).
+ */
+function integrateCodex(projectRoot: string, dryRun: boolean): IntegrationResult {
+  const files: string[] = [];
+  const notes: string[] = [];
+  const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
+  const rulesPath = path.join(projectRoot, 'AGENTS.md');
+  const codexDir = path.join(projectRoot, '.codex');
+  const tomlPath = path.join(codexDir, 'config.toml');
+
+  if (!dryRun) {
+    const added = appendToRulesFile(rulesPath, CODEX_DOCRELAY_SECTION, SECTION_MARKER);
+    if (added) files.push(rulesPath);
+
+    const existingToml = readFileWithSizeLimit(tomlPath) ?? '';
+    if (!CODEX_MCP_TABLE_RE.test(existingToml)) {
+      fs.mkdirSync(codexDir, { recursive: true });
+      // Appending a complete [table] block at EOF is always valid TOML:
+      // a table header starts a fresh table regardless of what precedes it.
+      const sep = existingToml.length === 0 ? '' : existingToml.endsWith('\n') ? '\n' : '\n\n';
+      fs.writeFileSync(tomlPath, existingToml + sep + CODEX_MCP_TOML_BLOCK, 'utf-8');
+      files.push(tomlPath);
+    }
+  } else {
+    const existing = readFileWithSizeLimit(rulesPath);
+    if (existing === null || !existing.includes(SECTION_MARKER)) files.push(rulesPath);
+    const existingToml = readFileWithSizeLimit(tomlPath) ?? '';
+    if (!CODEX_MCP_TABLE_RE.test(existingToml)) files.push(tomlPath);
+  }
+
+  // Migration aid: an earlier DocRelay wrote .claude/CODEX.md for Codex —
+  // a file Codex never reads. Point it out instead of silently leaving it.
+  const legacyPath = path.join(projectRoot, '.claude', 'CODEX.md');
+  if (fs.existsSync(legacyPath)) {
+    const legacy = readFileWithSizeLimit(legacyPath);
+    if (legacy && legacy.includes(SECTION_MARKER)) {
+      notes.push('legacy .claude/CODEX.md (from an older DocRelay) is not read by Codex — safe to delete');
+    }
+  }
+
+  const rel = (f: string) => path.relative(projectRoot, f);
+  const wrote = files.length > 0 ? files.map(rel).join(', ') : 'already integrated';
+  return {
+    agent: 'codex',
+    filesCreated: files,
+    summary: [wrote, ...notes].join(' — '),
+  };
+}
 
 function integrateClaudeCode(
   projectRoot: string,
@@ -505,7 +593,7 @@ export async function integrate(
     case 'claude-code':
       return integrateClaudeCode(resolved, dryRun);
     case 'codex':
-      return integrateClaudeCode(resolved, dryRun, 'codex', 'CODEX.md');
+      return integrateCodex(resolved, dryRun);
     case 'opencode':
       return integrateOpenCode(resolved, dryRun);
     case 'oh-my-pi':

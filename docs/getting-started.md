@@ -33,14 +33,17 @@ cd your-project
 doc-relay init
 ```
 
-`init` performs five steps:
+`init` performs these steps:
 
-1. Writes `.docrelay/config.yaml` (edit `doc_dirs`/`code_dirs` if needed)
-2. Creates the SQLite database at `.git/docrelay.db`
-3. Installs git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
-4. Detects your AI coding agent and writes its DocRelay integration
-   (`.mcp.json`, rules files) — skip with `--no-integrate`
-5. Runs the first scan of code symbols and documentation
+1. Creates the `.docrelay/` directory
+2. Writes `.docrelay/config.yaml` (edit `doc_dirs`/`code_dirs` if needed)
+3. Creates the SQLite database at `.git/docrelay.db`
+4. Installs git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
+5. Detects your AI coding agent and writes its DocRelay integration in the
+   agent's own format (`.mcp.json` + rules file, or `.codex/config.toml` +
+   `AGENTS.md` for Codex) — skip with `--no-integrate`
+6. Runs the first scan of code symbols
+7. Runs the first scan of documentation and auto-links
 
 ## The daily loop
 

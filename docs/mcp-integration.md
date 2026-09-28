@@ -10,14 +10,16 @@ doc-relay integrate
 ```
 
 This auto-detects your agent (Claude Code, Codex, Cursor, OpenCode, Hermes,
-Gemini, Antigravity, Kiro, Oh My Pi) and writes the right configuration:
-an entry in `.mcp.json` plus a DocRelay section in your agent's rules file
-(`CLAUDE.md`, `AGENTS.md`, etc.). Use `--list` to see what was detected and
-`--dry-run` to preview.
+Gemini, Antigravity, Kiro, Oh My Pi) and writes the right configuration in
+the agent's own format: `.mcp.json` for JSON-based agents (Claude Code,
+Cursor, Gemini, ...) or a `[mcp_servers.docrelay]` table in
+`.codex/config.toml` for Codex — plus a DocRelay section in the agent's
+rules file (`CLAUDE.md`, `AGENTS.md`, etc.). Use `--list` to see what was
+detected and `--dry-run` to preview.
 
 ## Manual setup
 
-Add this to your agent's MCP configuration (e.g. `.mcp.json` for Claude Code):
+Add this to your agent's MCP configuration (`.mcp.json` for Claude Code):
 
 ```json
 {
@@ -31,6 +33,15 @@ Add this to your agent's MCP configuration (e.g. `.mcp.json` for Claude Code):
     }
   }
 }
+```
+
+For Codex, add the equivalent TOML table to `.codex/config.toml` (project)
+or `~/.codex/config.toml` (global), and the workflow section to `AGENTS.md`:
+
+```toml
+[mcp_servers.docrelay]
+command = "npx"
+args = ["-y", "doc-relay", "mcp"]
 ```
 
 Notes:

@@ -158,13 +158,82 @@ describe('integrate', () => {
     expect(docrelayEntries.length).toBe(1);
   });
 
-  // ── codex (uses claude-code integration) ─────────────────────────
+  // ── codex (AGENTS.md + .codex/config.toml — Codex's own conventions) ──
 
-  it('handles codex the same as claude-code', async () => {
+  it('writes AGENTS.md and .codex/config.toml for codex (not .claude/CODEX.md or .mcp.json)', async () => {
     const result = await integrate(tmpDir, 'codex', false);
-    expect(result.agent).toBe('codex'); // codex gets its own identity
-    const codexPath = path.join(tmpDir, '.claude', 'CODEX.md');
-    expect(fs.existsSync(codexPath)).toBe(true);
+    expect(result.agent).toBe('codex');
+
+    // Codex reads AGENTS.md, never .claude/CODEX.md.
+    const agentsPath = path.join(tmpDir, 'AGENTS.md');
+    expect(fs.existsSync(agentsPath)).toBe(true);
+    const agents = fs.readFileSync(agentsPath, 'utf-8');
+    expect(agents).toContain('## DocRelay — Code-Documentation Sync');
+    expect(agents).toContain('doc-relay status');
+    expect(fs.existsSync(path.join(tmpDir, '.claude', 'CODEX.md'))).toBe(false);
+
+    // Codex MCP servers live in .codex/config.toml as TOML, not .mcp.json.
+    const tomlPath = path.join(tmpDir, '.codex', 'config.toml');
+    expect(fs.existsSync(tomlPath)).toBe(true);
+    const toml = fs.readFileSync(tomlPath, 'utf-8');
+    expect(toml).toContain('[mcp_servers.docrelay]');
+    expect(toml).toContain('command = "npx"');
+    expect(toml).toContain('args = ["-y", "doc-relay", "mcp"]');
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('codex integration is idempotent', async () => {
+    await integrate(tmpDir, 'codex', false);
+    const second = await integrate(tmpDir, 'codex', false);
+    expect(second.filesCreated).toEqual([]);
+    expect(second.summary).toContain('already integrated');
+    // Exactly one DocRelay section and one TOML table.
+    const agents = fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(agents.split('## DocRelay — Code-Documentation Sync')).toHaveLength(2);
+    const toml = fs.readFileSync(path.join(tmpDir, '.codex', 'config.toml'), 'utf-8');
+    expect(toml.split('[mcp_servers.docrelay]')).toHaveLength(2);
+  });
+
+  it('codex integration appends to existing AGENTS.md and .codex/config.toml without disturbing them', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), '# My Project\n\nExisting rules.\n', 'utf-8');
+    fs.mkdirSync(path.join(tmpDir, '.codex'), { recursive: true });
+    // No trailing newline on purpose — the TOML block must still be separated.
+    fs.writeFileSync(path.join(tmpDir, '.codex', 'config.toml'), 'model = "gpt-5"', 'utf-8');
+
+    await integrate(tmpDir, 'codex', false);
+    const agents = fs.readFileSync(path.join(tmpDir, 'AGENTS.md'), 'utf-8');
+    expect(agents).toContain('# My Project');
+    expect(agents).toContain('Existing rules.');
+    expect(agents).toContain('## DocRelay — Code-Documentation Sync');
+
+    const toml = fs.readFileSync(path.join(tmpDir, '.codex', 'config.toml'), 'utf-8');
+    expect(toml).toContain('model = "gpt-5"');
+    expect(toml).toContain('[mcp_servers.docrelay]');
+    // The existing key stays in the top-level table (block starts on a new line).
+    expect(toml.indexOf('model = "gpt-5"')).toBeLessThan(toml.indexOf('[mcp_servers.docrelay]'));
+  });
+
+  it('codex dry-run predicts AGENTS.md and .codex/config.toml without writing', async () => {
+    const result = await integrate(tmpDir, 'codex', true);
+    expect(result.filesCreated).toEqual([
+      path.join(tmpDir, 'AGENTS.md'),
+      path.join(tmpDir, '.codex', 'config.toml'),
+    ]);
+    expect(fs.existsSync(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.codex', 'config.toml'))).toBe(false);
+  });
+
+  it('codex integration notes a legacy .claude/CODEX.md from an older DocRelay', async () => {
+    fs.mkdirSync(path.join(tmpDir, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'CODEX.md'),
+      '## DocRelay — Code-Documentation Sync\nold content\n',
+      'utf-8',
+    );
+    const result = await integrate(tmpDir, 'codex', false);
+    expect(result.summary).toContain('legacy .claude/CODEX.md');
+    // We point it out but do not delete the user's file.
+    expect(fs.existsSync(path.join(tmpDir, '.claude', 'CODEX.md'))).toBe(true);
   });
 });
 

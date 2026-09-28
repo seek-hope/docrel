@@ -75,7 +75,7 @@ const AGENT_REGISTRY: AgentDef[] = [
     envVars: ['CODEX_SESSION', 'CODEX_SESSION_ID'],
     mcp: true,
     hooks: true,
-    rulesFile: 'CODEX.md',
+    rulesFile: 'AGENTS.md',
     globalPaths: ['.codex'],
     localPaths: ['.codex'],
   },
