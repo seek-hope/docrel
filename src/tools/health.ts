@@ -8,7 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ErrorCode, logError, docrelayError } from '../utils/error-codes.js';
 import { assertDbOpen } from '../db/connection.js';
+import { SCHEMA_VERSION } from '../db/schema.js';
 import { parseLastScanAt } from '../discovery/scanner.js';
+import { loadConfig, validateConfig } from '../utils/config.js';
+import { resolveGitDir } from '../git/hooks.js';
 
 export interface HealthReport {
   healthy: boolean;
@@ -79,13 +82,29 @@ export async function docrelayHealth(
     }
   });
 
-  // 2. DocRelay config existence
+  // 2. DocRelay config: exists, parses, and validates
   await run('config', async () => {
     const configPath = path.join(projectRoot, '.docrelay', 'config.yaml');
-    if (fs.existsSync(configPath)) {
-      return { name: 'config', status: 'ok', message: '.docrelay/config.yaml found' };
+    if (!fs.existsSync(configPath)) {
+      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docrelay/config.yaml not found — run docrelay init' } as HealthCheck;
     }
-    return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_MISSING, message: '.docrelay/config.yaml not found — run docrelay init' };
+    try {
+      const cfg = loadConfig(projectRoot);
+      const issues = validateConfig(cfg, projectRoot);
+      const errs = issues.filter((i) => i.severity === 'error');
+      if (errs.length > 0) {
+        return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_INVALID, message: `${errs.length} config error(s): ${errs[0]!.message} — run docrelay config validate` } as HealthCheck;
+      }
+      if (issues.length > 0) {
+        return { name: 'config', status: 'degraded', message: `${issues.length} config warning(s): ${issues[0]!.message}` } as HealthCheck;
+      }
+      return { name: 'config', status: 'ok', message: '.docrelay/config.yaml found and valid' } as HealthCheck;
+    } catch (err: any) {
+      // Log the full error so operators can diagnose; the client message
+      // stays generic (parse errors may embed absolute paths).
+      console.error('Config parse failed:', err instanceof Error ? err.message : err);
+      return { name: 'config', status: 'failed', code: ErrorCode.CONFIG_PARSE_FAILED, message: 'config.yaml failed to parse — run docrelay config validate for details' } as HealthCheck;
+    }
   });
 
   // 3. .docrelay/ directory writable
@@ -99,7 +118,35 @@ export async function docrelayHealth(
     }
   });
 
-  // 4. Codegraph availability (with 5s timeout to prevent hangs)
+  // 4. Database file writable (the DB lives in the git dir — a read-only
+  // .git, e.g. in restricted CI checkouts, fails every write)
+  await run('db_writable', async () => {
+    // better-sqlite3 exposes the open database file path as .name.
+    const dbFile = (db as unknown as { name?: string }).name ?? '';
+    try {
+      fs.accessSync(dbFile, fs.constants.W_OK);
+      // WAL sidecar files (-wal/-shm) are created in the same directory.
+      fs.accessSync(path.dirname(dbFile), fs.constants.W_OK);
+      return { name: 'db_writable', status: 'ok', message: 'Database file is writable' } as HealthCheck;
+    } catch {
+      return { name: 'db_writable', status: 'failed', code: ErrorCode.FS_PERMISSION_DENIED, message: 'Database file or its directory is read-only — check permissions (the DB usually lives in the git dir)' } as HealthCheck;
+    }
+  });
+
+  // 5. Schema version (a newer-than-supported DB fails cryptically
+  // elsewhere; report it explicitly with remediation)
+  await run('schema_version', async () => {
+    const v = db.pragma('user_version', { simple: true }) as number;
+    if (v > SCHEMA_VERSION) {
+      return { name: 'schema_version', status: 'failed', code: ErrorCode.INTERNAL_UNEXPECTED, message: `Database schema v${v} is newer than this DocRelay supports (v${SCHEMA_VERSION}) — upgrade DocRelay` } as HealthCheck;
+    }
+    if (v < SCHEMA_VERSION) {
+      return { name: 'schema_version', status: 'degraded', message: `Database schema v${v} is outdated (current v${SCHEMA_VERSION}) — migrations run automatically on the next command` } as HealthCheck;
+    }
+    return { name: 'schema_version', status: 'ok', message: `Schema v${v} (current)` } as HealthCheck;
+  });
+
+  // 6. Codegraph availability (with 5s timeout to prevent hangs)
   await run('codegraph', async () => {
     const start = Date.now();
     let timer: NodeJS.Timeout | undefined;
@@ -171,6 +218,36 @@ export async function docrelayHealth(
       }
     }
     return { name: 'last_scan', status: 'degraded', message: 'Never scanned — run docrelay scan' };
+  });
+
+  // 9. Pending changelog entries awaiting sync
+  await run('pending_changes', async () => {
+    const pending = (db.prepare("SELECT COUNT(*) AS c FROM changelog WHERE sync_status = 'pending'").get() as { c: number }).c;
+    if (pending === 0) return { name: 'pending_changes', status: 'ok', message: 'No pending changes' } as HealthCheck;
+    return { name: 'pending_changes', status: 'degraded', message: `${pending} change(s) awaiting sync — run docrelay sync` } as HealthCheck;
+  });
+
+  // 10. Git hooks installed and executable
+  await run('hooks', async () => {
+    const preCommit = path.join(resolveGitDir(projectRoot), 'hooks', 'pre-commit');
+    try {
+      fs.accessSync(preCommit, fs.constants.X_OK);
+      return { name: 'hooks', status: 'ok', message: 'Git hooks installed' } as HealthCheck;
+    } catch {
+      return { name: 'hooks', status: 'degraded', message: 'Git hooks not installed (or not executable) — run docrelay install-hooks' } as HealthCheck;
+    }
+  });
+
+  // 11. Orphaned mappings (integrity drift a gc run would clean up)
+  await run('orphan_mappings', async () => {
+    const orphans = (db.prepare(`
+      SELECT COUNT(*) AS c FROM mappings m
+      LEFT JOIN symbols s ON s.id = m.symbol_id
+      LEFT JOIN doc_sections d ON d.id = m.doc_id
+      WHERE s.id IS NULL OR d.id IS NULL
+    `).get() as { c: number }).c;
+    if (orphans === 0) return { name: 'orphan_mappings', status: 'ok', message: 'No orphaned mappings' } as HealthCheck;
+    return { name: 'orphan_mappings', status: 'degraded', message: `${orphans} mapping(s) reference missing symbols or docs — run docrelay gc` } as HealthCheck;
   });
 
   // Aggregate results and log failures

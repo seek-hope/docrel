@@ -27,8 +27,12 @@ gemini, antigravity, kiro, oh-my-pi) and write its DocRelay configuration
 Health dashboard: symbol count, linked %, stale doc count, watch state.
 
 ### `health [--format json|markdown]`
-8-point system check: config validity, DB readability/writability, git hooks,
-codegraph availability, scan freshness, and more. Exits 1 when unhealthy.
+13-point system check: config existence/parse/validation, DB queryability and
+file/directory writability, schema version (a newer-than-supported database
+fails with upgrade guidance), codegraph availability, symbol/doc counts,
+stale-doc ratio, scan freshness, pending unsynced changes, git-hook
+installation, and orphaned-mapping integrity (with `gc` guidance). Each
+failing check includes its remediation command. Exits 1 when unhealthy.
 
 ### `check [--strict] [--file <file>] [--format json|markdown|ci|shields]`
 List stale documentation sections. `--strict` exits 1 when anything is stale

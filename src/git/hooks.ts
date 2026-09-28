@@ -22,11 +22,14 @@ export function prepareCommitMsg(db: Database.Database): string {
 }
 
 
-export function installHooks(projectRoot: string, force = false): void {
-  // Resolve the real git directory (handles worktrees where .git is a file).
-  // In a worktree, .git is a file containing 'gitdir: <path>' pointing to
-  // the main repo's .git/worktrees/<name>. We need the MAIN .git directory
-  // for hooks (shared across worktrees), not the worktree-specific one.
+/**
+ * Resolve the real git directory (handles worktrees where .git is a file).
+ * In a worktree, .git is a file containing 'gitdir: <path>' pointing to
+ * the main repo's .git/worktrees/<name>. We need the MAIN .git directory
+ * for hooks (shared across worktrees), not the worktree-specific one.
+ * Falls back to `<projectRoot>/.docrelay` when no usable git dir exists.
+ */
+export function resolveGitDir(projectRoot: string): string {
   const gitPath = path.join(projectRoot, '.git');
   let gitDir = gitPath;
 
@@ -72,7 +75,11 @@ export function installHooks(projectRoot: string, force = false): void {
     }
   } catch { gitDir = path.join(projectRoot, '.docrelay'); }
 
-  const hooksDir = path.join(gitDir, 'hooks');
+  return gitDir;
+}
+
+export function installHooks(projectRoot: string, force = false): void {
+  const hooksDir = path.join(resolveGitDir(projectRoot), 'hooks');
   try {
     fs.mkdirSync(hooksDir, { recursive: true });
   } catch (err: any) {
