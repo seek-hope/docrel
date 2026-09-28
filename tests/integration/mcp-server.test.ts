@@ -210,6 +210,49 @@ describe('MCP server (in-process)', () => {
     expect(health.healthy).toBe(true);
   });
 
+  it('scan and refresh strip the internal scannedIds array from responses', async () => {
+    const scan = JSON.parse(textOf(await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } }))) as
+      { symbols: Record<string, unknown> };
+    expect(scan.symbols).not.toHaveProperty('scannedIds');
+
+    const refresh = JSON.parse(textOf(await client.callTool({ name: 'docrelay_refresh', arguments: { full: true } }))) as
+      { symbols: Record<string, unknown> };
+    expect(refresh.symbols).not.toHaveProperty('scannedIds');
+  });
+
+  it('refresh(full) delta-filters docs: a no-change poll ingests and links nothing', async () => {
+    await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } });
+
+    // Age source and doc files past the 1s mtime tolerance so both the
+    // incremental symbol scan and the docs-pipeline delta filter treat
+    // them as unchanged since the full scan above.
+    const past = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(tmpDir, 'src', 'auth.ts'), past, past);
+    fs.utimesSync(path.join(tmpDir, 'docs', 'api.md'), past, past);
+
+    const refresh = JSON.parse(textOf(await client.callTool({ name: 'docrelay_refresh', arguments: { full: true } }))) as
+      { symbols: { totalSymbols: number }; docs: { totalSections: number; newDocSections: number }; autoLink: { totalMatched: number } };
+    expect(refresh.symbols.totalSymbols).toBe(0);
+    expect(refresh.docs.totalSections).toBeGreaterThanOrEqual(2);
+    expect(refresh.docs.newDocSections).toBe(0);
+    expect(refresh.autoLink.totalMatched).toBe(0);
+  });
+
+  it('refresh(full) picks up changed docs without re-ingesting unchanged ones', async () => {
+    await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } });
+
+    fs.writeFileSync(
+      path.join(tmpDir, 'docs', 'api.md'),
+      '# API\n\n## login\n\nAuthenticates a user via login.\n\n## logout\n\nEnds the session.\n',
+      'utf-8',
+    );
+
+    const refresh = JSON.parse(textOf(await client.callTool({ name: 'docrelay_refresh', arguments: { full: true } }))) as
+      { docs: { totalSections: number; newDocSections: number } };
+    expect(refresh.docs.totalSections).toBe(3);
+    expect(refresh.docs.newDocSections).toBe(1); // only the new logout section
+  });
+
   it('review cleanup removes orphaned sections through the MCP path', async () => {
     await client.callTool({ name: 'docrelay_scan', arguments: { docs: true } });
     // Orphan a doc section: delete its file from disk.

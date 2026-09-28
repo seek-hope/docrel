@@ -33,6 +33,15 @@ export function parseLastScanAt(value: string): number | undefined {
   return isNaN(ms) ? undefined : ms;
 }
 
+/** Read the stored `last_scan_at` watermark as a UTC epoch (ms), or undefined
+ *  when it is missing or unparsable. Callers that need the PREVIOUS scan time
+ *  must read this BEFORE scanProject runs — scanProject overwrites the
+ *  watermark at the end of the symbol scan. */
+export function readLastScanAt(db: Database.Database): number | undefined {
+  const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
+  return row?.value ? parseLastScanAt(row.value) : undefined;
+}
+
 /** Escape :: in FQN components to prevent symbol ID collisions. */
 function escFqn(s: string): string {
   return s.replace(/::/g, '%3A%3A');
@@ -76,11 +85,7 @@ export async function scanProject(
 
   // Read last scan timestamp for incremental scanning. When fullScan is false,
   // only re-scan files with mtime > last scan time.
-  const since = fullScan ? undefined : (() => {
-    const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
-    if (row?.value) return parseLastScanAt(row.value);
-    return undefined;
-  })();
+  const since = fullScan ? undefined : readLastScanAt(db);
 
   // Whether the configured strategy wants inline doc_sections collected at all.
   // strategy 'ignore' disables collection; every other value (auto_update,

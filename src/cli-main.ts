@@ -17,7 +17,7 @@ import { docrelayHistory, formatHistoryMarkdown } from './tools/history.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
 import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
-import { scanProject, parseLastScanAt } from './discovery/scanner.js';
+import { scanProject, readLastScanAt } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
 import { DOCRELAY_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
@@ -716,12 +716,7 @@ program
       // an incremental run uses it to delta-filter doc ingest and auto-link
       // below. Undefined means "treat everything as changed" (first scan,
       // unparsable legacy value, or a non-incremental full scan).
-      const prevScanAt = opts.incremental
-        ? (() => {
-            const row = db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined;
-            return row?.value ? parseLastScanAt(row.value) : undefined;
-          })()
-        : undefined;
+      const prevScanAt = opts.incremental ? readLastScanAt(db) : undefined;
       const symbolReport = opts.dryRun
         ? { totalSymbols: 0, newSymbols: 0, updatedSymbols: 0, failedDirs: [], scannedIds: [] }
         : await scanWithFallback(scanExtractor, db, config, projectRoot, !opts.incremental);

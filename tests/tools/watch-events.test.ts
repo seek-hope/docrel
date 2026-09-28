@@ -234,4 +234,70 @@ describe('startWatch event handlers (mocked chokidar)', () => {
     expect(getWatchStatus().running).toBe(false);
     expect(() => stop()).not.toThrow();
   });
+
+  it('delta-filtered doc events still link newly added sections', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'),
+      'export function alpha(): number { return 1; }\n', 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'guide.md'),
+      '# Guide\n\n## alpha\n\nUses alpha.\n', 'utf-8');
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { debounceMs: 20 });
+    try {
+      // Code event: symbol scan sets the last_scan_at watermark and the
+      // pipeline ingests guide.md + links alpha to its section.
+      hoisted.state.watcher!.emit('add', path.join(tmpDir, 'src', 'a.ts'));
+      await vi.waitFor(() => {
+        const n = db.prepare('SELECT COUNT(*) AS c FROM mappings').get() as { c: number };
+        expect(n.c).toBeGreaterThanOrEqual(1);
+      }, { timeout: 3000, interval: 50 });
+
+      // Doc event AFTER the watermark exists: the delta filter is active,
+      // and the newly appended section must still be ingested and linked.
+      fs.appendFileSync(path.join(tmpDir, 'docs', 'guide.md'),
+        '\n## alpha usage\n\nMore about alpha.\n', 'utf-8');
+      hoisted.state.watcher!.emit('change', path.join(tmpDir, 'docs', 'guide.md'));
+      await vi.waitFor(() => {
+        const n = db.prepare('SELECT COUNT(DISTINCT doc_id) AS c FROM mappings').get() as { c: number };
+        expect(n.c).toBeGreaterThanOrEqual(2);
+      }, { timeout: 3000, interval: 50 });
+
+      const sections = db.prepare("SELECT COUNT(*) AS c FROM doc_sections WHERE file = 'docs/guide.md'").get() as { c: number };
+      expect(sections.c).toBe(3); // preamble + alpha + alpha usage
+    } finally {
+      stop();
+    }
+  });
+
+  it('doc-only events do not move the symbol-scan watermark', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'),
+      'export function alpha(): number { return 1; }\n', 'utf-8');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'guide.md'),
+      '# Guide\n\n## alpha\n\nUses alpha.\n', 'utf-8');
+    const watermark = () =>
+      (db.prepare("SELECT value FROM metadata WHERE key = 'last_scan_at'").get() as { value: string } | undefined)?.value;
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { debounceMs: 20 });
+    try {
+      hoisted.state.watcher!.emit('add', path.join(tmpDir, 'src', 'a.ts'));
+      await vi.waitFor(() => {
+        expect(getWatchStatus().eventsProcessed).toBe(1);
+        expect(watermark()).toBeTruthy();
+      }, { timeout: 3000, interval: 50 });
+      await sleep(150); // let the async scan body finish
+      const before = watermark();
+      expect(before).toBeTruthy();
+
+      // A doc-only event must NOT advance the watermark — otherwise the next
+      // incremental symbol scan would skip code files edited since the real
+      // symbol scan.
+      hoisted.state.watcher!.emit('change', path.join(tmpDir, 'docs', 'guide.md'));
+      await vi.waitFor(() => {
+        expect(getWatchStatus().eventsProcessed).toBe(2);
+      }, { timeout: 3000, interval: 50 });
+      await sleep(150);
+      expect(watermark()).toBe(before);
+    } finally {
+      stop();
+    }
+  });
 });

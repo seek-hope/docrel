@@ -20,10 +20,9 @@ import { docrelayImpact } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink } from './tools/link.js';
 import { docrelayDiff } from './tools/diff.js';
-import { scanProject } from './discovery/scanner.js';
-import { scanDocs } from './discovery/doc-scanner.js';
-import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
-import { listSymbols } from './db/symbols.js';
+import { scanProject, readLastScanAt } from './discovery/scanner.js';
+import { runDocsPipeline } from './cli-support.js';
+import type { DocsPipelineReport } from './cli-support.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
@@ -365,32 +364,28 @@ server.tool(
 
       const symbolReport = await scanProject(extractor, db, config, projectRoot, true /* full */);
 
-      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[]; skippedMissing: string[] } | null = null;
-      let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
+      let docReport: DocsPipelineReport['docs'] | null = null;
+      let linkResult: DocsPipelineReport['autoLink'] | null = null;
 
       if (docs) {
-        const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
-        const ingestResult = ingestDocSections(db, sections);
-
-        docReport = {
-          totalFiles: report.totalFiles,
-          totalSections: report.totalSections,
-          newDocSections: ingestResult.newDocSections,
-          newMappings: ingestResult.newMappings,
-          failedFiles: report.failedFiles,
-          skippedMissing: report.skippedMissing,
-        };
-
-        // Run auto-linker
-        const allSymbols = listSymbols(db);
-        linkResult = autoLink(db, allSymbols, sections);
+        // Full scan: prevScanAt=undefined — every section counts as changed.
+        // Shared with the CLI (init/scan) so MCP and CLI produce identical
+        // database state from a single pipeline implementation.
+        const pipeline = await runDocsPipeline(db, config, projectRoot, undefined, symbolReport.scannedIds);
+        docReport = pipeline.docs;
+        linkResult = pipeline.autoLink;
       }
+
+      // scannedIds is an internal working set (consumed by gc and the docs
+      // pipeline) — strip it from the response instead of leaking a hash
+      // array with one entry per project symbol to MCP clients.
+      const { scannedIds: _scannedIds, ...publicSymbolReport } = symbolReport;
 
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            symbols: symbolReport,
+            symbols: publicSymbolReport,
             docs: docReport,
             autoLink: linkResult,
           }, null, 2),
@@ -496,7 +491,7 @@ server.tool(
   'docrelay_refresh',
   'Re-scan the codebase for symbol changes and return new/updated symbols since the last scan. Lightweight alternative to persistent watching — agents should poll this periodically.',
   {
-    full: z.boolean().optional().default(false).describe('Also re-scan documentation files and auto-link'),
+    full: z.boolean().optional().default(false).describe('Also re-scan documentation files and auto-link (delta-filtered: unchanged docs are skipped)'),
   },
   async ({ full }) => {
     try {
@@ -508,33 +503,31 @@ server.tool(
         };
       }
 
+      // Read the PREVIOUS scan timestamp before scanProject overwrites it —
+      // the docs pipeline uses it to delta-filter ingest and auto-link,
+      // mirroring the CLI `scan --incremental` path: a no-change refresh
+      // poll does zero O(symbols × sections) matching work.
+      const prevScanAt = readLastScanAt(db);
+
       const symbolReport = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
 
-      let docReport: { totalFiles: number; totalSections: number; newDocSections: number; newMappings: number; failedFiles: string[]; skippedMissing: string[] } | null = null;
-      let linkResult: { totalMatched: number; highConfidence: number; mediumConfidence: number; lowConfidence: number } | null = null;
+      let docReport: DocsPipelineReport['docs'] | null = null;
+      let linkResult: DocsPipelineReport['autoLink'] | null = null;
 
       if (full) {
-        const { sections, report } = await scanDocs(config.doc_dirs, projectRoot);
-        const ingestResult = ingestDocSections(db, sections);
-
-        docReport = {
-          totalFiles: report.totalFiles,
-          totalSections: report.totalSections,
-          newDocSections: ingestResult.newDocSections,
-          newMappings: ingestResult.newMappings,
-          failedFiles: report.failedFiles,
-          skippedMissing: report.skippedMissing,
-        };
-
-        const allSymbols = listSymbols(db);
-        linkResult = autoLink(db, allSymbols, sections);
+        const pipeline = await runDocsPipeline(db, config, projectRoot, prevScanAt, symbolReport.scannedIds);
+        docReport = pipeline.docs;
+        linkResult = pipeline.autoLink;
       }
+
+      // scannedIds is an internal working set — see docrelay_scan.
+      const { scannedIds: _scannedIds, ...publicSymbolReport } = symbolReport;
 
       return {
         content: [{
           type: 'text' as const,
           text: JSON.stringify({
-            symbols: symbolReport,
+            symbols: publicSymbolReport,
             docs: docReport,
             autoLink: linkResult,
           }, null, 2),

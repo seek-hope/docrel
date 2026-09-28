@@ -3,9 +3,8 @@ import type Database from 'better-sqlite3';
 import type { SymbolExtractor } from '../extractors/interface.js';
 import type { DocRelayConfig } from '../utils/config.js';
 import { scanProject } from '../discovery/scanner.js';
-import { scanDocs } from '../discovery/doc-scanner.js';
-import { autoLink, ingestDocSections } from '../discovery/auto-linker.js';
-import { listSymbols } from '../db/symbols.js';
+import { readLastScanAt } from '../discovery/scanner.js';
+import { runDocsPipeline } from '../cli-support.js';
 import { isIgnored } from '../utils/ignore.js';
 import { escapeLike } from '../utils/fs.js';
 import fs from 'node:fs';
@@ -153,20 +152,24 @@ export async function startWatch(
         try {
           if (inCode) {
             console.log(`[${now}] Code change (${key}): ${rel} — re-scanning symbols...`);
-            await scanProject(extractor, db, config, projectRoot, false /* incremental */);
-            // Auto-link against existing docs
-            const symbols = listSymbols(db);
-            const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
-            ingestDocSections(db, docs);
-            const linkResult = autoLink(db, symbols, docs);
-            console.log(`[${now}] Done: ${linkResult.totalMatched} new mappings`);
+            // Read the watermark BEFORE scanProject overwrites it; the docs
+            // pipeline delta-filters ingest/auto-link against it, so a
+            // one-file code edit no longer triggers a full O(symbols ×
+            // sections) re-link on every debounced event.
+            const prevScanAt = readLastScanAt(db);
+            const report = await scanProject(extractor, db, config, projectRoot, false /* incremental */);
+            const pipeline = await runDocsPipeline(db, config, projectRoot, prevScanAt, report.scannedIds);
+            console.log(`[${now}] Done: ${pipeline.autoLink.totalMatched} new mappings`);
           } else {
             console.log(`[${now}] Doc change (${key}): ${rel} — re-scanning docs...`);
-            const { sections: docs } = await scanDocs(config.doc_dirs, projectRoot);
-            ingestDocSections(db, docs);
-            const symbols = listSymbols(db);
-            const linkResult = autoLink(db, symbols, docs);
-            console.log(`[${now}] Done: ${linkResult.totalMatched} new mappings`);
+            // scannedIds=[] keeps pass 1 off (no symbols changed); pass 2
+            // links all symbols against just the changed doc sections.
+            // NOTE: deliberately does NOT move the last_scan_at watermark —
+            // it belongs to the symbol scan; touching it for a doc-only
+            // event would let the next incremental symbol scan skip code
+            // files edited since the real scan.
+            const pipeline = await runDocsPipeline(db, config, projectRoot, readLastScanAt(db), []);
+            console.log(`[${now}] Done: ${pipeline.autoLink.totalMatched} new mappings`);
           }
         } catch (err: any) {
           watchStatus.errorsEncountered++;
