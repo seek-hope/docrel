@@ -268,6 +268,44 @@ describe('scanDocs fault-injected fs failures', () => {
     expect(report.failedFiles).not.toContain('docs');
   });
 
+  it('warns and continues when a subdirectory cannot be read', async () => {
+    const sub = path.join(tmpDir, 'docs', 'sub');
+    fs.mkdirSync(sub, { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'a.md'), '# A\n');
+    fs.writeFileSync(path.join(sub, 'b.md'), '# B\n');
+    fs.chmodSync(sub, 0o000);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { sections } = await scanDocs(['docs'], tmpDir);
+      expect(sections.map((sec) => sec.file)).toEqual(['docs/a.md']);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cannot read directory'), expect.anything());
+    } finally {
+      fs.chmodSync(sub, 0o755);
+    }
+  });
+
+  it('visits a directory only once when several symlinks point at it', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'docs', 'real'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'real', 'a.md'), '# A\n');
+    fs.symlinkSync('real', path.join(tmpDir, 'docs', 'l1'), 'dir');
+    fs.symlinkSync('real', path.join(tmpDir, 'docs', 'l2'), 'dir');
+    const { sections } = await scanDocs(['docs'], tmpDir);
+    expect(sections.map((sec) => sec.file)).toEqual(['docs/real/a.md']);
+  });
+
+  it('skips a walk entry whose realpath fails', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'a.md'), '# A\n');
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'b.md'), '# B\n');
+    const target = path.join(tmpDir, 'docs', 'b.md');
+    const real = fs.realpathSync;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((p: any) => {
+      if (String(p) === target) throw Object.assign(new Error('ELOOP'), { code: 'ELOOP' });
+      return real(p);
+    });
+    const { sections } = await scanDocs(['docs'], tmpDir);
+    expect(sections.map((sec) => sec.file)).toEqual(['docs/a.md']);
+  });
+
   it('skips a single-file doc_dir whose realpath fails during validation', async () => {
     fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Hi\n');
     const target = path.join(tmpDir, 'README.md');

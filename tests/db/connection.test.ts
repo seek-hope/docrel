@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getDb, closeAllDbs } from '../../src/db/connection.js';
+import { getDb, closeDb, closeAllDbs } from '../../src/db/connection.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -130,6 +130,20 @@ describe('getDb git-directory resolution', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('closeDb closes and evicts the cached connection', () => {
+    const root = path.join(tmpDir, 'proj');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    const a = getDb(root);
+    closeDb(root);
+    expect(() => a.prepare('SELECT 1').get()).toThrow();
+    const b = getDb(root);
+    expect(b).not.toBe(a);
+  });
+
+  it('closeDb is a no-op for a project that was never opened', () => {
+    expect(() => closeDb(path.join(tmpDir, 'never-opened'))).not.toThrow();
   });
 
   it('sanitizes the project path from initialization errors', () => {

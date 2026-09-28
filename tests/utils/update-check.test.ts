@@ -125,6 +125,42 @@ describe('checkForUpdates', () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
+  // NOTE on ordering: the module-level write-failure latch is consumed by
+  // the first failing cache write, so the write-failure test must run before
+  // the mkdir-failure test (whose writes also fail, with ENOENT).
+  it('warns once when the cache file cannot be written', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realWrite = fs.writeFileSync;
+    vi.spyOn(fs, 'writeFileSync').mockImplementation(((p: any, data: any, opts: any) => {
+      if (String(p) === cacheFile) throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+      return realWrite(p, data, opts as never);
+    }) as typeof fs.writeFileSync);
+    // Fresh Response per fetch — Response bodies are single-use.
+    fetchMock.mockResolvedValueOnce(jsonResponse({ version: '0.4.0' }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ version: '0.4.0' }));
+
+    expect(await checkForUpdates(CURRENT)).toBe('0.4.0');
+    expect(await checkForUpdates(CURRENT)).toBe('0.4.0');
+    const writeWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes('cannot write update-check cache'));
+    expect(writeWarns).toHaveLength(1);
+  });
+
+  it('warns once when the cache directory cannot be created', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realMkdir = fs.mkdirSync;
+    vi.spyOn(fs, 'mkdirSync').mockImplementation(((p: any, opts: any) => {
+      if (String(p).includes('.cache')) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return realMkdir(p, opts as never) as never;
+    }) as typeof fs.mkdirSync);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ version: '0.4.0' }));
+    fetchMock.mockResolvedValueOnce(jsonResponse({ version: '0.4.0' }));
+
+    await checkForUpdates(CURRENT);
+    await checkForUpdates(CURRENT);
+    const mkdirWarns = warnSpy.mock.calls.filter((c) => String(c[0]).includes('cannot create update-check cache directory'));
+    expect(mkdirWarns).toHaveLength(1);
+  });
+
   it('returns null on HTTP errors', async () => {
     fetchMock.mockResolvedValue(jsonResponse({}, { status: 503 }));
     expect(await checkForUpdates(CURRENT)).toBeNull();
