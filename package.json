@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^13.0.3",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
     "yaml": "^2.0.0",
@@ -62,7 +62,7 @@
   ],
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "@types/better-sqlite3": "^7.6.0",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.0.0",
     "@vitest/coverage-v8": "^5.0.2",
     "eslint": "^9.0.0",
