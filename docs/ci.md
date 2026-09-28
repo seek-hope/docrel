@@ -23,6 +23,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install --global doc-relay
+      # npm >= 12 blocks install scripts by default; fail fast if the
+      # sqlite native binding is missing instead of erroring mid-pipeline.
+      - run: node -e "require('better-sqlite3')(':memory:').close()" || \
+             npm install --global doc-relay --allow-scripts=better-sqlite3
       - run: doc-relay scan
       - run: doc-relay check --strict
 ```
