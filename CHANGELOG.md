@@ -26,7 +26,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   files after a successful backup (default 10, `0` disables), so `.docrelay/`
   no longer grows unbounded.
 - Coverage gate: `npm run coverage` (v8 provider) with ratcheting thresholds
-  (currently 67/59/75/70) enforced in CI.
+  (currently 68/60/76/71) enforced in CI.
 - User documentation set in `docs/`: getting started, CLI reference,
   configuration, MCP integration, architecture — linked from both READMEs
   and now tracked by DocRelay's own scan.
@@ -35,7 +35,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (195 new tests, 492 total):
+  branches (208 new tests, 505 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, the
   update-check cache/registry matrix, health-context formatting, git hook
@@ -47,7 +47,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mtime transition, generated regeneration failure), doc-scanner
   containment (path escape, symlinked dir/file escape, single-file doc_dirs,
   .docrelayignore dir/file patterns, extension allowlist, hidden/vendor dir
-  skips, 10 MB size limit, EACCES handling, non-regular files), and the generated-doc command allowlist
+  skips, 10 MB size limit, EACCES handling, non-regular files), agent
+  integration defensive paths (oversized/null/invalid .mcp.json preserved,
+  oversized rules files skipped, cursor/gemini/kiro/antigravity/hermes
+  variants, dry-run no-write guarantees, idempotency), and the generated-doc command allowlist
   (interpreter/path/code-loading-flag rejection, npm-script resolution,
   OpenAPI/TypeDoc detection heuristics, and engine coverage for
   ignore/prompt/mark_stale strategies, generated-doc fallback, standalone

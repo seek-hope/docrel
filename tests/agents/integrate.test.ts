@@ -167,3 +167,122 @@ describe('integrate', () => {
     expect(fs.existsSync(codexPath)).toBe(true);
   });
 });
+
+describe('integrate — defensive paths & remaining agents', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-integ2-'));
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('skips an oversized rules file but still writes .mcp.json', async () => {
+    const rulesPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(rulesPath, '# Big\n', 'utf-8');
+    fs.truncateSync(rulesPath, 2 * 1_048_576); // sparse 2 MB > 1 MB limit
+
+    const result = await integrate(tmpDir, 'claude-code', false);
+    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(true);
+    expect(result.filesCreated.some((f) => f.endsWith('CLAUDE.md'))).toBe(false);
+    // Original (huge) file untouched.
+    expect(fs.statSync(rulesPath).size).toBe(2 * 1_048_576);
+  });
+
+  it('skips an oversized .mcp.json but still appends the rules section', async () => {
+    const mcpPath = path.join(tmpDir, '.mcp.json');
+    fs.writeFileSync(mcpPath, '{}\n', 'utf-8');
+    fs.truncateSync(mcpPath, 2 * 1_048_576);
+
+    const result = await integrate(tmpDir, 'claude-code', false);
+    expect(result.filesCreated.some((f) => f.endsWith('CLAUDE.md'))).toBe(true);
+    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(false);
+  });
+
+  it('skips a .mcp.json containing JSON null instead of an object', async () => {
+    const mcpPath = path.join(tmpDir, '.mcp.json');
+    fs.writeFileSync(mcpPath, 'null\n', 'utf-8');
+
+    const result = await integrate(tmpDir, 'claude-code', false);
+    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(false);
+    expect(fs.readFileSync(mcpPath, 'utf-8')).toBe('null\n'); // preserved
+    expect(result.filesCreated.some((f) => f.endsWith('CLAUDE.md'))).toBe(true);
+  });
+
+  it('skips an unparseable .mcp.json without destroying it', async () => {
+    const mcpPath = path.join(tmpDir, '.mcp.json');
+    fs.writeFileSync(mcpPath, '{ not json', 'utf-8');
+
+    const result = await integrate(tmpDir, 'claude-code', false);
+    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(false);
+    expect(fs.readFileSync(mcpPath, 'utf-8')).toBe('{ not json');
+  });
+
+  it('creates only .mcp.json for cursor (no known rules file)', async () => {
+    const result = await integrate(tmpDir, 'cursor', false);
+    expect(result.filesCreated).toHaveLength(1);
+    expect(result.filesCreated[0]).toContain('.mcp.json');
+    const mcp = JSON.parse(fs.readFileSync(path.join(tmpDir, '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(mcp.mcpServers.docrelay).toBeTruthy();
+  });
+
+  it('creates .mcp.json and GEMINI.md for gemini', async () => {
+    const result = await integrate(tmpDir, 'gemini', false);
+    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(true);
+    expect(result.filesCreated.some((f) => f.endsWith('GEMINI.md'))).toBe(true);
+    expect(fs.readFileSync(path.join(tmpDir, 'GEMINI.md'), 'utf-8')).toContain('DocRelay');
+  });
+
+  it('is idempotent for gemini (second run reports already configured)', async () => {
+    await integrate(tmpDir, 'gemini', false);
+    const second = await integrate(tmpDir, 'gemini', false);
+    expect(second.filesCreated).toHaveLength(0);
+    expect(second.summary).toContain('already configured');
+  });
+
+  it('dry-run for kiro reports files without writing them', async () => {
+    const result = await integrate(tmpDir, 'kiro', true);
+    expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'KIRO.md'))).toBe(false);
+  });
+
+  it('dry-run for opencode reports without writing', async () => {
+    const result = await integrate(tmpDir, 'opencode', true);
+    expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(path.join(tmpDir, 'OPENCODE.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('opencode second run reports already configured', async () => {
+    await integrate(tmpDir, 'opencode', false);
+    const second = await integrate(tmpDir, 'opencode', false);
+    expect(second.filesCreated).toHaveLength(0);
+    expect(second.summary).toContain('already configured');
+  });
+
+  it('creates .pi/docrelay.md for hermes with the Hermes agent label', async () => {
+    const result = await integrate(tmpDir, 'hermes', false);
+    expect(result.filesCreated.some((f) => f.includes('.pi'))).toBe(true);
+    expect(result.summary).toContain('Hermes');
+  });
+
+  it('generic dry-run reports the instructions file only when missing', async () => {
+    const first = await integrate(tmpDir, 'unknown', true);
+    expect(first.filesCreated.some((f) => f.endsWith('agent-instructions.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, '.docrelay', 'agent-instructions.md'))).toBe(false);
+
+    await integrate(tmpDir, 'unknown', false);
+    const second = await integrate(tmpDir, 'unknown', true);
+    expect(second.filesCreated).toHaveLength(0);
+    expect(second.summary).toContain('already exist');
+  });
+
+  it('antigravity writes QAI.md', async () => {
+    const result = await integrate(tmpDir, 'antigravity', false);
+    expect(result.filesCreated.some((f) => f.endsWith('QAI.md'))).toBe(true);
+  });
+});
