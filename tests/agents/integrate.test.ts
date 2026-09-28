@@ -77,15 +77,35 @@ describe('integrate', () => {
 
   // ── opencode ─────────────────────────────────────────────────────
 
-  it('creates OPENCODE.md and .mcp.json for opencode', async () => {
+  it('creates AGENTS.md and opencode.json for opencode (its real conventions)', async () => {
     const result = await integrate(tmpDir, 'opencode', false);
     expect(result.agent).toBe('opencode');
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
 
-    const opencodePath = path.join(tmpDir, 'OPENCODE.md');
-    expect(fs.existsSync(opencodePath)).toBe(true);
-    const content = fs.readFileSync(opencodePath, 'utf-8');
+    // OpenCode reads AGENTS.md — OPENCODE.md was never its convention.
+    const agentsPath = path.join(tmpDir, 'AGENTS.md');
+    expect(fs.existsSync(agentsPath)).toBe(true);
+    const content = fs.readFileSync(agentsPath, 'utf-8');
     expect(content).toContain('## DocRelay — Code-Documentation Sync');
+    expect(fs.existsSync(path.join(tmpDir, 'OPENCODE.md'))).toBe(false);
+
+    // OpenCode MCP servers live in opencode.json under "mcp" with type local.
+    const mcpPath = path.join(tmpDir, 'opencode.json');
+    expect(fs.existsSync(mcpPath)).toBe(true);
+    const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8')) as {
+      mcp: { docrelay: { type: string; command: string[]; enabled: boolean } };
+    };
+    expect(mcp.mcp.docrelay.type).toBe('local');
+    expect(mcp.mcp.docrelay.command).toEqual(['npx', '-y', 'doc-relay', 'mcp']);
+    expect(mcp.mcp.docrelay.enabled).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('opencode notes a legacy OPENCODE.md from an older DocRelay', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'OPENCODE.md'), '## DocRelay — Code-Documentation Sync\nold\n', 'utf-8');
+    const result = await integrate(tmpDir, 'opencode', false);
+    expect(result.summary).toContain('legacy OPENCODE.md');
+    expect(fs.existsSync(path.join(tmpDir, 'OPENCODE.md'))).toBe(true);
   });
 
   // ── oh-my-pi ─────────────────────────────────────────────────────
@@ -290,19 +310,40 @@ describe('integrate — defensive paths & remaining agents', () => {
     expect(fs.readFileSync(mcpPath, 'utf-8')).toBe('{ not json');
   });
 
-  it('creates only .mcp.json for cursor (no known rules file)', async () => {
+  it('creates only .cursor/mcp.json for cursor (no rules file)', async () => {
     const result = await integrate(tmpDir, 'cursor', false);
     expect(result.filesCreated).toHaveLength(1);
-    expect(result.filesCreated[0]).toContain('.mcp.json');
-    const mcp = JSON.parse(fs.readFileSync(path.join(tmpDir, '.mcp.json'), 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(result.filesCreated[0]).toContain(path.join('.cursor', 'mcp.json'));
+    const mcp = JSON.parse(fs.readFileSync(path.join(tmpDir, '.cursor', 'mcp.json'), 'utf-8')) as { mcpServers: Record<string, unknown> };
     expect(mcp.mcpServers.docrelay).toBeTruthy();
+    // Root .mcp.json is Claude Code's file, not Cursor's.
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
   });
 
-  it('creates .mcp.json and GEMINI.md for gemini', async () => {
+  it('creates .gemini/settings.json and GEMINI.md for gemini', async () => {
     const result = await integrate(tmpDir, 'gemini', false);
-    expect(result.filesCreated.some((f) => f.endsWith('.mcp.json'))).toBe(true);
+    expect(result.filesCreated.some((f) => f.endsWith(path.join('.gemini', 'settings.json')))).toBe(true);
     expect(result.filesCreated.some((f) => f.endsWith('GEMINI.md'))).toBe(true);
     expect(fs.readFileSync(path.join(tmpDir, 'GEMINI.md'), 'utf-8')).toContain('DocRelay');
+    const settings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.gemini', 'settings.json'), 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(settings.mcpServers.docrelay).toBeTruthy();
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('merges into existing .gemini/settings.json without disturbing other keys', async () => {
+    fs.mkdirSync(path.join(tmpDir, '.gemini'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.gemini', 'settings.json'),
+      JSON.stringify({ theme: 'dark', mcpServers: { other: { command: 'x' } } }, null, 2),
+      'utf-8',
+    );
+    await integrate(tmpDir, 'gemini', false);
+    const settings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.gemini', 'settings.json'), 'utf-8')) as {
+      theme?: string; mcpServers: Record<string, unknown>;
+    };
+    expect(settings.theme).toBe('dark');
+    expect(settings.mcpServers.other).toBeTruthy();
+    expect(settings.mcpServers.docrelay).toBeTruthy();
   });
 
   it('is idempotent for gemini (second run reports already configured)', async () => {
@@ -312,18 +353,42 @@ describe('integrate — defensive paths & remaining agents', () => {
     expect(second.summary).toContain('already configured');
   });
 
+  it('writes .kiro/settings/mcp.json and .kiro/steering/docrelay.md for kiro', async () => {
+    const result = await integrate(tmpDir, 'kiro', false);
+    const mcpPath = path.join(tmpDir, '.kiro', 'settings', 'mcp.json');
+    const steeringPath = path.join(tmpDir, '.kiro', 'steering', 'docrelay.md');
+    expect(fs.existsSync(mcpPath)).toBe(true);
+    expect(fs.existsSync(steeringPath)).toBe(true);
+    const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(mcp.mcpServers.docrelay).toBeTruthy();
+    expect(fs.readFileSync(steeringPath, 'utf-8')).toContain('DocRelay');
+    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'KIRO.md'))).toBe(false);
+    expect(result.filesCreated).toHaveLength(2);
+  });
+
   it('dry-run for kiro reports files without writing them', async () => {
     const result = await integrate(tmpDir, 'kiro', true);
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
+    expect(fs.existsSync(path.join(tmpDir, '.kiro', 'settings', 'mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, '.kiro', 'steering', 'docrelay.md'))).toBe(false);
+  });
+
+  it('writes .agents/mcp_config.json for antigravity', async () => {
+    const result = await integrate(tmpDir, 'antigravity', false);
+    const mcpPath = path.join(tmpDir, '.agents', 'mcp_config.json');
+    expect(fs.existsSync(mcpPath)).toBe(true);
+    const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8')) as { mcpServers: Record<string, unknown> };
+    expect(mcp.mcpServers.docrelay).toBeTruthy();
     expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, 'KIRO.md'))).toBe(false);
+    expect(result.filesCreated.some((f) => f.endsWith(path.join('.agents', 'mcp_config.json')))).toBe(true);
   });
 
   it('dry-run for opencode reports without writing', async () => {
     const result = await integrate(tmpDir, 'opencode', true);
     expect(result.filesCreated.length).toBeGreaterThanOrEqual(1);
-    expect(fs.existsSync(path.join(tmpDir, 'OPENCODE.md'))).toBe(false);
-    expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'AGENTS.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'opencode.json'))).toBe(false);
   });
 
   it('opencode second run reports already configured', async () => {

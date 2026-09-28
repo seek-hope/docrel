@@ -99,13 +99,14 @@ DocRelay tracks code symbols and their linked documentation. Add it as an MCP
 server to get documentation health tools in your OpenCode session.
 
 ### MCP Configuration
-Add this to your \`.mcp.json\`:
+Already added to your \`opencode.json\`:
 \`\`\`json
 {
-  "mcpServers": {
+  "mcp": {
     "docrelay": {
-      "command": "npx",
-      "args": ["-y", "doc-relay", "mcp"]
+      "type": "local",
+      "command": ["npx", "-y", "doc-relay", "mcp"],
+      "enabled": true
     }
   }
 }
@@ -248,9 +249,18 @@ function appendToRulesFile(
 }
 
 function upsertMcpJson(projectRoot: string): boolean {
-  const mcpPath = path.join(projectRoot, '.mcp.json');
+  return upsertMcpJsonFile(path.join(projectRoot, '.mcp.json'), 'mcpServers', DOCRELAY_MCP_ENTRY.docrelay);
+}
 
-  let mcpConfig: { mcpServers?: Record<string, unknown> };
+/**
+ * Merge the docrelay server entry into an MCP JSON config at an arbitrary
+ * path (each agent has its own location: .mcp.json, .cursor/mcp.json,
+ * .gemini/settings.json, .agents/mcp_config.json, .kiro/settings/mcp.json,
+ * opencode.json). `topKey` is the server-map key ('mcpServers' everywhere
+ * except OpenCode's 'mcp'). Never overwrites an unparseable file.
+ */
+function upsertMcpJsonFile(mcpPath: string, topKey: 'mcpServers' | 'mcp', entry: Record<string, unknown>): boolean {
+  let mcpConfig: Record<string, unknown> & { mcpServers?: Record<string, unknown>; mcp?: Record<string, unknown> };
   if (fs.existsSync(mcpPath)) {
     try {
       const stat = fs.statSync(mcpPath);
@@ -277,14 +287,39 @@ function upsertMcpJson(projectRoot: string): boolean {
     mcpConfig = {};
   }
 
-  if (!mcpConfig.mcpServers) {
-    mcpConfig.mcpServers = {};
+  if (!mcpConfig[topKey]) {
+    mcpConfig[topKey] = {};
   }
 
-  if (mcpConfig.mcpServers.docrelay) return false; // already present
+  const serverMap = mcpConfig[topKey];
+  if (serverMap.docrelay) return false; // already present
 
-  mcpConfig.mcpServers.docrelay = DOCRELAY_MCP_ENTRY.docrelay;
+  serverMap.docrelay = entry;
+  fs.mkdirSync(path.dirname(mcpPath), { recursive: true });
   fs.writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2) + '\n', 'utf-8');
+  return true;
+}
+
+/** OpenCode's local-server shape (opencode.json, top-level "mcp" key). */
+const OPENCODE_MCP_ENTRY = {
+  type: 'local',
+  command: ['npx', '-y', 'doc-relay', 'mcp'],
+  enabled: true,
+};
+
+/** Dry-run probe shared by the per-agent integrators: would the docrelay
+ *  entry be added to the MCP JSON at this path? */
+function mcpEntryMissing(mcpPath: string, topKey: 'mcpServers' | 'mcp'): boolean {
+  const mcpContent = readFileWithSizeLimit(mcpPath);
+  if (mcpContent !== null) {
+    try {
+      const m = JSON.parse(mcpContent);
+      // Guard against JSON.parse returning null (valid JSON input "null").
+      if (typeof m === 'object' && m !== null) {
+        return !(m[topKey]?.docrelay);
+      }
+    } catch { /* missing or invalid */ }
+  }
   return true;
 }
 
@@ -406,41 +441,42 @@ function integrateClaudeCode(
 }
 
 function integrateOpenCode(projectRoot: string, dryRun: boolean): IntegrationResult {
+  // OpenCode reads AGENTS.md for rules and opencode.json (top-level "mcp"
+  // key, type:"local" entries) for MCP servers — OPENCODE.md and .mcp.json
+  // were never OpenCode conventions.
   const files: string[] = [];
+  const notes: string[] = [];
   const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
-  const rulesPath = path.join(projectRoot, 'OPENCODE.md');
+  const rulesPath = path.join(projectRoot, 'AGENTS.md');
+  const mcpPath = path.join(projectRoot, 'opencode.json');
 
   if (!dryRun) {
     const added = appendToRulesFile(rulesPath, OPENCODE_DOCRELAY_SECTION, SECTION_MARKER);
     if (added) files.push(rulesPath);
 
-    const mcpAdded = upsertMcpJson(projectRoot);
-    if (mcpAdded) files.push(path.join(projectRoot, '.mcp.json'));
+    const mcpAdded = upsertMcpJsonFile(mcpPath, 'mcp', OPENCODE_MCP_ENTRY);
+    if (mcpAdded) files.push(mcpPath);
   } else {
     const existing = readFileWithSizeLimit(rulesPath);
     if (existing === null || !existing.includes(SECTION_MARKER)) files.push(rulesPath);
+    if (mcpEntryMissing(mcpPath, 'mcp')) files.push(mcpPath);
+  }
 
-    const mcpPath = path.join(projectRoot, '.mcp.json');
-    let hasDocrel = false;
-    const mcpContent = readFileWithSizeLimit(mcpPath);
-    if (mcpContent !== null) {
-      try {
-        const m = JSON.parse(mcpContent);
-        // Guard against JSON.parse returning null — same rationale as above.
-        if (typeof m === 'object' && m !== null) {
-          hasDocrel = !!(m.mcpServers?.docrelay);
-        }
-      } catch { /* missing or invalid */ }
+  // Migration aid: an older DocRelay wrote OPENCODE.md — not read by OpenCode.
+  const legacyPath = path.join(projectRoot, 'OPENCODE.md');
+  if (fs.existsSync(legacyPath)) {
+    const legacy = readFileWithSizeLimit(legacyPath);
+    if (legacy && legacy.includes(SECTION_MARKER)) {
+      notes.push('legacy OPENCODE.md (from an older DocRelay) is not read by OpenCode — safe to delete');
     }
-    if (!hasDocrel) files.push(mcpPath);
   }
 
   return {
     agent: 'opencode',
     filesCreated: files,
-    summary: files.length > 0
+    summary: [files.length > 0
       ? `OpenCode integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
-      : 'OpenCode integration already configured.',
+      : 'OpenCode integration already configured.', ...notes].join(' — '),
   };
 }
 
@@ -500,27 +536,18 @@ function integrateMcpAgent(
   agentKind: AgentKind,
   agentName: string,
   rulesFileName: string | null,
+  mcpRelPath: string,
 ): IntegrationResult {
   const files: string[] = [];
   const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
+  const mcpPath = path.join(projectRoot, mcpRelPath);
 
-  // Write .mcp.json
+  // Write the agent's own MCP config file
   if (!dryRun) {
-    const mcpAdded = upsertMcpJson(projectRoot);
-    if (mcpAdded) files.push(path.join(projectRoot, '.mcp.json'));
+    const mcpAdded = upsertMcpJsonFile(mcpPath, 'mcpServers', DOCRELAY_MCP_ENTRY.docrelay);
+    if (mcpAdded) files.push(mcpPath);
   } else {
-    const mcpPath = path.join(projectRoot, '.mcp.json');
-    let hasDocrel = false;
-    const mcpContent = readFileWithSizeLimit(mcpPath);
-    if (mcpContent !== null) {
-      try {
-        const m = JSON.parse(mcpContent);
-        if (typeof m === 'object' && m !== null) {
-          hasDocrel = !!(m.mcpServers?.docrelay);
-        }
-      } catch { /* missing or invalid */ }
-    }
-    if (!hasDocrel) files.push(mcpPath);
+    if (mcpEntryMissing(mcpPath, 'mcpServers')) files.push(mcpPath);
   }
 
   // Write rules file if one is known
@@ -531,7 +558,7 @@ ${SECTION_MARKER}
 
 DocRelay tracks code symbols and their linked documentation, keeping them
 in sync as your codebase evolves. It is already configured as an MCP server
-in \`.mcp.json\`.
+in \`${mcpRelPath}\`.
 
 ### Available MCP Tools
 | Tool | Purpose |
@@ -601,13 +628,13 @@ export async function integrate(
     case 'hermes':
       return integrateOhMyPi(resolved, dryRun, 'hermes');
     case 'cursor':
-      return integrateMcpAgent(resolved, dryRun, 'cursor', 'Cursor', null);
+      return integrateMcpAgent(resolved, dryRun, 'cursor', 'Cursor', null, '.cursor/mcp.json');
     case 'gemini':
-      return integrateMcpAgent(resolved, dryRun, 'gemini', 'Gemini CLI', 'GEMINI.md');
+      return integrateMcpAgent(resolved, dryRun, 'gemini', 'Gemini CLI', 'GEMINI.md', '.gemini/settings.json');
     case 'antigravity':
-      return integrateMcpAgent(resolved, dryRun, 'antigravity', 'Antigravity', 'QAI.md');
+      return integrateMcpAgent(resolved, dryRun, 'antigravity', 'Antigravity', 'QAI.md', '.agents/mcp_config.json');
     case 'kiro':
-      return integrateMcpAgent(resolved, dryRun, 'kiro', 'Kiro', 'KIRO.md');
+      return integrateMcpAgent(resolved, dryRun, 'kiro', 'Kiro', path.join('.kiro', 'steering', 'docrelay.md'), path.join('.kiro', 'settings', 'mcp.json'));
     default:
       return integrateGeneric(resolved, dryRun);
   }

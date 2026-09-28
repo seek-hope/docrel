@@ -11,11 +11,27 @@ doc-relay integrate
 
 This auto-detects your agent (Claude Code, Codex, Cursor, OpenCode, Hermes,
 Gemini, Antigravity, Kiro, Oh My Pi) and writes the right configuration in
-the agent's own format: `.mcp.json` for JSON-based agents (Claude Code,
-Cursor, Gemini, ...) or a `[mcp_servers.docrelay]` table in
-`.codex/config.toml` for Codex — plus a DocRelay section in the agent's
-rules file (`CLAUDE.md`, `AGENTS.md`, etc.). Use `--list` to see what was
-detected and `--dry-run` to preview.
+the agent's own format. Use `--list` to see what was detected and
+`--dry-run` to preview.
+
+Per-agent locations written by `integrate`:
+
+| Agent | MCP config file | Rules file |
+|-------|-----------------|------------|
+| Claude Code | `.mcp.json` | `CLAUDE.md` |
+| Codex | `.codex/config.toml` (`[mcp_servers.docrelay]`) | `AGENTS.md` |
+| Cursor | `.cursor/mcp.json` | — (no rules file written) |
+| OpenCode | `opencode.json` (`"mcp"` key, `type: "local"`) | `AGENTS.md` |
+| Gemini CLI | `.gemini/settings.json` | `GEMINI.md` |
+| Antigravity | `.agents/mcp_config.json` | `QAI.md` |
+| Kiro | `.kiro/settings/mcp.json` | `.kiro/steering/docrelay.md` |
+| Hermes | — (rules only) | `.pi/docrelay.md` |
+| Oh My Pi | — (no MCP support) | `.pi/docrelay.md` |
+
+Older DocRelay versions wrote some agents in the wrong format (e.g.
+`OPENCODE.md` for OpenCode, `.mcp.json` for Codex). `integrate` now writes
+each agent's real convention and leaves a note on legacy files it finds —
+it never deletes your files.
 
 ## Manual setup
 

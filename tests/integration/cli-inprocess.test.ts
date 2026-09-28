@@ -687,8 +687,8 @@ describe('CLI in-process: mcp / restore prompts / integrate dry-run', () => {
 
   it('dry-run integrate reports an already-configured agent (opencode)', async () => {
     seedProject();
-    fs.writeFileSync(path.join(tmpDir, 'OPENCODE.md'), '# Rules\n\n## DocRelay — Code-Documentation Sync\n\nconfigured\n');
-    fs.writeFileSync(path.join(tmpDir, '.mcp.json'), JSON.stringify({ mcpServers: { docrelay: { command: 'doc-relay', args: ['mcp'] } } }));
+    fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), '# Rules\n\n## DocRelay — Code-Documentation Sync\n\nconfigured\n');
+    fs.writeFileSync(path.join(tmpDir, 'opencode.json'), JSON.stringify({ mcp: { docrelay: { type: 'local', command: ['doc-relay', 'mcp'], enabled: true } } }));
     expect(await runCli(['integrate', '--agent', 'opencode', '--dry-run'])).toBe(0);
     expect(out()).toContain('No changes needed');
   });

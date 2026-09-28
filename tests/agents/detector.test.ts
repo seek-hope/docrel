@@ -100,7 +100,7 @@ describe('detectAgent', () => {
     expect(result.name).toBe('OpenCode');
     expect(result.mcpSupported).toBe(true);
     expect(result.hooksSupported).toBe(false);
-    expect(result.rulesFile).toBe('OPENCODE.md');
+    expect(result.rulesFile).toBe('AGENTS.md');
     expect(result.sessionId).toBe('oc-sess');
   });
 
@@ -163,7 +163,7 @@ describe('detectAgent', () => {
     const result = detectAgent();
     expect(result.kind).toBe('kiro');
     expect(result.name).toBe('Kiro');
-    expect(result.rulesFile).toBe('KIRO.md');
+    expect(result.rulesFile).toBe('.kiro/steering/*.md');
   });
 
   it('returns first match when multiple env vars are set (claude-code wins)', () => {
