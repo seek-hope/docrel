@@ -77,6 +77,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   under `DOCRELAY_DEBUG` — which also powers the MCP server's
   uncaught-exception/unhandled-rejection/fatal-error logging (output
   text unchanged there).
+- Concurrent DocRelay processes (watch mode, an MCP server, and a git
+  hook all touching `.git/docrelay.db`) no longer surface raw
+  `SQLITE_BUSY` failures. The database busy timeout is now set
+  explicitly (better-sqlite3's 5-second default, overridable via
+  `DOCRELAY_DB_TIMEOUT` in milliseconds), and CLI error messages that
+  mention a locked database add guidance naming the likely concurrent
+  writers and suggesting a retry.
+- `check` now exits `2` (instead of `1`) when the check itself could
+  not run — e.g. a locked or corrupt database — reserving `1` for the
+  "stale docs found" verdict. The generated `pre-commit`/`pre-push`
+  hooks branch on exit 2 and print infrastructure guidance (retry,
+  `doc-relay health`, `--no-verify`) instead of wrongly declaring the
+  documentation stale; `install-hooks --force` upgrades existing hooks.
 
 ### Added
 - Exhaustive codegraph symbol enumeration + scan-collapse guards (dogfood
@@ -187,7 +200,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Test suites for `review`, `watch`, `update-check`, `agents/context`,
   `git/hooks`, `extractors/codegraph`, `codegraph/client`, `sync/generated`,
   `sync/standalone`, `sync/inline` utilities, and sync-engine strategy
-  branches (841 new tests, 1138 total):
+  branches (847 new tests, 1144 total):
   implied-reference detection, path-traversal skips, orphan cleanup safety,
   watcher lifecycle/PID file/stale-on-delete, debounced re-scan, and deterministic mocked-chokidar event handling (ignored-file skips, debounce-group cancellation, doc-change re-scan, rescan/removal failure markers, watcher error/close events, timer cleanup on stop, and missing-chokidar/generic startup failures), the review tool (implied-scan directory/size/line-cap/heading/short-name guards, format sections for implied/unreviewed/orphaned entries, detailed 200-mapping overflow, snippet extraction through nested directories, oversized source/doc files, line-cap guards, first-occurrence fallback, and missing-anchor/header rendering), docrelayDiff report assembly (changelog rows, missing-doc fallbacks, db_error), and scan-fallback file/nested-dir/symlink-loop handling), impact input validation (batch cap, empty/overlong/escaping paths, LIKE sibling rejection, cross-file dedup, per-file error sanitization), and the health checks (codegraph probe outcomes, stale-ratio thresholds, >24h last-scan, degraded-but-functional summary, and the sanitized-failure wrapper via a fault-injecting db proxy), and the db layer itself (doc-section validation/filters/mark-* guards, symbol validation/kind-defaulting/circular-metadata serialization, mapping empty-id guards/JSON export, and getDb gitdir resolution — worktree, in-root, escaping, malformed, oversized .git files, WAL/SHM permission hardening, and path-sanitized init errors), and the config/ignore utilities (projectRoot file rejection, oversized config/ignore files, >10k-line ignore files, bare negations, **-placement and ? wildcards, non-numeric schema versions, doc_dirs traversal rejection), and auto-linker edge paths (low-confidence bodytext accounting, snake_case/underscore code-like names, FK-violation silent skips, non-constraint mapping failure warnings, pass-1/pass-2 timeout partial results, minConfidence validation, ambiguous same-name stem linking, malformed-section batch isolation), and the builtin extractor (root-escape/missing/symlinked code dirs, file-as-dir, hidden/vendor subdirectory skips, >10 MB and >100k-line file guards, rule-less .pyi stubs, incremental since-cutoff, EACCES read failures, single-line JSDoc and python docstring capture), the scanner markSignatureChanged TOCTOU recovery (concurrent-delete warn and direct changelog insertion, via a mocked db/symbols), and doc-scanner subdirectory recursion plus single-file symlink containment, and doc-parser branch paths (100k-line guards across all four parsers, preamble capture before the first heading, 10 MB HTML size limit, 50k-heading/10k-ref/5k-pre-line truncation caps, backtick-call bracket counting with nested and escaped backticks, scan-ahead paren adjustment, depth-zero closing after a failed scan-ahead, unterminated calls, snake_case bodytext candidates, heading backtick refs, unbalanced heading parens, and RST code-block termination), and inline-sync guard paths (directory/oversized/unreadable targets, empty/oversized signature and docstring inputs, comment-inflated occurrence counts, ambiguous-or-missing signatures refusing partial updates, post-validation uniqueness, temp-dir and atomic-write failure injection, 100k-match counting abort, python/go/rust docstring extraction edges — no-colon headers, inline comments, blank-and-comment body walks, unterminated docstrings, 100k-line extraction guards, blank/code-line comment-block termination, mismatched old comments, regex-literal vs division disambiguation, string escapes at end-of-content, 100k-line and 2000-line docstring caps, tag-block resets, and destructured/string-typed/template-typed parameter splitting), the
   update-check cache/registry matrix, health-context formatting, git hook

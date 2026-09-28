@@ -15,6 +15,17 @@ export function assertDbOpen(db: Database.Database): void {
   }
 }
 
+/** Resolve the busy-timeout for new connections: DOCRELAY_DB_TIMEOUT
+ *  (milliseconds) when set to a non-negative integer, else 5000. */
+export function dbBusyTimeoutMs(): number {
+  const raw = process.env.DOCRELAY_DB_TIMEOUT;
+  if (raw === undefined || raw === '') return 5000;
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 0 && n <= 2_147_483_647) return n;
+  console.warn(`DocRelay: ignoring invalid DOCRELAY_DB_TIMEOUT '${raw}' (expected non-negative integer ms) — using 5000`);
+  return 5000;
+}
+
 export function getDb(projectRoot: string): Database.Database {
   const resolved = path.resolve(projectRoot);
   const existing = connections.get(resolved);
@@ -91,7 +102,12 @@ export function getDb(projectRoot: string): Database.Database {
   try {
     fs.mkdirSync(dbDir, { recursive: true, mode: 0o700 });
 
-    db = new Database(dbPath);
+    // Busy timeout: how long a blocked write waits for the database lock
+    // before failing with SQLITE_BUSY. better-sqlite3 would default this to
+    // 5000ms, but the value matters for our concurrency model (watch mode,
+    // the MCP server, and git hooks routinely share one database), so we
+    // set it explicitly and allow an override for slow-disk CI environments.
+    db = new Database(dbPath, { timeout: dbBusyTimeoutMs() });
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
 

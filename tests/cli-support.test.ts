@@ -45,6 +45,19 @@ describe('errMsg', () => {
     expect(errMsg(null, root)).toBe('unknown error');
     expect(errMsg(undefined, root)).toBe('unknown error');
   });
+
+  it('appends actionable guidance to SQLITE_BUSY errors', () => {
+    const msg = errMsg(new Error('database is locked'), root);
+    expect(msg).toContain('database is locked');
+    expect(msg).toContain('another DocRelay process');
+    expect(msg).toContain('retry');
+    const codeMsg = errMsg(new Error('SQLITE_BUSY: database is locked'), root);
+    expect(codeMsg).toContain('another DocRelay process');
+  });
+
+  it('leaves non-lock errors without lock guidance', () => {
+    expect(errMsg(new Error('plain failure'), root)).toBe('plain failure');
+  });
 });
 
 describe('createExtractor', () => {

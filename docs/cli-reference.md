@@ -156,6 +156,10 @@ Start the MCP server on stdio. Agent configs invoke this for you — see
   the current working directory.
 - `DOCRELAY_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` — disable the background
   npm update check (useful for CI and offline environments).
+- `DOCRELAY_DB_TIMEOUT` — SQLite busy timeout in milliseconds (how long a
+  DocRelay process waits for `.git/docrelay.db` when another process —
+  watch mode, an MCP server, or a git hook — holds the write lock).
+  Defaults to 5000.
 - `DOCRELAY_DEBUG=1` — include stack traces in error output. By default the
   CLI prints one sanitized line for unexpected failures
   (`DocRelay: unexpected error: …`); the flag adds the full stack for
@@ -165,3 +169,6 @@ Start the MCP server on stdio. Agent configs invoke this for you — see
 
 - `0` — success (or, for `check`/`health`, everything healthy)
 - `1` — failure; for `check --strict` specifically: stale docs found
+- `2` — `check` could not run at all (infrastructure error, e.g. a locked
+  database). The git hooks use this to print retry/diagnosis guidance
+  instead of the stale-docs message

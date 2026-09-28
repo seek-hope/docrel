@@ -196,11 +196,21 @@ fi
   // DB). Treat any docrelay failure as fail-open for non-blocking hooks
   // (post-commit, prepare-commit-msg) and as a hard gate only where a strict
   // check is explicitly intended (pre-commit/pre-push).
+  const infraGuidance = `echo ""
+echo "DocRelay: documentation check could not run (infrastructure error — often a database locked by a concurrent watch/MCP process)."
+echo "DocRelay: retry the command, or diagnose with 'doc-relay health'. Use --no-verify to bypass."
+exit 1
+`;
   const preCommitScript = `#!/bin/sh
 # DocRelay pre-commit hook
 HOOK=pre-commit
 ${failOpenGuard}${docrelayQuoted} check --strict
-if [ $? -ne 0 ]; then
+rc=$?
+# Exit 2 = infrastructure error (locked/corrupt DB): not a staleness verdict.
+if [ $rc -eq 2 ]; then
+${infraGuidance}
+fi
+if [ $rc -ne 0 ]; then
   echo ""
   echo "DocRelay: Documentation is stale. Run 'doc-relay sync' to update docs, 'doc-relay ack' for sections that are already accurate, or use --no-verify to skip."
   exit 1
@@ -222,7 +232,12 @@ exit 0
 # DocRelay pre-push hook
 HOOK=pre-push
 ${failOpenGuard}${docrelayQuoted} check --strict
-if [ $? -ne 0 ]; then
+rc=$?
+# Exit 2 = infrastructure error (locked/corrupt DB): not a staleness verdict.
+if [ $rc -eq 2 ]; then
+${infraGuidance}
+fi
+if [ $rc -ne 0 ]; then
   echo ""
   echo "DocRelay: Cannot push with stale documentation."
   exit 1

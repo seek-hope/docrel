@@ -24,9 +24,16 @@ export function errMsg(e: unknown, projectRoot: string): string {
   // not an Error or a string as unknown rather than emitting a useless blob.
   const raw = e instanceof Error ? e.message : typeof e === 'string' ? e : 'unknown error';
   // Sanitize project root paths from error messages
-  return raw
+  const sanitized = raw
     .replace(new RegExp(projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '<projectRoot>')
     .replace(/\/(?:home|opt|var|etc|tmp|usr)\/[^\s:,)]*/g, '<path>');
+  // A bare 'database is locked' tells the user nothing actionable. DocRelay
+  // databases are routinely shared between a watch process, the MCP server,
+  // and git hooks, so contention is the common cause — say so.
+  if (/database is locked|SQLITE_BUSY/i.test(raw)) {
+    return sanitized + ' — another DocRelay process (watch mode, MCP server, or a git hook) may be writing; retry in a few seconds';
+  }
+  return sanitized;
 }
 
 /** Shared extractor factory — used by ensureContext, scan, and gc.

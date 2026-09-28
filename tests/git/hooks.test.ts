@@ -94,8 +94,18 @@ describe('installHooks', () => {
     }
     const preCommit = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'pre-commit'), 'utf-8');
     expect(preCommit).toContain('check --strict');
+    // Hard-gate hooks distinguish infrastructure errors (exit 2) from stale docs.
+    for (const name of ['pre-commit', 'pre-push']) {
+      const script = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', name), 'utf-8');
+      expect(script).toContain('rc=$?');
+      expect(script).toContain('[ $rc -eq 2 ]');
+      expect(script).toContain('infrastructure error');
+      expect(script).toContain('doc-relay health');
+    }
     const postCommit = fs.readFileSync(path.join(tmpDir, '.git', 'hooks', 'post-commit'), 'utf-8');
     expect(postCommit).toContain('scan --incremental');
+    // Non-blocking hooks stay fail-open: no infrastructure-exit branching.
+    expect(postCommit).not.toContain('rc=$?');
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('hooks installed'));
   });
 

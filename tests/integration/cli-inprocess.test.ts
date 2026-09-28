@@ -592,6 +592,31 @@ describe('CLI in-process: top-level crash safety net', () => {
     expect(errOut()).not.toContain('unexpected error');
   });
 
+  it('check infrastructure errors exit 2 (distinct from 1 = stale docs)', async () => {
+    // Force docrelayCheck to report an infrastructure error — the CLI must
+    // exit 2 so the git hooks print infra guidance, not the stale message.
+    vi.doMock('../../src/tools/check.js', async (importOriginal) => {
+      const mod = await importOriginal<typeof import('../../src/tools/check.js')>();
+      return {
+        ...mod,
+        docrelayCheck: () => ({
+          passed: false,
+          staleDocs: [],
+          summary: 'Database error: check server logs for details.',
+          error: 'Database query error — check server logs for details',
+        }),
+      };
+    });
+    try {
+      seedProject();
+      expect(await runCli(['check', '--strict'])).toBe(2);
+      expect(errOut()).toContain('DocRelay check failed');
+      expect(errOut()).not.toContain('unexpected error');
+    } finally {
+      vi.doUnmock('../../src/tools/check.js');
+    }
+  });
+
   it('commander usage errors keep their own exit code and message', async () => {
     seedProject();
     expect(await runCli(['status', '--bogus-flag'])).toBe(1);

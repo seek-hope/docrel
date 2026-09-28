@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { getDb, closeDb, closeAllDbs } from '../../src/db/connection.js';
+import { getDb, closeDb, closeAllDbs, dbBusyTimeoutMs } from '../../src/db/connection.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -161,5 +161,43 @@ describe('getDb git-directory resolution', () => {
     } catch (err: any) {
       expect(String(err.message)).not.toContain(root);
     }
+  });
+});
+
+describe('getDb busy timeout', () => {
+  let tmpDir: string;
+  const saved = process.env.DOCRELAY_DB_TIMEOUT;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-busy-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+  });
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DOCRELAY_DB_TIMEOUT;
+    else process.env.DOCRELAY_DB_TIMEOUT = saved;
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('defaults to 5000ms when DOCRELAY_DB_TIMEOUT is unset', () => {
+    delete process.env.DOCRELAY_DB_TIMEOUT;
+    expect(dbBusyTimeoutMs()).toBe(5000);
+    const db = getDb(tmpDir);
+    expect(db.pragma('busy_timeout', { simple: true })).toBe(5000);
+  });
+
+  it('honors a valid DOCRELAY_DB_TIMEOUT override', () => {
+    process.env.DOCRELAY_DB_TIMEOUT = '15000';
+    expect(dbBusyTimeoutMs()).toBe(15000);
+    const db = getDb(tmpDir);
+    expect(db.pragma('busy_timeout', { simple: true })).toBe(15000);
+  });
+
+  it('warns and falls back to 5000 on an invalid override', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.DOCRELAY_DB_TIMEOUT = 'soon';
+    expect(dbBusyTimeoutMs()).toBe(5000);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('DOCRELAY_DB_TIMEOUT'));
   });
 });

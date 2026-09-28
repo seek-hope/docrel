@@ -301,8 +301,10 @@ program
       // If the database query itself failed, report.error is set — treat
       // this as a hard failure regardless of staleDoc count or output format.
       if (report.error) {
+        // Exit 2 (distinct from 1 = stale docs): the git hooks use this to
+        // print infrastructure guidance instead of the stale-docs message.
         console.error('DocRelay check failed:', report.error);
-        exit(1);
+        exit(2);
       }
       let filtered = report.staleDocs;
       let filteredPassed = report.passed;
@@ -338,6 +340,10 @@ program
         exit(1);
       }
     } catch (err: any) {
+      // An intentional exit() above must keep its code (1 = stale, 2 =
+      // infrastructure). In the test harness the mocked process.exit
+      // throws; rethrow that signal instead of reclassifying it.
+      if (exitRequested) throw err;
       console.error('Check failed:', errMsg(err));
       exit(1);
     }
