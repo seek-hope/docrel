@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   MarkdownParser,
   RstParser,
@@ -653,5 +653,222 @@ describe('Edge cases', () => {
         { name: 'bar()', type: 'backtick' },
       ]),
     );
+  });
+});
+
+// ── Branch coverage: resource guards, preambles, bracket-counting paths ────
+
+describe('parser resource guards and preamble capture', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('markdown: skips files exceeding MAX_DOC_LINES', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new MarkdownParser();
+    const sections = p.parse('big.md', 'x\n'.repeat(100_001));
+    expect(sections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('MarkdownParser'));
+  });
+
+  it('markdown: captures preamble before the first heading as a top section', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('guide.md', 'preamble intro\n\n## First\nbody text');
+    expect(sections).toHaveLength(2);
+    expect(sections[0].anchor).toBe('');
+    expect(sections[0].content).toContain('preamble intro');
+    expect(sections[1].anchor).toBe('First');
+  });
+
+  it('rst: skips files exceeding MAX_DOC_LINES', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new RstParser();
+    const sections = p.parse('big.rst', 'x\n'.repeat(100_001));
+    expect(sections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('RstParser'));
+  });
+
+  it('rst: captures preamble before the first heading as a top section', () => {
+    const p = new RstParser();
+    const content = ['preamble text', '', 'First', '=====', 'body text'].join('\n');
+    const sections = p.parse('guide.rst', content);
+    expect(sections).toHaveLength(2);
+    expect(sections[0].anchor).toBe('');
+    expect(sections[0].content).toContain('preamble text');
+    expect(sections[1].anchor).toBe('First');
+  });
+
+  it('asciidoc: skips files exceeding MAX_DOC_LINES', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new AsciidocParser();
+    const sections = p.parse('big.adoc', 'x\n'.repeat(100_001));
+    expect(sections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('AsciidocParser'));
+  });
+
+  it('asciidoc: captures preamble before the first heading as a top section', () => {
+    const p = new AsciidocParser();
+    const sections = p.parse('guide.adoc', 'preamble text\n\n== First\nbody text');
+    expect(sections).toHaveLength(2);
+    expect(sections[0].anchor).toBe('');
+    expect(sections[0].content).toContain('preamble text');
+    expect(sections[1].anchor).toBe('First');
+  });
+
+  it('html: skips content exceeding the 10MB size limit', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new HtmlParser();
+    const sections = p.parse('big.html', 'a'.repeat(10 * 1024 * 1024 + 1));
+    expect(sections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceeds 10485760 bytes'));
+  });
+
+  it('html: caps heading matches at MAX_HEADINGS', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new HtmlParser();
+    const sections = p.parse('many.html', '<h1>x</h1>'.repeat(50_001));
+    expect(sections).toHaveLength(50_000);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('50000 headings'));
+  });
+
+  it('html: captures preamble before the first heading tag as a top section', () => {
+    const p = new HtmlParser();
+    const sections = p.parse('guide.html', '<p>intro para</p>\n<h1>Title</h1>\n<p>body text</p>');
+    expect(sections).toHaveLength(2);
+    expect(sections[0].anchor).toBe('');
+    expect(sections[0].content).toContain('intro para');
+    expect(sections[1].anchor).toBe('Title');
+  });
+
+  it('html: skips content exceeding MAX_HTML_LINES', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new HtmlParser();
+    const content = '<h1>T</h1>\n' + 'x\n'.repeat(100_001);
+    const sections = p.parse('long.html', content);
+    expect(sections).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('exceeding 100000'));
+  });
+
+  it('html: caps extracted code refs at MAX_CODE_REFS_PER_FILE', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new HtmlParser();
+    const lines = Array.from({ length: 6000 }, (_, i) => `<code>fn${i}()</code>`);
+    const sections = p.parse('refs.html', '<h1>T</h1>\n' + lines.join('\n'));
+    expect(sections).toHaveLength(1);
+    expect(sections[0].codeRefs).toHaveLength(10_000);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('reached limit of 10000 refs'));
+  });
+
+  it('html: warns when a pre block exceeds MAX_PRE_LINES', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const p = new HtmlParser();
+    const preLines = Array.from({ length: 5001 }, (_, i) => `code_line_${i}`);
+    const content = '<h1>T</h1>\n<pre>\n' + preLines.join('\n') + '\n</pre>';
+    const sections = p.parse('pre.html', content);
+    expect(sections).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('extractPreContent'));
+  });
+});
+
+// ── Branch coverage: bracket-counting and heading extraction paths ─────────
+
+describe('backtick call bracket counting', () => {
+  it('extracts backtick calls with nested backticks inside arguments', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## API\nUse `foo(`inner`)` here.');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'foo(`inner`)', type: 'backtick' }]),
+    );
+  });
+
+  it('skips escaped backticks inside nested backtick arguments', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## API\nUse `foo(`a\\`b`)` here.');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'foo(`a\\`b`)', type: 'backtick' }]),
+    );
+  });
+
+  it('scan-ahead adjusts paren depth between the call and its closing backtick', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## API\nUse `foo(a) extra (b)` here.');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'foo(a) extra (b)', type: 'backtick' }]),
+    );
+  });
+
+  it('ignores unterminated backtick calls', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## API\nUse `foo(bar here.');
+    const refs = collectCodeRefs(sections);
+    expect(refs.find((r) => r.name.startsWith('foo('))).toBeUndefined();
+  });
+
+  it('accepts a depth-zero closing backtick after a failed scan-ahead', () => {
+    // Pathological input: the first `) brings depth to 0 but the scan-ahead
+    // finds a backtick while depth is negative (extra `)`), so extraction
+    // continues; the nested `` pair opens/closes, two `(` bring depth back
+    // to exactly 0, and the next backtick terminates the expression.
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## API\nUse `foo(a))``((` here.');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'foo(a))``((', type: 'backtick' }]),
+    );
+  });
+});
+
+describe('heading and body-text identifier extraction', () => {
+  it('treats snake_case words as code-like bodytext refs', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## Config\nSet your_api_key first.');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'your_api_key', type: 'bodytext' }]),
+    );
+  });
+
+  it('extracts backtick symbol refs from headings', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## `login` Flow\nbody text');
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'login', type: 'heading' }]),
+    );
+  });
+
+  it('skips heading function-call extraction when parens are unbalanced', () => {
+    const p = new MarkdownParser();
+    const sections = p.parse('t.md', '## foo(bar\nbody text');
+    const refs = collectCodeRefs(sections);
+    expect(refs.find((r) => r.type === 'heading')).toBeUndefined();
+    expect(refs.find((r) => r.name.startsWith('foo('))).toBeUndefined();
+  });
+});
+
+describe('rst code block termination', () => {
+  it('ends a code block at a blank line followed by unindented text', () => {
+    const p = new RstParser();
+    const content = [
+      'Title',
+      '=====',
+      '',
+      '.. code::',
+      '',
+      '    some_call()',
+      '',
+      'After other_func() text.',
+    ].join('\n');
+    const sections = p.parse('t.rst', content);
+    const refs = collectCodeRefs(sections);
+    expect(refs).toEqual(
+      expect.arrayContaining([{ name: 'some_call()', type: 'codeblock' }]),
+    );
+    // The unindented line after the blank line is outside the code block, so
+    // other_func() must not be captured as a codeblock ref.
+    expect(refs.filter((r) => r.type === 'codeblock')).toHaveLength(1);
   });
 });
