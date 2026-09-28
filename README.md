@@ -231,9 +231,10 @@ doc-relay export-mappings
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — install, init, the daily loop
-- [CLI reference](docs/cli-reference.md) — all 23 commands and flags
+- [CLI reference](docs/cli-reference.md) — all 25 commands and flags
 - [Configuration](docs/configuration.md) — `.docrelay/config.yaml` options
 - [MCP integration](docs/mcp-integration.md) — agent setup and all 16 tools
+- [CI/CD integration](docs/ci.md) — GitHub Actions, GitLab CI, status badges
 - [Architecture](docs/architecture.md) — the relational sync model
 
 ## FAQ

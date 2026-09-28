@@ -9,7 +9,7 @@ import { loadConfig, validateConfig } from './utils/config.js';
 import { CodegraphClient } from './codegraph/client.js';
 import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelayStatus } from './tools/status.js';
-import { docrelayCheck, formatCheckMarkdown, formatCheckCI } from './tools/check.js';
+import { docrelayCheck, formatCheckMarkdown, formatCheckCI, formatCheckShields } from './tools/check.js';
 import { docrelayImpact, formatImpactMarkdown } from './tools/impact.js';
 import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
@@ -285,7 +285,7 @@ program
   .description('Check for stale documentation')
   .option('--strict', 'Exit with code 1 if any docs are stale', false)
   .option('--file <file>', 'Check only a specific file')
-  .option('--format <format>', 'Output format: json, markdown, or ci', 'json')
+  .option('--format <format>', 'Output format: json, markdown, ci, or shields', 'json')
   .action(async (opts) => {
     try {
       await ensureContext();
@@ -321,6 +321,8 @@ program
         console.log(formatCheckMarkdown(outputReport));
       } else if (opts.format === 'ci') {
         console.log(formatCheckCI(outputReport));
+      } else if (opts.format === 'shields') {
+        console.log(formatCheckShields(outputReport));
       } else {
         console.log(JSON.stringify(outputReport, null, 2));
       }

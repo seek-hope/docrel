@@ -159,6 +159,18 @@ describe('CLI smoke', () => {
     expect(Array.isArray(JSON.parse(fs.readFileSync(outFile, 'utf-8')))).toBe(true);
   });
 
+  it('check --format shields emits a shields.io endpoint payload', { timeout: 120_000 }, () => {
+    expect(run(['init', '--no-hooks', '--no-scan', '--no-integrate'], tmpDir).code).toBe(0);
+    expect(run(['scan'], tmpDir).code).toBe(0);
+
+    const r = run(['check', '--format', 'shields'], tmpDir);
+    expect(r.code).toBe(0);
+    const payload = JSON.parse(r.stdout) as { schemaVersion: number; label: string; message: string; color: string };
+    expect(payload.schemaVersion).toBe(1);
+    expect(payload.label).toBe('docs');
+    expect(['in sync', expect.stringContaining('stale')]).toContainEqual(payload.message);
+  });
+
   it('history lists decisions recorded by confirm --all', { timeout: 120_000 }, () => {
     expect(run(['init', '--no-hooks', '--no-scan', '--no-integrate'], tmpDir).code).toBe(0);
     expect(run(['scan'], tmpDir).code).toBe(0);

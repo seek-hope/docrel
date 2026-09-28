@@ -30,9 +30,11 @@ Health dashboard: symbol count, linked %, stale doc count, watch state.
 8-point system check: config validity, DB readability/writability, git hooks,
 codegraph availability, scan freshness, and more. Exits 1 when unhealthy.
 
-### `check [--strict] [--file <file>] [--format json|markdown|ci]`
+### `check [--strict] [--file <file>] [--format json|markdown|ci|shields]`
 List stale documentation sections. `--strict` exits 1 when anything is stale
-(used by the git hooks and CI).
+(used by the git hooks and CI). `--format shields` prints a shields.io
+endpoint JSON payload for documentation-health badges (see
+[CI/CD integration](ci.md#status-badges)).
 
 ### `impact <paths...> [--format json|markdown|ci]`
 Show which documentation sections are affected by the given changed files.

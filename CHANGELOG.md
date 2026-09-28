@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.3.1] - 2026-09-28
 
 ### Added
+- Status badges + GitLab CI template (completes the 0.3.2 CI/CD roadmap
+  item): `doc-relay check --format shields` prints a shields.io endpoint
+  JSON payload (`docs: in sync / N stale`), `docs/templates/gitlab-ci.yml`
+  ships a copy-paste pipeline (check job + GitLab Pages badge job), and the
+  new [CI/CD integration guide](docs/ci.md) covers GitHub Actions, GitLab
+  CI, and badge publishing.
 - Review history: every confirm/reject decision is recorded in a new
   append-only `review_history` table (schema v5) with actor attribution
   (`cli` vs `mcp`). Inspect it with `doc-relay history [--limit n]

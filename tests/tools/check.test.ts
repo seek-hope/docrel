@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertDocSection, markDocStale } from '../../src/db/docs.js';
-import { docrelayCheck, formatCheckMarkdown, formatCheckCI } from '../../src/tools/check.js';
+import { docrelayCheck, formatCheckMarkdown, formatCheckCI, formatCheckShields } from '../../src/tools/check.js';
 import { docSectionId } from '../../src/utils/hash.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -150,6 +150,31 @@ describe('docrelayCheck', () => {
       };
       const ci = formatCheckCI(report);
       expect(ci).toContain('file=docs/a%2Cb.md');
+    });
+  });
+
+  describe('formatCheckShields', () => {
+    it('reports brightgreen "in sync" when no docs are stale', () => {
+      const report = { passed: true, staleDocs: [], summary: 'All documentation is in sync.' };
+      const payload = JSON.parse(formatCheckShields(report)) as Record<string, unknown>;
+      expect(payload).toEqual({ schemaVersion: 1, label: 'docs', message: 'in sync', color: 'brightgreen' });
+    });
+
+    it('reports the stale count in red when docs are stale', () => {
+      const mkStale = (id: string) => ({
+        id, file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone', status: 'stale', linkedSymbols: [],
+      });
+      const report = { passed: false, staleDocs: [mkStale('d1'), mkStale('d2'), mkStale('d3')], summary: '3 stale' };
+      const payload = JSON.parse(formatCheckShields(report)) as Record<string, unknown>;
+      expect(payload.message).toBe('3 stale');
+      expect(payload.color).toBe('red');
+    });
+
+    it('emits compact single-line JSON parseable by shields.io', () => {
+      const report = { passed: true, staleDocs: [], summary: 'ok' };
+      const out = formatCheckShields(report);
+      expect(out).not.toContain('\n');
+      expect(() => JSON.parse(out)).not.toThrow();
     });
   });
 });

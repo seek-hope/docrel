@@ -59,10 +59,10 @@
 - [ ] Custom extractors
 - [ ] Custom generators
 
-### ✅ 0.3.2 — CI/CD Integration (partial)
+### ✅ 0.3.2 — CI/CD Integration
 - [x] **GitHub Actions workflow**: `.github/workflows/docsync.yml`
-- [ ] GitLab CI template (deferred)
-- [ ] Status badges (deferred)
+- [x] **GitLab CI template**: `docs/templates/gitlab-ci.yml` + [CI/CD guide](docs/ci.md)
+- [x] **Status badges**: `docsync check --format shields` emits a shields.io endpoint payload
 
 ### ✅ 0.3.3 — Database Improvements (partial)
 - [x] **Backup/restore**: `docsync backup` and `docsync restore` commands

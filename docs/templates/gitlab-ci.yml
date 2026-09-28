@@ -1,0 +1,35 @@
+# DocRelay documentation-health check for GitLab CI.
+#
+# Copy these jobs into your .gitlab-ci.yml (or `include:` this file).
+# Prerequisite: commit your .docrelay/config.yaml so CI can load it.
+# The DocRelay database lives in .git/, which GitLab always clones fresh,
+# so each job starts with a clean scan — no cache needed.
+
+docrelay:check:
+  stage: test
+  image: node:22
+  script:
+    - npm install --global doc-relay
+    - doc-relay scan
+    # Fails the pipeline when any documentation is stale.
+    - doc-relay check --strict
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Optional: publish a shields.io endpoint badge via GitLab Pages.
+# Badge markdown (adjust group/project):
+#   ![docs](https://img.shields.io/endpoint?url=https://<group>.gitlab.io/<project>/docs-badge.json)
+docrelay:badge:
+  stage: deploy
+  image: node:22
+  script:
+    - npm install --global doc-relay
+    - doc-relay scan
+    - mkdir -p public
+    - doc-relay check --format shields > public/docs-badge.json
+  artifacts:
+    paths:
+      - public
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

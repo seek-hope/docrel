@@ -136,3 +136,17 @@ export function formatCheckCI(report: CheckReport): string {
 
   return lines.join('\n') + '\n';
 }
+
+/**
+ * Format a CheckReport as a shields.io endpoint JSON payload, suitable for
+ * generating a documentation-health badge in CI (write it to a file, publish
+ * it via GitHub/GitLab Pages or an artifact, then point
+ * `https://img.shields.io/endpoint?url=...` at the hosted JSON).
+ */
+export function formatCheckShields(report: CheckReport): string {
+  const stale = report.staleDocs.length;
+  const payload = report.passed
+    ? { schemaVersion: 1, label: 'docs', message: 'in sync', color: 'brightgreen' }
+    : { schemaVersion: 1, label: 'docs', message: `${stale} stale`, color: 'red' };
+  return JSON.stringify(payload);
+}

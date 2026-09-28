@@ -195,9 +195,10 @@ doc-relay export-mappings
 ## 文档
 
 - [快速上手](docs/getting-started.md) — 安装、初始化、日常工作流
-- [CLI 参考](docs/cli-reference.md) — 全部 23 个命令及参数
+- [CLI 参考](docs/cli-reference.md) — 全部 25 个命令及参数
 - [配置说明](docs/configuration.md) — `.docrelay/config.yaml` 配置项
 - [MCP 集成](docs/mcp-integration.md) — Agent 接入与全部 16 个工具
+- [CI/CD 集成](docs/ci.md) — GitHub Actions、GitLab CI、状态徽章
 - [架构](docs/architecture.md) — 关系型同步模型
 
 ## 常见问题
