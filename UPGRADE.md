@@ -7,7 +7,7 @@
 ## Current State (v0.3.1, 2026-09)
 
 - 47 TypeScript source files, ~13,400 lines (ES2023, NodeNext, pure ESM)
-- 63 test files, **1009 tests**, coverage 95.2/88.1/94.9/96.1
+- 64 test files, **1036 tests**, coverage 95.3/88.4/95.0/96.2
   (stmts/branch/funcs/lines, ratcheting CI gate)
 - MCP server (17 tools, in-process testable via `createDocrelayServer`)
   + CLI (27 commands, thin shim → `cli-main`)
@@ -107,6 +107,17 @@
   pinned to the supported runtime floor (Node 22).
 - **LLM features (0.4.0/0.4.1)** — all opt-in, graceful degradation
   without an API key; no network calls in the default configuration.
+- **Auto-link inverted token index** — the remaining scan hotspot after
+  the 0.3.1 perf campaign (pair-eval ~48% of full scan: fuzzyNorm LCS,
+  scoreProfile, fastScoreProfile). Sketch: pass-2 symbols provably have
+  no heading-word/backtick matches (pass 1 linked those), so a superset
+  filter can skip hopeless pairs: 4-gram index on
+  nameNorm × (headingNorm + refNorms), plus watertight buckets for
+  short names (<4 grams), short heading/refNorms, exact-name, fileStem,
+  and names containing non-word chars. Every bucket must be watertight
+  or links silently vanish — verify via the differential-corpora
+  methodology used for the 0.3.1 scan/sync refactors (byte-identical
+  symbols/doc_sections/mappings dumps old vs new).
 
 ---
 
