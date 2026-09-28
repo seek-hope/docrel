@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { enableCompileCache } from 'node:module';
+
 /**
  * Entry shim for the `doc-relay` / `docrelay` binaries.
  *
@@ -29,6 +31,16 @@ function isMissingSqliteBinding(err: unknown): boolean {
   }
   return false;
 }
+
+// Enable the V8 compile cache BEFORE loading the (large) CLI module graph:
+// compiled bytecode is then reused across process runs, cutting startup
+// latency for every command — the git hooks invoke this binary on every
+// commit, and agents spawn it per session. Node >= 22.1 ships
+// enableCompileCache (our floor is 22.12); the try/catch keeps startup
+// alive on runtimes where it is unavailable or the cache dir is unwritable.
+try {
+  enableCompileCache();
+} catch { /* best-effort startup optimization — never block the CLI */ }
 
 try {
   await import('./cli-main.js');

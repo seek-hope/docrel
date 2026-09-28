@@ -222,6 +222,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sections) loop — it previously compiled (and re-escaped) an identical
   RegExp for every pair. Measured at the same bench scale: review
   1094ms → 446ms (2.5×).
+- CLI startup is ~25% faster: the entry shim enables the V8 compile
+  cache before loading the module graph (`module.enableCompileCache()`,
+  floor Node 22.12 covers it), so bytecode is reused across process
+  runs — measured 123-133ms → 91-103ms on `--version`, and it applies
+  to every command including the per-commit git-hook invocations. The
+  sync engine and the diff/history/gc/backup tool modules also moved
+  behind per-command dynamic imports (matching the existing
+  watch/review/mcp pattern), so the static graph only carries what the
+  hot commands need.
 - DB layer: hot helpers (`upsertSymbol`, `upsertDocSection`,
   `createMapping`, the ingest existence pre-check) now share a per-database
   prepared-statement cache (`src/db/statements.ts`) instead of recompiling

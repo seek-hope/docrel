@@ -10,12 +10,8 @@ import type { SymbolExtractor } from './extractors/interface.js';
 import { docrelayStatus } from './tools/status.js';
 import { docrelayCheck, formatCheckMarkdown, formatCheckCI, formatCheckShields } from './tools/check.js';
 import { docrelayImpact, formatImpactMarkdown } from './tools/impact.js';
-import { syncSymbol, syncAllStale } from './sync/engine.js';
 import { docrelayLink, docrelayConfirm, docrelayReject } from './tools/link.js';
-import { docrelayDiff, formatDiffMarkdown } from './tools/diff.js';
-import { docrelayHistory, formatHistoryMarkdown } from './tools/history.js';
 import { installHooks, prepareCommitMsg } from './git/hooks.js';
-import { pruneBackups } from './tools/backup.js';
 import { exportMappingsJson } from './db/mappings.js';
 import { scanProject, readLastScanAt } from './discovery/scanner.js';
 import { checkForUpdates, isNewer } from './utils/update-check.js';
@@ -23,7 +19,6 @@ import { DOCRELAY_VERSION } from './version.js';
 import { detectAgent } from './agents/detector.js';
 import type { AgentKind } from './agents/detector.js';
 import { integrate } from './agents/integrate.js';
-import { docrelayGc } from './tools/gc.js';
 import { stringify as stringifyYaml } from 'yaml';
 import {
   errMsg as errMsgSupport,
@@ -364,6 +359,10 @@ program
   .action(async (opts) => {
     try {
       await ensureContext();
+      // Lazy-loaded: the sync engine pulls in the inline/standalone/generated
+      // updaters — the single heaviest module in the CLI graph (~20ms) — and
+      // only this command needs it.
+      const { syncSymbol, syncAllStale } = await import('./sync/engine.js');
       if (opts.allStale) {
         const result = await syncAllStale(db, codegraph, config, projectRoot);
         console.log(JSON.stringify(result, null, 2));
@@ -538,6 +537,7 @@ program
   .action(async (symbolId, opts) => {
     try {
       await ensureContext();
+      const { docrelayDiff, formatDiffMarkdown } = await import('./tools/diff.js');
       const diff = docrelayDiff(db, symbolId);
       if (!diff.found) {
         console.error(diff.message || 'Symbol not found');
@@ -568,6 +568,7 @@ program
         console.error('--limit must be a positive integer');
         exit(1);
       }
+      const { docrelayHistory, formatHistoryMarkdown } = await import('./tools/history.js');
       const result = docrelayHistory(db, { limit, symbol_id: opts.symbol });
       if (!result.ok) {
         console.error(result.message || 'History query failed');
@@ -1098,6 +1099,7 @@ program
       const scanReport = await scanProject(gcExtractor, db, config, projectRoot);
 
       console.error('Running garbage collection...');
+      const { docrelayGc } = await import('./tools/gc.js');
       const gcReport = docrelayGc(db, scanReport, opts.dryRun ?? false);
 
       if (gcReport.error) {
@@ -1161,6 +1163,7 @@ program
         exit(1);
       }
       if (keep > 0) {
+        const { pruneBackups } = await import('./tools/backup.js');
         const { removed } = pruneBackups(path.dirname(resolvedDest), keep);
         if (removed.length > 0) {
           console.log(`Pruned ${removed.length} old backup(s); kept the ${keep} most recent.`);
