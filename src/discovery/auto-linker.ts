@@ -25,16 +25,11 @@ function normalize(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-/** Check if `haystack` contains `needle` as a case-insensitive substring. */
-function containsIgnoreCase(needle: string, haystack: string): boolean {
-  if (!needle || !haystack) return false;
-  return haystack.toLowerCase().includes(needle.toLowerCase());
-}
-
-/** Check if `needle` is a fuzzy substring of `haystack` (case-insensitive). */
-function isFuzzySubstring(needle: string, haystack: string): boolean {
-  const n = normalize(needle);
-  const h = normalize(haystack);
+/** Fuzzy-substring check on PRE-normalized strings. autoLink evaluates
+ *  O(symbols × sections) pairs, so both sides are normalized once up front
+ *  (see buildSymbolProfile/buildSectionProfile) instead of per pair —
+ *  identical semantics to normalizing inside the call, minus the repeated work. */
+function fuzzyNorm(n: string, h: string): boolean {
   if (!n || !h) return false;
   // Direct containment
   if (h.includes(n) || n.includes(h)) return true;
@@ -87,6 +82,85 @@ function fileStem(filePath: string): string {
   return noExt.toLowerCase().replace(/[/\\]+/g, '');
 }
 
+// ── Precomputed scoring profiles ─────────────────────────────────────────────
+// Everything in these structures depends on exactly ONE side of a
+// symbol × section pair. autoLink's pair loop is O(N×M), so per-side work is
+// computed once per call instead of per pair — previously every pair re-ran
+// escapeRegex, compiled fresh RegExp objects, re-normalized both strings, and
+// re-stripped every codeRef, which dominated full-scan time on large projects.
+
+interface SymbolProfile {
+  row: SymbolRow;
+  /** name with a trailing "(...)" call signature stripped. */
+  nameClean: string;
+  nameCleanLower: string;
+  /** normalize(nameClean) — fuzzy needle side. */
+  nameNorm: string;
+  /** (?:^|\b)nameClean(?:\b|$) case-insensitive — shared by the heading and
+   *  body-text rules (no /g flag, so reuse across .test() calls is safe). */
+  wordRe: RegExp;
+  /** nameClean.length >= 4 && isCodeLikeIdentifier(nameClean) — body-text gate. */
+  codeLike: boolean;
+  hasLocation: boolean;
+  fileStemLower: string;
+}
+
+interface SectionRefProfile {
+  refType: string;
+  symbolName: string;
+  /** symbolName with a trailing "(...)" stripped. */
+  refClean: string;
+  /** normalize(symbolName) — fuzzy haystack side (heading refs). */
+  refNorm: string;
+}
+
+interface SectionProfile {
+  section: ParsedDocSection;
+  heading: string;
+  headingLower: string;
+  /** normalize(heading) — fuzzy haystack side. */
+  headingNorm: string;
+  content: string;
+  hasFile: boolean;
+  fileStemLower: string;
+  refs: SectionRefProfile[];
+}
+
+function buildSymbolProfile(symbol: SymbolRow): SymbolProfile {
+  const nameClean = symbol.name.replace(/\(.*\)$/, '');
+  const location = (symbol.location || '').toLowerCase().replace(/\\/g, '/');
+  return {
+    row: symbol,
+    nameClean,
+    nameCleanLower: nameClean.toLowerCase(),
+    nameNorm: normalize(nameClean),
+    wordRe: new RegExp('(?:^|\\b)' + escapeRegex(nameClean) + '(?:\\b|$)', 'i'),
+    codeLike: nameClean.length >= 4 && isCodeLikeIdentifier(nameClean),
+    hasLocation: location.length > 0,
+    fileStemLower: location ? fileStem(location.split('/').pop() || location) : '',
+  };
+}
+
+function buildSectionProfile(section: ParsedDocSection): SectionProfile {
+  const heading = section.anchor || '';
+  const docFile = section.file.toLowerCase().replace(/\\/g, '/');
+  return {
+    section,
+    heading,
+    headingLower: heading.toLowerCase(),
+    headingNorm: normalize(heading),
+    content: section.content || '',
+    hasFile: docFile.length > 0,
+    fileStemLower: docFile ? fileStem(docFile.split('/').pop() || docFile) : '',
+    refs: (section.codeRefs ?? []).map((ref) => ({
+      refType: ref.refType,
+      symbolName: ref.symbolName,
+      refClean: ref.symbolName.replace(/\(.*\)$/, ''),
+      refNorm: normalize(ref.symbolName),
+    })),
+  };
+}
+
 // ── Confidence scoring ───────────────────────────────────────────────────────
 
 interface ScoreResult {
@@ -96,35 +170,34 @@ interface ScoreResult {
 
 /**
  * Compute the highest confidence score for a symbol↔doc-section pair.
- * Returns { confidence, matched } where matched=true when confidence >= minConfidence.
+ * Profile-based twin of the original scorePair: every per-side value
+ * (cleaned names, word-boundary regex, normalized strings, file stems,
+ * cleaned codeRefs) comes precomputed from the profiles — the rule logic
+ * and confidences are unchanged.
  */
-function scorePair(
-  symbol: SymbolRow,
-  section: ParsedDocSection,
+function scoreProfile(
+  sp: SymbolProfile,
+  cp: SectionProfile,
   minConfidence: number,
 ): ScoreResult {
-  const symName = symbol.name;
-  const symNameClean = symName.replace(/\(.*\)$/, ''); // strip "login()" → "login"
-  const heading = section.anchor || '';
-  const content = section.content || '';
-
   // Cumulative confidence from concrete evidence (name/ref matches). The
   // strongest single piece of evidence wins; we then optionally apply a small
   // file-name convention boost on top when *other* evidence already exists.
   let best = 0;
 
   // 1. Exact word match in heading (confidence 1.0).
-  // Use word-boundary regex to prevent substring matches like symbol 'get'
+  // The word-boundary regex prevents substring matches like symbol 'get'
   // matching heading 'Getting Started' or 'a' matching any heading.
   // Left side uses (?:^|\b) so symbols starting with non-word chars (e.g.
   // $special_fn) still match at the start of the heading.
-  if (heading.length > 0) {
-    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
-    if (wordBoundaryRe.test(heading)) {
+  if (cp.heading.length > 0) {
+    if (sp.wordRe.test(cp.heading)) {
       best = 1.0;
-    } else if (containsIgnoreCase(symNameClean, heading) && symNameClean.length >= 3) {
+    } else if (sp.nameClean.length >= 3 && cp.headingLower.includes(sp.nameCleanLower)) {
       // 1b. Substring match in heading (confidence 0.7) — weaker signal,
       // catches partial-name matches like 'getUser' in 'getUserProfile'.
+      // (nameClean is non-empty whenever length >= 3, so the empty-needle
+      // guard of the old containsIgnoreCase helper is preserved.)
       best = Math.max(best, 0.7);
     }
   }
@@ -134,12 +207,12 @@ function scorePair(
   //   codeblock 0.7 — inside a fenced code sample
   //   heading   0.6 — symbol captured from a heading token
   //   bodytext  0.4 — bare identifier in prose (weak, e.g. "the login function")
-  for (const ref of (section.codeRefs ?? [])) {
-    const refClean = ref.symbolName.replace(/\(.*\)$/, '');
-    const refEq = refClean === symNameClean ||
-      refClean === symName ||
+  const symName = sp.row.name;
+  for (const ref of cp.refs) {
+    const refEq = ref.refClean === sp.nameClean ||
+      ref.refClean === symName ||
       ref.symbolName === symName ||
-      ref.symbolName === symNameClean;
+      ref.symbolName === sp.nameClean;
 
     switch (ref.refType) {
       case 'backtick':
@@ -150,7 +223,7 @@ function scorePair(
         break;
       case 'heading':
         // Also allow fuzzy match against a heading-captured ref.
-        if (refEq || isFuzzySubstring(symNameClean, ref.symbolName)) best = Math.max(best, 0.6);
+        if (refEq || fuzzyNorm(sp.nameNorm, ref.refNorm)) best = Math.max(best, 0.6);
         break;
       case 'bodytext':
         // Weak evidence from a bare identifier mentioned in prose. Matches
@@ -164,7 +237,7 @@ function scorePair(
   }
 
   // 4. Fuzzy heading match (confidence 0.6)
-  if (heading.length > 0 && isFuzzySubstring(symNameClean, heading)) {
+  if (cp.heading.length > 0 && fuzzyNorm(sp.nameNorm, cp.headingNorm)) {
     best = Math.max(best, 0.6);
   }
 
@@ -173,11 +246,8 @@ function scorePair(
   // PascalCase, snake_case). Minimum 4 characters; all-lowercase names are
   // only reachable via 'bodytext' codeRefs produced by doc-parser so that
   // plain English prose (which is all-lowercase) stays hard to match.
-  if (symNameClean.length >= 4 && isCodeLikeIdentifier(symNameClean)) {
-    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
-    if (wordBoundaryRe.test(content) || wordBoundaryRe.test(heading)) {
-      best = Math.max(best, 0.4);
-    }
+  if (sp.codeLike && (sp.wordRe.test(cp.content) || sp.wordRe.test(cp.heading))) {
+    best = Math.max(best, 0.4);
   }
 
   // 5. File-name convention — now a *boost* only, never a standalone match.
@@ -186,14 +256,9 @@ function scorePair(
   // pair, but identical stems alone never create a link — that caused massive
   // false positives where every symbol in a file got linked to every section
   // of the same-named doc. +0.1, capped at 1.0.
-  const symLocation = (symbol.location || '').toLowerCase().replace(/\\/g, '/');
-  const docFile = section.file.toLowerCase().replace(/\\/g, '/');
-  if (best > 0 && symLocation && docFile) {
-    const symFileStem = fileStem(symLocation.split('/').pop() || symLocation);
-    const docFileStem = fileStem(docFile.split('/').pop() || docFile);
-    if (symFileStem === docFileStem && symFileStem.length > 0) {
-      best = Math.min(1.0, best + 0.1);
-    }
+  if (best > 0 && sp.hasLocation && cp.hasFile &&
+      sp.fileStemLower === cp.fileStemLower && sp.fileStemLower.length > 0) {
+    best = Math.min(1.0, best + 0.1);
   }
 
   return { confidence: best, matched: best >= minConfidence };
@@ -218,31 +283,24 @@ function isCodeLikeIdentifier(name: string): boolean {
 /**
  * Fast scoring for pass 1: only checks exact matches (heading word boundary
  * and backtick exact match). These are the highest-confidence rules and are
- * cheap to compute. Returns confidence (1.0, 0.9) or 0 if no match.
+ * cheap to compute on precomputed profiles. Returns confidence (1.0, 0.9)
+ * or 0 if no match.
  */
-function fastScorePair(symbol: SymbolRow, section: ParsedDocSection): number {
-  const symName = symbol.name;
-  const symNameClean = symName.replace(/\(.*\)$/, '');
-  const heading = section.anchor || '';
-
+function fastScoreProfile(sp: SymbolProfile, cp: SectionProfile): number {
   // 1. Exact word match in heading (confidence 1.0)
-  if (heading.length > 0) {
-    const wordBoundaryRe = new RegExp('(?:^|\\b)' + escapeRegex(symNameClean) + '(?:\\b|$)', 'i');
-    if (wordBoundaryRe.test(heading)) {
-      return 1.0;
-    }
+  if (cp.heading.length > 0 && sp.wordRe.test(cp.heading)) {
+    return 1.0;
   }
 
   // 2. Backtick match (confidence 0.9)
-  for (const ref of (section.codeRefs ?? [])) {
-    if (ref.refType === 'backtick') {
-      const refClean = ref.symbolName.replace(/\(.*\)$/, '');
-      if (refClean === symNameClean ||
-          refClean === symName ||
-          ref.symbolName === symName ||
-          ref.symbolName === symNameClean) {
-        return 0.9;
-      }
+  const symName = sp.row.name;
+  for (const ref of cp.refs) {
+    if (ref.refType === 'backtick' &&
+        (ref.refClean === sp.nameClean ||
+         ref.refClean === symName ||
+         ref.symbolName === symName ||
+         ref.symbolName === sp.nameClean)) {
+      return 0.9;
     }
   }
 
@@ -336,6 +394,13 @@ export function autoLink(
   // These are skipped in pass 2 to avoid low-confidence false positives.
   const linkedSymbolIds = new Set<string>();
 
+  // Precompute one scoring profile per side — everything the pair loop needs
+  // that depends on a single side (cleaned names, word-boundary regexes,
+  // normalized strings, file stems, cleaned codeRefs). Building these inside
+  // the O(symbols × sections) loop dominated full-scan time on large projects.
+  const symbolProfiles = symbols.map(buildSymbolProfile);
+  const sectionProfiles = docSections.map(buildSectionProfile);
+
   // ── Pass 1: Exact matches only (heading word boundary + backtick) ──────
   // This pass is O(symbols × sections) but each comparison is cheap (no
   // fuzzy substring, no codeRef iteration beyond backtick). For a 2000×500
@@ -343,7 +408,7 @@ export function autoLink(
 
   const totalPairs = symbols.length * docSections.length;
   let evaluatedPairs = 0;
-  for (const symbol of symbols) {
+  for (const sp of symbolProfiles) {
     if (timedOut()) {
       const dropped = totalPairs - evaluatedPairs;
       console.warn(`DocRelay: autoLink timed out after ${AUTO_LINK_TIMEOUT_MS}ms during pass 1 — returning partial results (${dropped} symbol×section pairs not evaluated).`);
@@ -356,16 +421,16 @@ export function autoLink(
       };
     }
 
-    for (const section of docSections) {
+    for (const cp of sectionProfiles) {
       evaluatedPairs++;
-      const conf = fastScorePair(symbol, section);
+      const conf = fastScoreProfile(sp, cp);
       if (conf === 0) continue;
 
-      const docId = tryDocSectionId(section);
+      const docId = tryDocSectionId(cp.section);
       if (!docId) continue;
 
-      if (tryCreateMapping(db, symbol, docId, conf, existingKeys, counters)) {
-        linkedSymbolIds.add(symbol.id);
+      if (tryCreateMapping(db, sp.row, docId, conf, existingKeys, counters)) {
+        linkedSymbolIds.add(sp.row.id);
       }
     }
   }
@@ -375,8 +440,8 @@ export function autoLink(
   // This is typically a much smaller set, so the expensive isFuzzySubstring
   // calls are bounded to a fraction of the total symbol×section space.
 
-  for (const symbol of symbols) {
-    if (linkedSymbolIds.has(symbol.id)) continue;
+  for (const sp of symbolProfiles) {
+    if (linkedSymbolIds.has(sp.row.id)) continue;
 
     if (timedOut()) {
       const dropped = totalPairs - evaluatedPairs;
@@ -384,15 +449,15 @@ export function autoLink(
       break;
     }
 
-    for (const section of docSections) {
+    for (const cp of sectionProfiles) {
       evaluatedPairs++;
-      const score = scorePair(symbol, section, minConfidence);
+      const score = scoreProfile(sp, cp, minConfidence);
       if (!score.matched) continue;
 
-      const docId = tryDocSectionId(section);
+      const docId = tryDocSectionId(cp.section);
       if (!docId) continue;
 
-      tryCreateMapping(db, symbol, docId, score.confidence, existingKeys, counters);
+      tryCreateMapping(db, sp.row, docId, score.confidence, existingKeys, counters);
     }
   }
 

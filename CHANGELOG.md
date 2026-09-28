@@ -222,6 +222,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sections) loop — it previously compiled (and re-escaped) an identical
   RegExp for every pair. Measured at the same bench scale: review
   1094ms → 446ms (2.5×).
+- Full scans (init, `scan`, `docrelay_scan`) link ~3× faster: autoLink
+  now precomputes per-symbol and per-section scoring profiles (cleaned
+  names, word-boundary regexes, normalized strings, file stems, cleaned
+  codeRefs) once per call instead of inside the O(symbols × sections)
+  pair loop — every pair previously re-ran escapeRegex, compiled fresh
+  RegExp objects, and re-normalized both strings. Measured:
+  init + full scan 7707ms → 2668ms at bench scale; linking output
+  verified byte-identical to the previous implementation on a 1600-symbol
+  differential corpus.
 - The incremental docs pipeline now covers every scan surface, not just
   the CLI: `docrelay_refresh` with `full=true` delta-filters doc ingest
   and auto-link against the previous scan watermark (agents polling
