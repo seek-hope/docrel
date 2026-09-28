@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -228,5 +228,61 @@ describe('scanDocs directory recursion', () => {
     } finally {
       fs.rmSync(external, { recursive: true, force: true });
     }
+  });
+});
+
+describe('scanDocs fault-injected fs failures', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-docscan-fault-'));
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reports a doc_dir whose stat fails after resolution as failedFiles', async () => {
+    const dir = path.join(tmpDir, 'docs');
+    const real = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((p: any) => {
+      if (String(p) === dir) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+      return real(p);
+    });
+    const { report } = await scanDocs(['docs'], tmpDir);
+    expect(report.failedFiles).toContain('docs');
+    expect(report.skippedMissing).not.toContain('docs');
+  });
+
+  it('reports a doc_dir that vanishes before the stat check as skippedMissing', async () => {
+    const dir = path.join(tmpDir, 'docs');
+    const real = fs.statSync;
+    vi.spyOn(fs, 'statSync').mockImplementation((p: any) => {
+      if (String(p) === dir) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      return real(p);
+    });
+    const { report } = await scanDocs(['docs'], tmpDir);
+    expect(report.skippedMissing).toContain('docs');
+    expect(report.failedFiles).not.toContain('docs');
+  });
+
+  it('skips a single-file doc_dir whose realpath fails during validation', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'README.md'), '# Hi\n');
+    const target = path.join(tmpDir, 'README.md');
+    const real = fs.realpathSync;
+    let calls = 0;
+    vi.spyOn(fs, 'realpathSync').mockImplementation((p: any) => {
+      if (String(p) === target) {
+        calls++;
+        // The doc-dir probe (first call) succeeds; the per-file validation
+        // realpath (second call) fails.
+        if (calls === 2) throw Object.assign(new Error('ELOOP'), { code: 'ELOOP' });
+      }
+      return real(p);
+    });
+    const { sections } = await scanDocs(['README.md'], tmpDir);
+    expect(sections).toEqual([]);
   });
 });

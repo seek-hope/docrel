@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type Database from 'better-sqlite3';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
 import { upsertSymbol } from '../../src/db/symbols.js';
@@ -45,5 +46,20 @@ describe('docrelayStatus', () => {
     expect(status.totalSymbols).toBe(1);
     expect(status.linkedSymbols).toBe(1);
     expect(status.linkedPercentage).toBe(100);
+  });
+
+  it('returns a sanitized zeroed report when the database query fails', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const proxy = {
+      prepare(_sql: string): never { throw new Error('db exploded with /secret/path'); },
+    } as unknown as Database.Database;
+    const status = docrelayStatus(proxy);
+    expect(status).toMatchObject({
+      totalSymbols: 0, linkedSymbols: 0, linkedPercentage: 0,
+      syncedDocs: 0, staleDocs: 0, totalDocs: 0,
+      syncPercentage: 0, pendingChanges: 0, lastScan: null,
+      error: 'Database query error — check server logs for details',
+    });
+    expect(errSpy).toHaveBeenCalledWith('docrelayStatus failed:', expect.any(Error));
   });
 });

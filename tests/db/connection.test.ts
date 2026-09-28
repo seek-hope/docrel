@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -89,6 +89,47 @@ describe('getDb git-directory resolution', () => {
     const shmMode = fs.statSync(path.join(root, '.git', 'docrelay.db-shm')).mode & 0o777;
     expect(walMode).toBe(0o600);
     expect(shmMode).toBe(0o600);
+  });
+
+  it('warns and falls back to .docrelay when .git exists but is inaccessible', () => {
+    const root = path.join(tmpDir, 'proj');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realOpen = fs.openSync;
+    const spy = vi.spyOn(fs, 'openSync').mockImplementation((p: any, flags: any): number => {
+      if (String(p) === path.join(root, '.git')) {
+        throw Object.assign(new Error("EACCES: permission denied, open '.git'"), { code: 'EACCES' });
+      }
+      return realOpen(p, flags);
+    });
+    try {
+      getDb(root);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('inaccessible (EACCES)'));
+      expect(fs.existsSync(path.join(root, '.docrelay', 'docrelay.db'))).toBe(true);
+      expect(fs.existsSync(path.join(root, '.git', 'docrelay.db'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('falls back to .docrelay without a permission warning for other open failures', () => {
+    const root = path.join(tmpDir, 'proj');
+    fs.mkdirSync(path.join(root, '.git'), { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const realOpen = fs.openSync;
+    const spy = vi.spyOn(fs, 'openSync').mockImplementation((p: any, flags: any): number => {
+      if (String(p) === path.join(root, '.git')) {
+        throw Object.assign(new Error('EIO: i/o error'), { code: 'EIO' });
+      }
+      return realOpen(p, flags);
+    });
+    try {
+      getDb(root);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('inaccessible'));
+      expect(fs.existsSync(path.join(root, '.docrelay', 'docrelay.db'))).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('sanitizes the project path from initialization errors', () => {

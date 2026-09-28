@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import type Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -86,6 +87,53 @@ describe('docrelayLink', () => {
     expect(r.action).toBe('created');
     expect(r.review_status).toBe('confirmed');
   });
+
+  it('reports a generic constraint violation when both endpoints exist', () => {
+    // Both rows exist, so the diagnostic falls through to the generic message
+    // (the CHECK on review_status is what actually fails here).
+    const r = docrelayLink(db, {
+      action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes',
+      review_status: 'bogus' as never,
+    });
+    expect(r.action).toBe('error');
+    expect(r.message).toBe('Cannot create mapping: constraint violation.');
+  });
+
+  it('survives a failing diagnostic query during constraint handling', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const proxy = {
+      prepare(sql: string) {
+        if (sql.includes('INSERT INTO mappings')) {
+          // createMapping reads the RETURNING row via .get(), so throw there.
+          return { get: () => { throw Object.assign(new Error('constraint failed'), { code: 'SQLITE_CONSTRAINT_CHECK' }); } };
+        }
+        if (sql.includes('SELECT 1 FROM symbols')) {
+          throw Object.assign(new Error('db gone'), { code: 'SQLITE_BUSY' });
+        }
+        return db.prepare(sql);
+      },
+    } as unknown as Database.Database;
+    const r = docrelayLink(proxy, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
+    expect(r.action).toBe('error');
+    expect(r.message).toBe('Constraint violation (diagnostic failed: SQLITE_BUSY)');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('diagnostic query during constraint handling failed'), 'db gone');
+  });
+
+  it('returns Internal DB error for non-constraint failures', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const proxy = {
+      prepare(sql: string) {
+        if (sql.includes('INSERT INTO mappings')) {
+          // createMapping reads the RETURNING row via .get(), so throw there.
+          return { get: () => { throw new Error('disk full'); } };
+        }
+        return db.prepare(sql);
+      },
+    } as unknown as Database.Database;
+    const r = docrelayLink(proxy, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
+    expect(r).toMatchObject({ action: 'error', message: 'Internal DB error.' });
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('docrelayLink create failed'), 'disk full');
+  });
 });
 
 describe('docrelayConfirm / docrelayReject', () => {
@@ -147,6 +195,24 @@ describe('docrelayConfirm / docrelayReject', () => {
     const r = docrelayConfirm(db, symId, docId, 'references');
     expect(r.action).toBe('error');
     expect(db.prepare('SELECT COUNT(*) AS c FROM review_history').get()).toEqual({ c: 0 });
+  });
+
+  it('still confirms when the history insert fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const proxy = {
+      prepare(sql: string) {
+        if (sql.includes('INSERT INTO review_history')) {
+          return { run: () => { throw new Error('history table gone'); } };
+        }
+        return db.prepare(sql);
+      },
+    } as unknown as Database.Database;
+    const { docrelayConfirm } = await import('../../src/tools/link.js');
+    const r = docrelayConfirm(proxy, symId, docId);
+    expect(r).toMatchObject({ action: 'updated', review_status: 'confirmed' });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed to record review history'), 'history table gone');
+    // The mapping update itself must have succeeded despite the history failure.
+    expect(db.prepare("SELECT review_status AS s FROM mappings WHERE symbol_id = ? AND doc_id = ?").get(symId, docId)).toEqual({ s: 'confirmed' });
   });
 
   it('rejects empty ids without touching history', async () => {
