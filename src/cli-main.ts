@@ -605,7 +605,7 @@ program
   .command('history')
   .description('Show review history: audit trail of confirmed/rejected mappings')
   .option('--limit <n>', 'Maximum entries to show (newest first)', '50')
-  .option('--symbol <id>', 'Filter by symbol ID')
+  .option('--symbol <id|name>', 'Filter by symbol ID or unique name')
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action(async (opts: { limit: string; symbol?: string; format: string }) => {
     try {
@@ -616,7 +616,19 @@ program
         exit(1);
       }
       const { docrelayHistory, formatHistoryMarkdown } = await import('./tools/history.js');
-      const result = docrelayHistory(db, { limit, symbol_id: opts.symbol });
+      // Same name convenience as sync/diff: a bare unique name resolves to
+      // its ID here so the filter matches what users type elsewhere.
+      let symbolFilter = opts.symbol;
+      if (symbolFilter) {
+        const { resolveSymbolId } = await import('./db/symbols.js');
+        const resolved = resolveSymbolId(db, symbolFilter);
+        if ('error' in resolved) {
+          console.error(resolved.error);
+          exit(1);
+        }
+        symbolFilter = resolved.id;
+      }
+      const result = docrelayHistory(db, { limit, symbol_id: symbolFilter });
       if (!result.ok) {
         console.error(result.message || 'History query failed');
         exit(1);

@@ -192,7 +192,7 @@ server.tool(
   'docrelay_sync',
   'Synchronize documentation for a specific symbol (CASCADE update)',
   {
-    symbol_id: z.string().min(1).describe('Stable symbol ID to sync docs for'),
+    symbol_id: z.string().min(1).describe('Symbol ID (or unique bare symbol name) to sync docs for'),
   },
   async ({ symbol_id }) => {
     try {
@@ -228,8 +228,8 @@ server.tool(
   'Manage a mapping between a code symbol and a documentation section (create, update review_status, or delete)',
   {
     action: z.enum(['create', 'delete']),
-    symbol_id: z.string().min(1),
-    doc_id: z.string().min(1),
+    symbol_id: z.string().min(1).describe('Symbol ID or unique bare symbol name'),
+    doc_id: z.string().min(1).describe('Doc section ID, file#anchor, or unique bare anchor'),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']),
     review_status: z.enum(['auto', 'confirmed', 'rejected']).optional().describe('Review status: auto (default), confirmed (human/AI verified), or rejected'),
   },
@@ -250,8 +250,8 @@ server.tool(
   'docrelay_confirm',
   'Confirm an auto-generated mapping as correct — sets review_status to confirmed (human/AI verified)',
   {
-    symbol_id: z.string().min(1),
-    doc_id: z.string().min(1),
+    symbol_id: z.string().min(1).describe('Symbol ID or unique bare symbol name'),
+    doc_id: z.string().min(1).describe('Doc section ID, file#anchor, or unique bare anchor'),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']).optional().default('describes'),
   },
   async ({ symbol_id, doc_id, rel_type }) => {
@@ -272,7 +272,7 @@ server.tool(
   'docrelay_ack',
   'Acknowledge stale doc sections as accurate after review — sets status back to in_sync. Use when a section was staled by a linked symbol change but its content does not need edits.',
   {
-    doc_id: z.string().min(1).optional().describe('Doc section ID to acknowledge'),
+    doc_id: z.string().min(1).optional().describe('Doc section ID, file#anchor, or unique bare anchor to acknowledge'),
     all: z.boolean().optional().describe('Acknowledge ALL stale doc sections'),
   },
   async ({ doc_id, all }) => {
@@ -293,8 +293,8 @@ server.tool(
   'docrelay_reject',
   'Reject an auto-generated mapping as incorrect — sets review_status to rejected',
   {
-    symbol_id: z.string().min(1),
-    doc_id: z.string().min(1),
+    symbol_id: z.string().min(1).describe('Symbol ID or unique bare symbol name'),
+    doc_id: z.string().min(1).describe('Doc section ID, file#anchor, or unique bare anchor'),
     rel_type: z.enum(['describes', 'references', 'generates', 'contracts']).optional().default('describes'),
   },
   async ({ symbol_id, doc_id, rel_type }) => {
@@ -315,7 +315,7 @@ server.tool(
   'docrelay_diff',
   'Show the diff of changes for a symbol and its linked documentation',
   {
-    symbol_id: z.string().min(1).describe('Stable symbol ID'),
+    symbol_id: z.string().min(1).describe('Symbol ID (or unique bare symbol name)'),
   },
   async ({ symbol_id }) => {
     try {

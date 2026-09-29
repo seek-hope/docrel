@@ -636,6 +636,18 @@ describe('CLI in-process: diff and history formats', () => {
     expect(errOut()).toContain(otherId);
   });
 
+  it('history --symbol resolves a bare name and rejects an unknown one', async () => {
+    seedProject();
+    seedDb();
+    const db = getDb(tmpDir);
+    createMapping(db, { symbol_id: symId, doc_id: docId, rel_type: 'describes' });
+    expect(await runCli(['confirm', '--symbol', symId, '--doc', docId])).toBe(0);
+    expect(await runCli(['history', '--symbol', 'login'])).toBe(0);
+    expect(out()).toContain(symId);
+    expect(await runCli(['history', '--symbol', 'ghost-symbol'])).toBe(1);
+    expect(errOut()).toContain('Symbol not found: ghost-symbol');
+  });
+
   it('renders history as markdown', async () => {
     seedProject();
     seedDb();
