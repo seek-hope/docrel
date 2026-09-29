@@ -48,6 +48,7 @@ Accepts multiple paths (e.g. from `git diff --name-only`).
 
 ### `diff <symbol_id> [--format json|markdown]`
 Show the changelog for a symbol (signature changes, renames, sync events).
+`<symbol_id>` may be the full ID or a unique bare symbol name.
 
 ### `history [--limit n] [--symbol <id>] [--format json|markdown]`
 Show the review history: an append-only audit trail of every confirm/reject
@@ -71,11 +72,13 @@ an unchanged project re-scans in a fraction of the full-scan time;
 
 ### `sync --symbol <id>` | `sync --all-stale`
 Apply CASCADE updates to documentation linked to a symbol (or every stale
-section). Behavior per doc type is configured via `strategies` in
+section). `--symbol` accepts the full ID or a unique bare symbol name. Behavior per doc type is configured via `strategies` in
 [config.yaml](configuration.md).
 
 ### `link <create|delete> --symbol <id> --doc <id> [--type <rel>]`
-Create or delete a symbol↔doc mapping manually. Relationship types:
+Create or delete a symbol↔doc mapping manually. `--symbol` accepts the full
+ID or a unique bare name; `--doc` accepts the full ID, `file#anchor`, or a
+unique bare anchor (ambiguous input prints a candidate list). Relationship types:
 `describes` (default), `references`, `generates`, `contracts`.
 Creating the same mapping twice is an idempotent upsert. Manual links are
 recorded as `confirmed` (user-asserted evidence), so the auto-linker's
@@ -91,7 +94,9 @@ Mark auto-generated mappings as rejected. `--pattern` rejects every mapping
 whose symbol name contains the given substring.
 
 ### `ack --doc <id>` | `ack --all`
-Acknowledge stale doc sections as accurate after manual review — sets their
+Acknowledge stale doc sections as accurate after manual review. `--doc`
+accepts the full ID, `file#anchor` (e.g. `docs/api.md#login`), or a unique
+bare anchor — sets their
 status back to `in_sync`. Use this when a section was staled by a linked
 symbol change but its content needs no edits (for example a loose auto-link
 to a symbol the section never quotes). `confirm`/`reject` operate on
