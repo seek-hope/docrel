@@ -523,6 +523,89 @@ describe('CLI in-process: backup / restore / reset / update', () => {
       process.env.PATH = savedPath;
     }
   });
+
+  /** Fake `which` + `npm` pair for update-gate tests; returns a bin dir for PATH. */
+  function seedFakeWhichNpm(fakeNpmPath: string): string {
+    const binDir = path.join(tmpDir, 'fakebin');
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(binDir, 'which'), [
+      '#!/bin/sh',
+      "if [ \"$1\" = \"npm\" ]; then printf '%s\\n' \"$FAKE_NPM\"; exit 0; fi",
+      'exit 1',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(fakeNpmPath, [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then echo 10.0.0; exit 0; fi',
+      'if [ "$1" = "config" ]; then echo "https://registry.npmjs.org/"; exit 0; fi',
+      'if [ "$1" = "install" ]; then echo "simulated install failure" >&2; exit 1; fi',
+      'exit 1',
+      '',
+    ].join('\n'));
+    fs.chmodSync(path.join(binDir, 'which'), 0o755);
+    fs.chmodSync(fakeNpmPath, 0o755);
+    return binDir;
+  }
+
+  it('rejects a version-manager npm outside the home directory', async () => {
+    seedProject();
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-outside-'));
+    const fakeNpm = path.join(outside, '.nvm', 'bin', 'npm');
+    fs.mkdirSync(path.dirname(fakeNpm), { recursive: true });
+    const binDir = seedFakeWhichNpm(fakeNpm);
+    const saved = { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_NPM: process.env.FAKE_NPM };
+    // HOME is tmpDir; the fake npm lives under a different tmp root, so the
+    // `/.nvm/` token matches but the home-anchor must reject it.
+    process.env.HOME = tmpDir;
+    process.env.PATH = binDir;
+    process.env.FAKE_NPM = fakeNpm;
+    try {
+      expect(await runCli(['update'])).toBe(1);
+      expect(errOut()).toContain('Security warning');
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
+      delete process.env.FAKE_NPM;
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts a version-manager npm inside the home directory', async () => {
+    seedProject();
+    const fakeNpm = path.join(tmpDir, '.volta', 'bin', 'npm');
+    fs.mkdirSync(path.dirname(fakeNpm), { recursive: true });
+    const binDir = seedFakeWhichNpm(fakeNpm);
+    const saved = { PATH: process.env.PATH, HOME: process.env.HOME, FAKE_NPM: process.env.FAKE_NPM };
+    process.env.HOME = tmpDir;
+    process.env.PATH = binDir;
+    process.env.FAKE_NPM = fakeNpm;
+    try {
+      // Gate passes; the fake npm then fails the install step on purpose.
+      expect(await runCli(['update'])).toBe(1);
+      expect(errOut()).toContain('Update failed');
+      expect(errOut()).toContain('npm install -g doc-relay@latest');
+      expect(errOut()).not.toContain('Security warning');
+    } finally {
+      process.env.PATH = saved.PATH;
+      if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
+      delete process.env.FAKE_NPM;
+    }
+  });
+
+  it('update does not require an initialized project', async () => {
+    // No seedProject(): update wraps npm and touches nothing project-local,
+    // so the project gate must not fire — an empty PATH drives it to the
+    // npm-resolution branch instead of "Not initialized".
+    const savedPath = process.env.PATH;
+    process.env.PATH = tmpDir;
+    try {
+      expect(await runCli(['update'])).toBe(1);
+      expect(errOut()).toContain('Cannot locate npm');
+      expect(errOut()).not.toContain('Not initialized');
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  });
 });
 
 describe('CLI in-process: diff and history formats', () => {

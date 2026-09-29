@@ -144,7 +144,11 @@ project.
 Delete the DocRelay database and re-run migrations (destructive).
 
 ### `update`
-Update the globally-installed DocRelay to the latest npm release.
+Update the globally-installed DocRelay to the latest npm release. Works
+outside an initialized project (it wraps `npm install -g` and touches
+nothing project-local). For safety it refuses to run when the resolved
+`npm` binary lives in an unexpected location or the configured registry
+is not the default npm registry.
 
 ### `mcp`
 Start the MCP server on stdio. Agent configs invoke this for you — see

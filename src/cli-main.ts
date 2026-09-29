@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { getDb, closeAllDbs } from './db/connection.js';
 import { runMigrations } from './db/schema.js';
@@ -950,7 +951,9 @@ program
   .description('Update DocRelay to the latest version via npm')
   .action(async () => {
     try {
-      await ensureContext();
+      // No ensureContext(): update wraps `npm install -g` and touches
+      // nothing project-local — it must work outside an initialized
+      // project (and must not abort on a corrupt project database).
       // Resolve npm binary path with TOCTOU-safe validation matching the
       // pattern used in client.ts doConnect() and hooks.ts installHooks().
       let npmBin: string;
@@ -962,8 +965,14 @@ program
         // matching the defense-in-depth pattern from codegraph/client.ts:212-215.
         // Broad /home/ would match any user's home on a shared system.
         const allowedPrefixes = ['/usr/bin/', '/usr/local/bin/', '/usr/lib/node_modules/.bin/', '/opt/', '/run/current-system/sw/bin/'];
-        if (!allowedPrefixes.some((p) => realBin.startsWith(p)) &&
-            !/\/(\.local\/share|\.npm|\.nvm)\//.test(realBin)) {
+        // User-level installs (version managers + npm/pnpm global prefixes)
+        // are only trusted INSIDE the current user's home directory — an
+        // unanchored match would also accept another user's home on a
+        // shared system, which is exactly the case this gate exists for.
+        const home = os.homedir();
+        const userInstall = home.length > 1 && realBin.startsWith(home + path.sep) &&
+            /\/(\.local\/share|\.local\/bin|\.npm|\.nvm|\.volta|\.asdf|\.linuxbrew|\.bun|\.deno)\//.test(realBin);
+        if (!allowedPrefixes.some((p) => realBin.startsWith(p)) && !userInstall) {
           // F15: Sanitize the path to avoid disclosing full filesystem paths
           // in CI/monitoring logs. Show only the prefix for diagnostics.
           console.error(`Security warning: npm binary resolved to unexpected location (prefix: ${realBin.slice(0, 30)}...)`);
