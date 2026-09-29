@@ -415,8 +415,17 @@ describe('integrate — defensive paths & remaining agents', () => {
     expect(second.summary).toContain('already exist');
   });
 
-  it('antigravity writes QAI.md', async () => {
+  it('antigravity writes AGENTS.md (not QAI.md)', async () => {
     const result = await integrate(tmpDir, 'antigravity', false);
-    expect(result.filesCreated.some((f) => f.endsWith('QAI.md'))).toBe(true);
+    expect(result.filesCreated.some((f) => f.endsWith('AGENTS.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'QAI.md'))).toBe(false);
+  });
+
+  it('antigravity notes a legacy QAI.md from an older DocRelay', async () => {
+    fs.writeFileSync(path.join(tmpDir, 'QAI.md'), '# Rules\n\n## DocRelay — Code-Documentation Sync\n\nold\n');
+    const result = await integrate(tmpDir, 'antigravity', false);
+    expect(result.summary).toContain('legacy QAI.md');
+    // never deleted — only noted
+    expect(fs.existsSync(path.join(tmpDir, 'QAI.md'))).toBe(true);
   });
 });

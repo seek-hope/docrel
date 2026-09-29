@@ -23,7 +23,7 @@ Per-agent locations written by `integrate`:
 | Cursor | `.cursor/mcp.json` | — (no rules file written) |
 | OpenCode | `opencode.json` (`"mcp"` key, `type: "local"`) | `AGENTS.md` |
 | Gemini CLI | `.gemini/settings.json` | `GEMINI.md` |
-| Antigravity | `.agents/mcp_config.json` | `QAI.md` |
+| Antigravity | `.agents/mcp_config.json` | `AGENTS.md` |
 | Kiro | `.kiro/settings/mcp.json` | `.kiro/steering/docrelay.md` |
 | Hermes | — (rules only) | `.pi/docrelay.md` |
 | Oh My Pi | — (no MCP support) | `.pi/docrelay.md` |

@@ -527,9 +527,10 @@ function integrateGeneric(projectRoot: string, dryRun: boolean): IntegrationResu
 }
 
 // ── Generic MCP agent (Cursor, Gemini, Antigravity, Kiro) ────────────
-// These agents support MCP but may not have a standardized rules-file
-// format. We create .mcp.json + a simple instructions block in their
-// rules file if one is known, or just .mcp.json otherwise.
+// These agents support MCP, each with its own config location (mcpRelPath)
+// and rules-file convention (rulesFileName, null when the agent has none).
+// `legacyRulesFile` names a file an older DocRelay wrote that the agent
+// never read — surfaced as a migration note, never deleted.
 function integrateMcpAgent(
   projectRoot: string,
   dryRun: boolean,
@@ -537,8 +538,10 @@ function integrateMcpAgent(
   agentName: string,
   rulesFileName: string | null,
   mcpRelPath: string,
+  legacyRulesFile?: string,
 ): IntegrationResult {
   const files: string[] = [];
+  const notes: string[] = [];
   const SECTION_MARKER = '## DocRelay — Code-Documentation Sync';
   const mcpPath = path.join(projectRoot, mcpRelPath);
 
@@ -592,12 +595,22 @@ doc-relay scan                # Rescan
   }
 
   const label = agentName || agentKind;
+  if (legacyRulesFile) {
+    const legacyPath = path.join(projectRoot, legacyRulesFile);
+    if (fs.existsSync(legacyPath)) {
+      const legacy = readFileWithSizeLimit(legacyPath);
+      if (legacy && legacy.includes(SECTION_MARKER)) {
+        notes.push(`legacy ${legacyRulesFile} (from an older DocRelay) is not read by ${label} — safe to delete`);
+      }
+    }
+  }
+
   return {
     agent: agentKind,
     filesCreated: files,
-    summary: files.length > 0
+    summary: [files.length > 0
       ? `${label} integration added: ${files.map((f) => path.relative(projectRoot, f)).join(', ')}`
-      : `${label} integration already configured.`,
+      : `${label} integration already configured.`, ...notes].join(' — '),
   };
 }
 
@@ -632,7 +645,7 @@ export async function integrate(
     case 'gemini':
       return integrateMcpAgent(resolved, dryRun, 'gemini', 'Gemini CLI', 'GEMINI.md', '.gemini/settings.json');
     case 'antigravity':
-      return integrateMcpAgent(resolved, dryRun, 'antigravity', 'Antigravity', 'QAI.md', '.agents/mcp_config.json');
+      return integrateMcpAgent(resolved, dryRun, 'antigravity', 'Antigravity', 'AGENTS.md', '.agents/mcp_config.json', 'QAI.md');
     case 'kiro':
       return integrateMcpAgent(resolved, dryRun, 'kiro', 'Kiro', path.join('.kiro', 'steering', 'docrelay.md'), path.join('.kiro', 'settings', 'mcp.json'));
     default:

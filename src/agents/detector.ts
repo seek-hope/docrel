@@ -125,7 +125,7 @@ const AGENT_REGISTRY: AgentDef[] = [
     envVars: ['ANTIGRAVITY_SESSION'],
     mcp: true,
     hooks: false,
-    rulesFile: 'QAI.md',
+    rulesFile: 'AGENTS.md',
     globalPaths: ['.antigravity'],
     localPaths: ['.antigravity'],
   },

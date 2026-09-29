@@ -155,7 +155,7 @@ describe('detectAgent', () => {
     const result = detectAgent();
     expect(result.kind).toBe('antigravity');
     expect(result.name).toBe('Antigravity');
-    expect(result.rulesFile).toBe('QAI.md');
+    expect(result.rulesFile).toBe('AGENTS.md');
   });
 
   it('detects kiro via KIRO_SESSION', () => {
