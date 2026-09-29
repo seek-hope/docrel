@@ -60,6 +60,25 @@ describe('docrelayAck', () => {
     expect(report.notFound).toHaveLength(1);
   });
 
+  it('acknowledges by file#anchor', () => {
+    const id = seed('Install');
+    const report = docrelayAck(db, { docId: 'docs/guide.md#Install' });
+    expect(report.acknowledged).toEqual([{ id, file: 'docs/guide.md', anchor: 'Install' }]);
+    expect(getDocSection(db, id)?.status).toBe('in_sync');
+  });
+
+  it('acknowledges by a unique bare anchor', () => {
+    const id = seed('Install');
+    const report = docrelayAck(db, { docId: 'Install' });
+    expect(report.acknowledged).toEqual([{ id, file: 'docs/guide.md', anchor: 'Install' }]);
+  });
+
+  it('throws with candidates on an ambiguous bare anchor', () => {
+    seed('Setup', 'stale', 'docs/a.md');
+    seed('Setup', 'stale', 'docs/b.md');
+    expect(() => docrelayAck(db, { docId: 'Setup' })).toThrow('matches 2 doc sections');
+  });
+
   it('--all acknowledges every stale section across files and leaves in_sync rows alone', () => {
     const a = seed('A');
     const b = seed('B', 'stale', 'README.md');

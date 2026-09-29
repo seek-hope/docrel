@@ -182,7 +182,7 @@ describe('CLI in-process: link / confirm / reject / history', () => {
   it('fails to link endpoints that do not exist', async () => {
     seedProject();
     expect(await runCli(['link', 'create', '--symbol', symId, '--doc', docId])).toBe(1);
-    expect(out()).toContain('do not exist');
+    expect(out()).toContain('not found');
   });
 
   it('drives the full link → confirm → reject → history → delete flow', async () => {

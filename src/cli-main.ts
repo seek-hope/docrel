@@ -357,7 +357,7 @@ program
 program
   .command('ack')
   .description('Acknowledge stale doc sections as accurate after manual review — sets status back to in_sync')
-  .option('--doc <id>', 'Doc section ID to acknowledge')
+  .option('--doc <id|file#anchor>', 'Doc section ID, file#anchor, or unique anchor to acknowledge')
   .option('--all', 'Acknowledge ALL stale doc sections', false)
   .action(async (opts) => {
     try {
@@ -431,8 +431,8 @@ program
   .command('link')
   .description('Manage a symbol-doc mapping (create or delete only; use confirm/reject to change review status)')
   .argument('<action>', 'create or delete')
-  .option('--symbol <id>', 'Symbol ID')
-  .option('--doc <id>', 'Document section ID')
+  .option('--symbol <id|name>', 'Symbol ID or unique symbol name')
+  .option('--doc <id|file#anchor>', 'Doc section ID, file#anchor, or unique anchor')
   .option('--type <type>', 'Relationship type', 'describes')  .action(async (action, opts) => {
     try {
       await ensureContext();
@@ -459,8 +459,8 @@ program
 program
   .command('confirm')
   .description('Confirm auto-generated mappings as correct — sets review_status to confirmed')
-  .option('--symbol <id>', 'Symbol ID')
-  .option('--doc <id>', 'Document section ID')
+  .option('--symbol <id|name>', 'Symbol ID or unique symbol name')
+  .option('--doc <id|file#anchor>', 'Doc section ID, file#anchor, or unique anchor')
   .option('--type <type>', 'Relationship type', 'describes')
   .option('--all', 'Confirm ALL unreviewed (auto) mappings in bulk')
   .action(async (opts) => {
@@ -505,8 +505,8 @@ program
 program
   .command('reject')
   .description('Reject auto-generated mappings as incorrect — sets review_status to rejected')
-  .option('--symbol <id>', 'Symbol ID')
-  .option('--doc <id>', 'Document section ID')
+  .option('--symbol <id|name>', 'Symbol ID or unique symbol name')
+  .option('--doc <id|file#anchor>', 'Doc section ID, file#anchor, or unique anchor')
   .option('--type <type>', 'Relationship type', 'describes')
   .option('--all', 'Reject ALL unreviewed (auto) mappings in bulk')
   .option('--pattern <pattern>', 'Reject mappings where symbol name matches this substring')

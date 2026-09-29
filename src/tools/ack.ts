@@ -1,7 +1,7 @@
 // src/tools/ack.ts — Acknowledge stale doc sections as accurate
 import type Database from 'better-sqlite3';
 import { assertDbOpen } from '../db/connection.js';
-import { getDocSection, markDocRelayed } from '../db/docs.js';
+import { getDocSection, markDocRelayed, resolveDocSectionId } from '../db/docs.js';
 
 export interface AckEntry {
   id: string;
@@ -67,9 +67,18 @@ export function docrelayAck(
   if (!docId) {
     throw new Error('ack requires a doc id or all=true');
   }
-  const row = getDocSection(db, docId);
-  if (!row) {
+  // Accept file#anchor or a unique bare anchor in addition to the full ID.
+  // Ambiguity is a usage error (throw with candidates); a simple miss keeps
+  // the structured notFound report.
+  const resolved = resolveDocSectionId(db, docId);
+  if ('error' in resolved) {
+    if (resolved.error.includes('matches')) throw new Error(resolved.error);
     report.notFound.push(docId);
+    return report;
+  }
+  const row = getDocSection(db, resolved.id);
+  if (!row) {
+    report.notFound.push(docId); // concurrent delete between the two reads
     return report;
   }
   if (row.status !== 'stale') {

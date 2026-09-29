@@ -62,6 +62,41 @@ export function getDocSection(db: Database.Database, id: string): DocSectionRow 
   return db.prepare('SELECT * FROM doc_sections WHERE id = ?').get(id) as DocSectionRow | undefined;
 }
 
+/**
+ * Resolve user-supplied doc-section input to a section ID. Users think in
+ * `docs/api.md#login` (or a bare `login` anchor), the database keys on
+ * 64-char IDs — same UX gap as symbols (see resolveSymbolId). Resolution
+ * order: exact ID, then exact `file#anchor`, then a unique bare anchor.
+ * Ambiguous input fails with a candidate list (file#anchor + full ID) so
+ * the fix is one copy-paste away.
+ */
+export function resolveDocSectionId(
+  db: Database.Database,
+  input: string,
+): { id: string } | { error: string } {
+  const exact = getDocSection(db, input);
+  if (exact) return { id: exact.id };
+
+  const hashIdx = input.lastIndexOf('#');
+  if (hashIdx > 0) {
+    const file = input.slice(0, hashIdx);
+    const anchor = input.slice(hashIdx + 1);
+    const row = db.prepare('SELECT * FROM doc_sections WHERE file = ? AND anchor = ?').get(file, anchor) as DocSectionRow | undefined;
+    if (row) return { id: row.id };
+  }
+
+  const byAnchor = db.prepare('SELECT * FROM doc_sections WHERE anchor = ? ORDER BY file LIMIT 1000').all(input) as DocSectionRow[];
+  if (byAnchor.length === 1) return { id: byAnchor[0].id };
+  if (byAnchor.length > 1) {
+    const shown = byAnchor.slice(0, 10)
+      .map((d) => `  ${d.file}#${d.anchor} — ${d.id}`)
+      .join('\n');
+    const more = byAnchor.length > 10 ? `\n  … and ${byAnchor.length - 10} more` : '';
+    return { error: `'${input}' matches ${byAnchor.length} doc sections — re-run with file#anchor or the full ID:\n${shown}${more}` };
+  }
+  return { error: `Doc section not found: ${input} (looked up by ID, file#anchor, and anchor)` };
+}
+
 export function listDocSections(db: Database.Database, filter?: { doc_type?: string; status?: string }): DocSectionRow[] {
   let query = 'SELECT * FROM doc_sections WHERE 1=1';
   const params: string[] = [];

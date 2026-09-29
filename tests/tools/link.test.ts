@@ -53,6 +53,28 @@ describe('docrelayLink', () => {
     expect(db.prepare('SELECT COUNT(*) AS c FROM mappings').get()).toEqual({ c: 4 });
   });
 
+  it('creates a mapping from a bare symbol name and file#anchor', () => {
+    upsertDocSection(db, { id: docSectionId('docs/api.md', 'login'), file: 'docs/api.md', anchor: 'login', doc_type: 'standalone' });
+    const r = docrelayLink(db, { action: 'create', symbol_id: 'login', doc_id: 'docs/api.md#login', rel_type: 'describes' });
+    expect(r.action).toBe('created');
+    expect(r.symbol_id).toBe(symId);
+    expect(r.doc_id).toBe(docSectionId('docs/api.md', 'login'));
+  });
+
+  it('creates a mapping from a unique bare doc anchor', () => {
+    upsertDocSection(db, { id: docSectionId('docs/guide.md', 'authentication'), file: 'docs/guide.md', anchor: 'authentication', doc_type: 'standalone' });
+    const r = docrelayLink(db, { action: 'create', symbol_id: symId, doc_id: 'authentication', rel_type: 'describes' });
+    expect(r.action).toBe('created');
+  });
+
+  it('rejects an ambiguous bare symbol name with candidates', () => {
+    upsertSymbol(db, { id: symbolId('ts', 'src/b.ts::login', 'function'), name: 'login', kind: 'function', location: 'src/b.ts:7' });
+    const r = docrelayLink(db, { action: 'create', symbol_id: 'login', doc_id: docId, rel_type: 'describes' });
+    expect(r.action).toBe('error');
+    expect(r.message).toContain('matches 2 symbols');
+    expect(r.message).toContain(symId);
+  });
+
   it('treats duplicate create as an idempotent upsert (no duplicate row)', () => {
     docrelayLink(db, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
     const dup = docrelayLink(db, { action: 'create', symbol_id: symId, doc_id: docId, rel_type: 'describes' });
@@ -63,13 +85,13 @@ describe('docrelayLink', () => {
   it('explains when the symbol does not exist', () => {
     const r = docrelayLink(db, { action: 'create', symbol_id: 'no-such-symbol', doc_id: docId, rel_type: 'describes' });
     expect(r.action).toBe('error');
-    expect(r.message).toContain('symbol not found');
+    expect(r.message).toContain('Symbol not found: no-such-symbol');
   });
 
   it('explains when the doc section does not exist', () => {
     const r = docrelayLink(db, { action: 'create', symbol_id: symId, doc_id: 'no-such-doc', rel_type: 'describes' });
     expect(r.action).toBe('error');
-    expect(r.message).toContain('doc section not found');
+    expect(r.message).toContain('Doc section not found: no-such-doc');
   });
 
   it('deletes an existing mapping and reports misses', () => {
@@ -156,6 +178,25 @@ describe('docrelayConfirm / docrelayReject', () => {
   afterEach(() => {
     closeAllDbs();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('confirms a mapping addressed by bare symbol name and file#anchor', async () => {
+    upsertDocSection(db, { id: docSectionId('docs/api.md', 'auth'), file: 'docs/api.md', anchor: 'auth', doc_type: 'standalone' });
+    const { docrelayConfirm, docrelayReject } = await import('../../src/tools/link.js');
+    const confirmed = docrelayConfirm(db, 'login', 'docs/api.md#auth');
+    expect(confirmed.action).toBe('updated');
+    expect(confirmed.symbol_id).toBe(symId);
+    expect(confirmed.doc_id).toBe(docId);
+    const rejected = docrelayReject(db, 'login', 'auth');
+    expect(rejected.action).toBe('updated');
+    expect(rejected.review_status).toBe('rejected');
+  });
+
+  it('surfaces the resolver error when a name is unknown', async () => {
+    const { docrelayConfirm } = await import('../../src/tools/link.js');
+    const r = docrelayConfirm(db, 'ghost-symbol', docId);
+    expect(r.action).toBe('error');
+    expect(r.message).toContain('Symbol not found: ghost-symbol');
   });
 
   it('confirms a mapping and records it in review_history with default actor cli', async () => {
