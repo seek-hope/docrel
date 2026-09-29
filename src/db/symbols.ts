@@ -99,6 +99,37 @@ export function getSymbol(db: Database.Database, id: string): SymbolRow | undefi
   return cachedStmt(db, 'SELECT * FROM symbols WHERE id = ?').get(id) as SymbolRow | undefined;
 }
 
+/** Symbols whose simple name matches exactly (cap defensively — name lookups
+ *  are a CLI convenience, never a bulk path). */
+export function findSymbolsByName(db: Database.Database, name: string): SymbolRow[] {
+  return db.prepare('SELECT * FROM symbols WHERE name = ? ORDER BY project, location LIMIT 1000').all(name) as SymbolRow[];
+}
+
+/**
+ * Resolve user-supplied symbol input to a symbol ID: exact ID first, then a
+ * unique simple-name match. Users think in names (`login`), the database
+ * thinks in IDs — meeting them at the name is the difference between the
+ * command working and a trip to `status` output to copy an ID. Ambiguous
+ * names fail with a candidate list so the fix is one copy-paste away.
+ */
+export function resolveSymbolId(
+  db: Database.Database,
+  input: string,
+): { id: string; via: 'id' | 'name' } | { error: string } {
+  const exact = getSymbol(db, input);
+  if (exact) return { id: exact.id, via: 'id' };
+  const byName = findSymbolsByName(db, input);
+  if (byName.length === 1) return { id: byName[0].id, via: 'name' };
+  if (byName.length > 1) {
+    const shown = byName.slice(0, 10)
+      .map((s) => `  ${s.location} — ${s.id}`)
+      .join('\n');
+    const more = byName.length > 10 ? `\n  … and ${byName.length - 10} more` : '';
+    return { error: `'${input}' matches ${byName.length} symbols — re-run with the full symbol ID:\n${shown}${more}` };
+  }
+  return { error: `Symbol not found: ${input} (looked up by exact ID and by name)` };
+}
+
 export interface SymbolFilter {
   kind?: string;
   project?: string;

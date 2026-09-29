@@ -8,7 +8,7 @@ import type { DocRelayConfig } from '../utils/config.js';
 import { getMappingsForSymbol, getMappingsForDoc } from '../db/mappings.js';
 import type { DocSectionRow } from '../db/docs.js';
 import type { CodegraphClient } from '../codegraph/client.js';
-import { getSymbol } from '../db/symbols.js';
+import { getSymbol, resolveSymbolId } from '../db/symbols.js';
 import { getDocSection, markDocStale, markDocRelayed, markDocRelayedWithHash } from '../db/docs.js';
 import { contentHash } from '../utils/hash.js';
 import { updateInlineDoc, extractDocstring, generateUpdatedDocstring } from './inline.js';
@@ -128,9 +128,18 @@ export async function syncSymbol(
 
   try {
     assertDbOpen(db);
+    const resolved = resolveSymbolId(db, symbolId);
+    if ('error' in resolved) {
+      result.errors.push(resolved.error);
+      return result;
+    }
+    symbolId = resolved.id;
+    result.symbolId = resolved.id;
     const symbol = getSymbol(db, symbolId);
     if (!symbol) {
-      result.errors.push(`Symbol not found: ${symbolId}`);
+      // resolveSymbolId only returns ids that exist — a miss here means a
+      // concurrent delete slipped between the two reads.
+      result.errors.push(`Symbol not found: ${symbolId} (deleted concurrently?)`);
       return result;
     }
 

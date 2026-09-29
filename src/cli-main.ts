@@ -401,7 +401,7 @@ program
 program
   .command('sync')
   .description('Sync documentation for a symbol, or all stale docs with --all-stale')
-  .option('--symbol <id>', 'Symbol ID to sync')
+  .option('--symbol <id|name>', 'Symbol ID (or unique symbol name) to sync')
   .option('--all-stale', 'Sync all stale documentation sections')
   .action(async (opts) => {
     try {
@@ -579,7 +579,7 @@ program
 program
   .command('diff')
   .description('Show change history for a symbol')
-  .argument('<symbol_id>', 'Symbol ID')
+  .argument('<symbol_id>', 'Symbol ID (or unique symbol name)')
   .option('--format <format>', 'Output format: json or markdown', 'json')
   .action(async (symbolId, opts) => {
     try {

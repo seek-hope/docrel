@@ -616,6 +616,26 @@ describe('CLI in-process: diff and history formats', () => {
     expect(await runCli(['diff', symId, '--format', 'markdown'])).toBe(0);
   });
 
+  it('diff resolves a unique bare symbol name', async () => {
+    seedProject();
+    seedDb();
+    expect(await runCli(['diff', 'login'])).toBe(0);
+    expect(out()).toContain(symId);
+  });
+
+  it('diff rejects an ambiguous bare name with candidates', async () => {
+    seedProject();
+    seedDb();
+    const otherId = symbolId('ts', 'src/other.ts::login', 'function');
+    upsertSymbol(getDb(tmpDir), {
+      id: otherId, name: 'login', kind: 'function',
+      location: 'src/other.ts:3', signature: 'function login(): void', raw_signature: '',
+    });
+    expect(await runCli(['diff', 'login'])).toBe(1);
+    expect(errOut()).toContain('matches 2 symbols');
+    expect(errOut()).toContain(otherId);
+  });
+
   it('renders history as markdown', async () => {
     seedProject();
     seedDb();

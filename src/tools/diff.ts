@@ -1,7 +1,7 @@
 // src/tools/diff.ts
 import type Database from 'better-sqlite3';
 import { assertDbOpen } from '../db/connection.js';
-import { getSymbol } from '../db/symbols.js';
+import { getSymbol, resolveSymbolId } from '../db/symbols.js';
 import { getMappingsForSymbol } from '../db/mappings.js';
 import { getDocSection } from '../db/docs.js';
 
@@ -35,8 +35,12 @@ export interface DiffResult {
 export function docrelayDiff(db: Database.Database, symbolId: string): DiffResult {
   try {
     assertDbOpen(db);
+    // Accept a bare symbol name as well as the full ID (unique match only).
+    const resolved = resolveSymbolId(db, symbolId);
+    if ('error' in resolved) return { found: false, reason: 'not_found', message: resolved.error };
+    symbolId = resolved.id;
     const symbol = getSymbol(db, symbolId);
-    if (!symbol) return { found: false, reason: 'not_found', message: 'Symbol not found in database' };
+    if (!symbol) return { found: false, reason: 'not_found', message: 'Symbol not found in database (deleted concurrently?)' };
 
     const changelog = db.prepare(
       'SELECT * FROM changelog WHERE symbol_id = ? ORDER BY timestamp DESC LIMIT 10',

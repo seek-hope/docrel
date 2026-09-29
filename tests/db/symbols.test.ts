@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { symbolId, docSectionId } from '../../src/utils/hash.js';
 import { getDb, closeAllDbs } from '../../src/db/connection.js';
 import { runMigrations } from '../../src/db/schema.js';
-import { upsertSymbol, getSymbol, listSymbols, deleteSymbol, markSignatureChanged } from '../../src/db/symbols.js';
+import { upsertSymbol, getSymbol, listSymbols, deleteSymbol, markSignatureChanged, findSymbolsByName, resolveSymbolId } from '../../src/db/symbols.js';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -157,6 +157,43 @@ describe('symbols CRUD', () => {
       upsertSymbol(db, testSymbol);
       upsertSymbol(db, { ...testSymbol, id: symbolId('typescript', 'other::fn', 'function'), project: 'other' });
       expect(listSymbols(db, { project: 'src/auth' })).toHaveLength(1);
+    });
+  });
+
+  describe('resolveSymbolId', () => {
+    it('resolves an exact ID even when a symbol shares the name', () => {
+      upsertSymbol(db, testSymbol);
+      const other = { ...testSymbol, id: symbolId('typescript', 'src/other::x', 'function'), name: testSymbol.id };
+      upsertSymbol(db, other);
+      const r = resolveSymbolId(db, testSymbol.id);
+      expect(r).toEqual({ id: testSymbol.id, via: 'id' });
+    });
+
+    it('resolves a unique bare name', () => {
+      upsertSymbol(db, testSymbol);
+      expect(resolveSymbolId(db, 'login')).toEqual({ id: testSymbol.id, via: 'name' });
+    });
+
+    it('rejects an ambiguous name with a candidate list', () => {
+      upsertSymbol(db, testSymbol);
+      upsertSymbol(db, { ...testSymbol, id: symbolId('typescript', 'src/b::login', 'function'), location: 'src/b.ts:9' });
+      const r = resolveSymbolId(db, 'login');
+      expect('error' in r && r.error).toContain('matches 2 symbols');
+      expect('error' in r && r.error).toContain(testSymbol.id);
+      expect('error' in r && r.error).toContain('src/b.ts:9');
+    });
+
+    it('reports not-found for unknown input', () => {
+      const r = resolveSymbolId(db, 'nope');
+      expect('error' in r && r.error).toContain('Symbol not found: nope');
+    });
+  });
+
+  describe('findSymbolsByName', () => {
+    it('matches only exact names', () => {
+      upsertSymbol(db, testSymbol);
+      upsertSymbol(db, { ...testSymbol, id: symbolId('typescript', 'src/auth::loginHelper', 'function'), name: 'loginHelper' });
+      expect(findSymbolsByName(db, 'login')).toHaveLength(1);
     });
   });
 

@@ -88,7 +88,7 @@ describe('docrelayDiff', () => {
 
   it('returns not_found for an unknown symbol', () => {
     const result = docrelayDiff(db, 'no-such-symbol');
-    expect(result).toEqual({ found: false, reason: 'not_found', message: 'Symbol not found in database' });
+    expect(result).toEqual({ found: false, reason: 'not_found', message: 'Symbol not found: no-such-symbol (looked up by exact ID and by name)' });
   });
 
   it('returns the report with changelog entries and affected docs', () => {

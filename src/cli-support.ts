@@ -36,9 +36,15 @@ export function errMsg(e: unknown, projectRoot: string): string {
   return sanitized;
 }
 
-/** Shared extractor factory — used by ensureContext, scan, and gc.
+/**
+ * Shared extractor factory — used by ensureContext, scan, and gc.
  *  Tries Codegraph first, falls back to builtin regex extractor.
- *  Diagnostics are handled by CodegraphClient.preflight(), so we stay quiet. */
+ *  Diagnostics are handled by CodegraphClient.preflight(), so we stay quiet.
+ * @param cg — CodegraphClient
+ * @param _cfg — DocRelayConfig
+ * @param projectRoot? — string
+ * @returns {Promise<SymbolExtractor>}
+ */
 export async function createExtractor(cg: CodegraphClient, _cfg: DocRelayConfig, projectRoot?: string): Promise<SymbolExtractor> {
   const codegraphExt = new CodegraphExtractor(cg);
   if (await codegraphExt.isAvailable(projectRoot)) return codegraphExt;
