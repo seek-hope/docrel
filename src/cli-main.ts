@@ -103,7 +103,7 @@ async function ensureContext(opts?: { allowUninitialized?: boolean; infraExitCod
     db = getDb(projectRoot);
     runMigrations(db);
     codegraph = new CodegraphClient(config.codegraph?.command, projectRoot);
-    extractor = await createExtractor(codegraph, config);
+    extractor = await createExtractor(codegraph, config, projectRoot);
     _ctxReady = true;
   } catch (err: any) {
     // An initialization failure (corrupt/unopenable DB, failed migration)
@@ -756,7 +756,7 @@ program
       }
 
       // Pick extractor (shared factory with ensureContext and gc)
-      const scanExtractor = await createExtractor(codegraph, config);
+      const scanExtractor = await createExtractor(codegraph, config, projectRoot);
 
       // Scan symbols via extractor
       console.error('Scanning codebase...');
@@ -1149,7 +1149,7 @@ program
     // available; re-create and re-check here for the gc action.
     try {
       await ensureContext();
-      const gcExtractor = await createExtractor(codegraph, config);
+      const gcExtractor = await createExtractor(codegraph, config, projectRoot);
 
       console.error('Scanning codebase for GC...');
       // scanWithFallback (not raw scanProject): when the codegraph binary

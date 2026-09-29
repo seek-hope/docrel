@@ -72,7 +72,7 @@ try {
   const codegraphExtractor = new CodegraphExtractor(codegraph);
   const builtinExtractor = new BuiltinExtractor();
   // Try codegraph; fall back to builtin regex-based extraction
-  extractor = (await codegraphExtractor.isAvailable()) ? codegraphExtractor : builtinExtractor;
+  extractor = (await codegraphExtractor.isAvailable(projectRoot)) ? codegraphExtractor : builtinExtractor;
 } catch (err: any) {
   console.error('Failed to initialize DocRelay:', err.message);
   try { closeAllDbs(); } catch {}

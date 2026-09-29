@@ -83,6 +83,10 @@ const MAX_LINES = 100_000;
 
 const INDEX_DB_REL = path.join('.codegraph', 'codegraph.db');
 
+// ensureContext and the scan/gc actions each resolve an extractor per
+// invocation — without this latch the half-setup warning prints twice.
+let warnedMissingIndex = false;
+
 /** Normalize a configured code dir to an index file_path prefix ('src/').
  *  Returns null for "the whole repository" ('.', '', './'). */
 function dirPrefix(dir: string): string | null {
@@ -219,7 +223,26 @@ export class CodegraphExtractor implements SymbolExtractor {
     return out;
   }
 
-  async isAvailable(): Promise<boolean> {
+  /**
+   * Availability = the client can reach the binary AND the project has an
+   * index to enumerate. Symbol enumeration reads `.codegraph/codegraph.db`
+   * directly, so without that file every per-directory scan throws and the
+   * caller falls back to builtin anyway — skipping the MCP connect here
+   * keeps non-indexed projects fast and quiet. A `.codegraph/` directory
+   * without the db is a half-finished setup: say so; no directory at all
+   * just means this project does not use codegraph (silent builtin).
+   */
+  async isAvailable(projectRoot?: string): Promise<boolean> {
+    if (projectRoot) {
+      const indexDb = path.join(projectRoot, INDEX_DB_REL);
+      if (!fs.existsSync(indexDb)) {
+        if (!warnedMissingIndex && fs.existsSync(path.dirname(indexDb))) {
+          warnedMissingIndex = true;
+          console.warn(`DocRelay: .codegraph/ found but no index at ${INDEX_DB_REL} — run \`codegraph init\` (or \`codegraph sync\`); using the builtin extractor meanwhile`);
+        }
+        return false;
+      }
+    }
     return this.client.isAvailable();
   }
 }

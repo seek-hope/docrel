@@ -61,6 +61,16 @@ describe('errMsg', () => {
 });
 
 describe('createExtractor', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-extractor-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it('returns the codegraph extractor when available, builtin otherwise', async () => {
     const available = { isAvailable: vi.fn().mockResolvedValue(true) } as unknown as CodegraphClient;
     const ext1 = await createExtractor(available, config);
@@ -69,6 +79,37 @@ describe('createExtractor', () => {
     const unavailable = { isAvailable: vi.fn().mockResolvedValue(false) } as unknown as CodegraphClient;
     const ext2 = await createExtractor(unavailable, config);
     expect(ext2.name).toBe('builtin');
+  });
+
+  it('skips codegraph silently when the project has no .codegraph/ directory', async () => {
+    // Client claims availability (binary installed) but the project has no
+    // index — enumeration would fail per-directory, so builtin wins and the
+    // client is never even asked to connect.
+    const isAvailable = vi.fn().mockResolvedValue(true);
+    const available = { isAvailable } as unknown as CodegraphClient;
+    const ext = await createExtractor(available, config, tmpDir);
+    expect(ext.name).toBe('builtin');
+    expect(isAvailable).not.toHaveBeenCalled();
+  });
+
+  it('warns and uses builtin when .codegraph/ exists but the index db is missing', async () => {
+    fs.mkdirSync(path.join(tmpDir, '.codegraph'), { recursive: true });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const available = { isAvailable: vi.fn().mockResolvedValue(true) } as unknown as CodegraphClient;
+    const ext = await createExtractor(available, config, tmpDir);
+    expect(ext.name).toBe('builtin');
+    expect(warn.mock.calls.flat().join(' ')).toContain('codegraph init');
+    warn.mockRestore();
+  });
+
+  it('uses codegraph when the index db exists and the client is available', async () => {
+    fs.mkdirSync(path.join(tmpDir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.codegraph', 'codegraph.db'), '');
+    const isAvailable = vi.fn().mockResolvedValue(true);
+    const available = { isAvailable } as unknown as CodegraphClient;
+    const ext = await createExtractor(available, config, tmpDir);
+    expect(ext.name).toBe('codegraph');
+    expect(isAvailable).toHaveBeenCalled();
   });
 });
 

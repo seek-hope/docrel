@@ -18,6 +18,7 @@ export interface SymbolExtractor {
   /** Discover all symbols in the given directory.
    *  @param since — Unix timestamp (ms). When set, skip files with mtime <= since. */
   extract(dir: string, projectRoot: string, since?: number): Promise<ExtractedSymbol[]>;
-  /** Check if this extractor is available. */
-  isAvailable(): Promise<boolean>;
+  /** Check if this extractor is available. Extractors that depend on
+   *  per-project state (e.g. an on-disk index) receive the project root. */
+  isAvailable(projectRoot?: string): Promise<boolean>;
 }
