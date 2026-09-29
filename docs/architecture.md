@@ -91,8 +91,8 @@ doc files ───▶ doc parser ──▶ doc_sections ───┘
 
 | Surface | Entry point | Consumers |
 |---------|-------------|-----------|
-| CLI (23 commands) | `doc-relay` / `docrelay` binaries | humans, CI, shell-driven agents |
-| MCP server (16 tools) | `doc-relay mcp` (stdio) | MCP-capable AI agents |
+| CLI (26 commands) | `doc-relay` / `docrelay` binaries | humans, CI, shell-driven agents |
+| MCP server (18 tools) | `doc-relay mcp` (stdio) | MCP-capable AI agents |
 | Git hooks (4) | `.git/hooks/` | every commit/push |
 | Watch daemon | `doc-relay watch [--daemon]` | long-running local sync |
 

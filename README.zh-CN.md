@@ -33,6 +33,12 @@ DocRelay 使用 [Codegraph](https://github.com/colbymchenry/codegraph) 追踪符
 npm install -g doc-relay
 ```
 
+> **npm >= 12：** 默认会阻止 install 脚本，但 DocRelay 的 SQLite 驱动
+> （`better-sqlite3` v13）为所有主流平台提供 N-API 预编译二进制，
+> 全局安装开箱即用。在没有预编译二进制的冷门平台上需要源码构建——
+> 如果 `doc-relay` 启动时报 "native binding was not built"，请运行
+> `npm install -g doc-relay --allow-scripts=better-sqlite3`。
+
 ### 在项目中使用
 
 ```bash
@@ -53,7 +59,8 @@ doc-relay status
 | `doc-relay status` | 健康仪表盘 — 符号数、关联率、文档同步率 |
 | `doc-relay check` | 列出过期文档。`--strict` 时退出码为 1（CI 友好） |
 | `doc-relay impact <文件...>` | 展示哪些文档受代码变更影响 |
-| `doc-relay sync --symbol <id>` | CASCADE 更新某个符号关联的文档 |
+| `doc-relay sync --symbol <id>` | CASCADE 更新某个符号关联的文档（接受裸符号名） |
+| `doc-relay ack --doc <id>` / `--all` | 确认"过期但内容仍准确"的文档段落（接受 `file#anchor`） |
 | `doc-relay confirm` / `doc-relay reject` | 批准或拒绝待处理的同步建议（支持 `--all`、`--pattern`） |
 | `doc-relay link create --symbol <id> --doc <id>` | 手动创建映射 |
 | `doc-relay diff <符号id>` | 查看符号的变更历史 |
@@ -61,13 +68,15 @@ doc-relay status
 | `doc-relay scan` | 扫描代码库发现符号（`--incremental`、`--dry-run`） |
 | `doc-relay review` | 过期/待处理文档的审查队列 |
 | `doc-relay watch` | 监听代码库并在变更时重新扫描（`--daemon` 后台运行） |
-| `doc-relay health` | 8 项健康检查（配置、数据库、hooks、codegraph、新鲜度） |
+| `doc-relay health` | 13 项健康检查（配置、数据库、hooks、codegraph、新鲜度） |
 | `doc-relay export-mappings` | 导出 `.docrelay/mappings.json` 供 CodeGraph 集成 |
-| `doc-relay install-hooks` | 安装 pre-commit / post-commit / pre-push hooks |
+| `doc-relay install-hooks` | 安装 pre-commit / post-commit / pre-push / prepare-commit-msg hooks |
+| `doc-relay annotate-commit` | 向提交信息追加 DocRelay 摘要行（供 prepare-commit-msg 钩子使用） |
 | `doc-relay integrate` | 自动检测 AI Agent 并写入 DocRelay 配置 |
 | `doc-relay gc` | 回收代码库中已不存在的符号 |
 | `doc-relay backup` / `doc-relay restore` | 备份 / 恢复 DocRelay 数据库 |
-| `doc-relay config show/validate/reset` | 查看、校验或重置配置 |
+| `doc-relay reset` | 删除并重建 DocRelay 数据库（破坏性操作，`--force` 跳过确认） |
+| `doc-relay config show/validate` | 查看或校验配置 |
 | `doc-relay mcp` | 在 stdio 上启动 MCP server（供 Agent MCP 配置使用） |
 | `doc-relay update` | 通过 npm 更新 DocRelay 到最新版本 |
 
@@ -91,7 +100,7 @@ doc-relay status
 
 运行 `doc-relay integrate` 可自动写入该配置（自动检测 Claude Code、Codex、OpenCode、Oh My Pi 等）。
 
-DocRelay 提供 17 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_sync_all`、`docrelay_link`、`docrelay_confirm`、`docrelay_reject`、`docrelay_diff`、`docrelay_history`、`docrelay_scan`、`docrelay_review`、`docrelay_integrate`、`docrelay_watch`、`docrelay_watch_status`、`docrelay_refresh`、`docrelay_health`。
+DocRelay 提供 18 个 MCP 工具（与 CLI 对应）：`docrelay_status`、`docrelay_check`、`docrelay_impact`、`docrelay_sync`、`docrelay_sync_all`、`docrelay_link`、`docrelay_confirm`、`docrelay_reject`、`docrelay_ack`、`docrelay_diff`、`docrelay_history`、`docrelay_scan`、`docrelay_review`、`docrelay_integrate`、`docrelay_watch`、`docrelay_watch_status`、`docrelay_refresh`、`docrelay_health`。
 
 ### 配置（`.docrelay/config.yaml`）
 
@@ -141,7 +150,7 @@ pre-commit hook: docrelay_check --strict
 | Hook | 行为 |
 |------|------|
 | **pre-commit** | `doc-relay check --strict` — 存在过期文档则阻止提交 |
-| **post-commit** | `doc-relay impact` — 标记受影响文档为过期 |
+| **post-commit** | `doc-relay scan --incremental` + `doc-relay impact` — 增量重扫并展示本次提交影响的文档 |
 | **pre-push** | `doc-relay check --strict` — 有过期文档则阻止推送 |
 
 ## 架构
@@ -171,8 +180,8 @@ pre-commit hook: docrelay_check --strict
 | 数据库 | SQLite via `better-sqlite3` |
 | 符号后端 | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
-| Git | `simple-git` + 原生 hooks |
-| 测试 | `vitest`（239 测试，23 套件） |
+| Git | 原生 hooks（`.git/hooks` 中的 shell 脚本） |
+| 测试 | `vitest`（1,100+ 测试，95%+ 语句覆盖率，强制阈值） |
 
 ## Codegraph 集成
 
@@ -195,9 +204,9 @@ doc-relay export-mappings
 ## 文档
 
 - [快速上手](docs/getting-started.md) — 安装、初始化、日常工作流
-- [CLI 参考](docs/cli-reference.md) — 全部 25 个命令及参数
+- [CLI 参考](docs/cli-reference.md) — 全部 26 个命令及参数
 - [配置说明](docs/configuration.md) — `.docrelay/config.yaml` 配置项
-- [MCP 集成](docs/mcp-integration.md) — Agent 接入与全部 16 个工具
+- [MCP 集成](docs/mcp-integration.md) — Agent 接入与全部 18 个工具
 - [CI/CD 集成](docs/ci.md) — GitHub Actions、GitLab CI、状态徽章
 - [架构](docs/architecture.md) — 关系型同步模型
 
@@ -211,7 +220,7 @@ doc-relay export-mappings
 
 **可以自定义同步策略吗？** 可以。每种文档类型有独立策略：`auto_update`、`mark_stale`、`prompt`、`ignore`。
 
-**能用于生产环境吗？** DocRelay 处于 beta 阶段（v0.3.x）。DB 层、MCP Server、CLI、git hooks 与 watch 模式均由 239 个自动化测试覆盖，并在 CI（Node 20/22）中持续验证。持续完善中的包括超大规模性能优化与更广泛的语言生态测试。
+**能用于生产环境吗？** DocRelay 处于 beta 阶段（v0.3.x）。DB 层、MCP Server、CLI、git hooks 与 watch 模式均由 1,100+ 个自动化测试覆盖（语句覆盖率 >95%），并在 CI（Node 22/24）中持续验证。持续完善中的包括超大规模性能优化与更广泛的语言生态测试。
 
 ## 参与贡献
 
@@ -221,7 +230,7 @@ doc-relay export-mappings
 git clone https://github.com/seek-hope/docrel.git
 cd docrel
 npm install
-npm test          # 550 个测试，含覆盖率门禁
+npm test          # 完整测试套件，含覆盖率门禁
 npm run lint      # eslint（flat config）
 npm run build     # → dist/
 ```

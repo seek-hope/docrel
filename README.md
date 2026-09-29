@@ -83,11 +83,12 @@ doc-relay status
 | `doc-relay health` | 13-point health check (config, DB, hooks, codegraph, freshness) |
 | `doc-relay export-mappings` | Export `.docrelay/mappings.json` for CodeGraph integration |
 | `doc-relay install-hooks` | Install pre-commit, post-commit, pre-push, prepare-commit-msg hooks |
+| `doc-relay annotate-commit` | Append the DocRelay summary to a commit message (prepare-commit-msg hook) |
 | `doc-relay integrate` | Auto-detect your AI agent and write its DocRelay config |
 | `doc-relay gc` | Garbage-collect symbols no longer found in the codebase |
 | `doc-relay backup` / `doc-relay restore` | Back up or restore the DocRelay database |
 | `doc-relay reset` | Re-initialize the database from scratch (destructive, `--force`) |
-| `doc-relay config show/validate/reset` | Inspect, validate, or reset configuration |
+| `doc-relay config show/validate` | Inspect or validate configuration |
 | `doc-relay mcp` | Start the MCP server on stdio (used by agent MCP configs) |
 | `doc-relay update` | Update DocRelay to the latest version via npm |
 
@@ -160,8 +161,8 @@ Commit auto-annotated:
 
 | Hook | Action |
 |------|--------|
-| **pre-commit** | `doc-relay check --quick` — blocks commit if staged files have stale docs |
-| **post-commit** | `doc-relay impact` — marks affected docs as stale for next session |
+| **pre-commit** | `doc-relay check --strict` — blocks commit with stale documentation |
+| **post-commit** | `doc-relay scan --incremental` + `doc-relay impact` — re-scan, then surface docs affected by the commit |
 | **pre-push** | `doc-relay check --strict` — blocks push with stale documentation |
 
 ## Architecture
@@ -186,24 +187,30 @@ Commit auto-annotated:
 
 ```
 src/
-├── index.ts              # MCP Server entry (16 tools, stdio transport)
-├── cli.ts                # CLI entry (23 commands, commander.js)
+├── index.ts              # MCP Server entry (18 tools, stdio transport)
+├── cli.ts                # CLI entry (26 commands, commander.js)
 ├── db/                   # SQLite data layer
 │   ├── connection.ts     # Singleton connection (WAL mode, FK enabled)
-│   ├── schema.ts         # 4 tables + indexes + migrations
+│   ├── schema.ts         # 6 tables + indexes + migrations
 │   ├── symbols.ts        # CRUD for code symbols
 │   ├── docs.ts           # CRUD for documentation sections
-│   └── mappings.ts       # FK join table + JSON export
+│   ├── mappings.ts       # FK join table + JSON export
+│   ├── review-history.ts # Confirm/reject audit trail
+│   └── statements.ts     # Prepared-statement cache
 ├── codegraph/client.ts   # Codegraph MCP stdio client
-├── discovery/scanner.ts  # Auto-discover symbols from codegraph index
+├── discovery/            # Symbol & doc discovery
+│   ├── scanner.ts        # Auto-discover symbols from codegraph index
+│   ├── doc-scanner.ts    # Walk doc dirs, parse into sections
+│   ├── doc-parser.ts     # Markdown/RST/AsciiDoc/HTML section parsers
+│   └── auto-linker.ts    # Zero-annotation symbol↔doc linking
 ├── sync/                 # CASCADE sync strategies
 │   ├── engine.ts         # Orchestrator — routes by doc_type
 │   ├── inline.ts         # Docstring/JSDoc updater
 │   ├── standalone.ts     # Markdown section rewriter
 │   └── generated.ts      # Generator trigger (TypeDoc, OpenAPI)
 ├── tools/                # MCP tool handlers
-│   ├── status.ts, check.ts, impact.ts, sync.ts, link.ts, diff.ts
-├── git/hooks.ts          # pre-commit, post-commit, pre-push logic
+│   ├── status.ts, check.ts, impact.ts, ack.ts, link.ts, diff.ts, …
+├── git/hooks.ts          # pre-commit, post-commit, pre-push, prepare-commit-msg
 └── utils/                # hash.ts (SHA256 IDs), config.ts (YAML parser)
 ```
 
@@ -240,9 +247,9 @@ doc-relay export-mappings
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — install, init, the daily loop
-- [CLI reference](docs/cli-reference.md) — all 25 commands and flags
+- [CLI reference](docs/cli-reference.md) — all 26 commands and flags
 - [Configuration](docs/configuration.md) — `.docrelay/config.yaml` options
-- [MCP integration](docs/mcp-integration.md) — agent setup and all 16 tools
+- [MCP integration](docs/mcp-integration.md) — agent setup and all 18 tools
 - [CI/CD integration](docs/ci.md) — GitHub Actions, GitLab CI, status badges
 - [Architecture](docs/architecture.md) — the relational sync model
 
@@ -256,7 +263,7 @@ doc-relay export-mappings
 
 **Can I customize sync behavior?** Yes. Each doc type (inline, standalone, generated, architecture) has its own strategy in `.docrelay/config.yaml` — choose between `auto_update`, `mark_stale`, `prompt`, or `ignore`.
 
-**Is this ready for production?** DocRelay is beta-quality (v0.3.x). The DB layer, MCP server, CLI, git hooks, and watch mode are covered by an extensive automated test suite (1,100+ tests, >95% statement coverage) and run in CI on Node 20/22. Areas still maturing: performance at very large scale and broader language ecosystem testing.
+**Is this ready for production?** DocRelay is beta-quality (v0.3.x). The DB layer, MCP server, CLI, git hooks, and watch mode are covered by an extensive automated test suite (1,100+ tests, >95% statement coverage) and run in CI on Node 22/24. Areas still maturing: performance at very large scale and broader language ecosystem testing.
 
 ## Contributing
 

@@ -6,11 +6,11 @@
 
 ## Current State (v0.3.1, 2026-09)
 
-- 49 TypeScript source files, ~14,100 lines (ES2023, NodeNext, pure ESM)
-- 66 test files, **1082 tests**, coverage 95.4/88.7/95.2/96.3
+- 50 TypeScript source files, ~15,250 lines (ES2023, NodeNext, pure ESM)
+- 67 test files, **1197 tests**, coverage 95.6/88.6/95.6/96.7
   (stmts/branch/funcs/lines, ratcheting CI gate)
 - MCP server (18 tools, in-process testable via `createDocrelayServer`)
-  + CLI (28 commands, thin shim → `cli-main`)
+  + CLI (26 commands, thin shim → `cli-main`)
 - Git hooks (pre-commit, post-commit, pre-push, prepare-commit-msg)
 - 4 doc parsers (Markdown, RST, AsciiDoc, HTML)
 - 2 symbol extractors (Codegraph MCP, builtin regex fallback)
@@ -19,7 +19,7 @@
 - 4 doc types (inline, standalone, generated, architecture)
 - SQLite schema v6 (WAL, foreign keys, atomic UPSERT, review_history,
   mapping evidence confidence)
-- 44 structured error codes, 8-point health check, incremental scanning
+- 44 structured error codes, 13-point health check, incremental scanning
 - Watch daemon mode with PID file and directory-level debounce
 - npm package: 255.6 kB / 200 files, docs included, npm >= 12 ready
   (N-API prebuilds via better-sqlite3 v13 + startup binding shim)
