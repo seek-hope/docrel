@@ -101,7 +101,7 @@ server.tool(
   'Get the overall health dashboard of code-documentation synchronization',
   async () => {
     try {
-      const status = docrelayStatus(db);
+      const status = docrelayStatus(db, projectRoot);
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(status, null, 2) }],
       };

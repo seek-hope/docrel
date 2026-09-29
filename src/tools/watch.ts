@@ -136,6 +136,14 @@ export async function startWatch(
       ignoreInitial: true,
     });
 
+    /** Remove a .docrelay marker file best-effort (absent is the norm). */
+    const clearMarker = (name: string): void => {
+      try { fs.unlinkSync(path.join(projectRoot, '.docrelay', name)); } catch { /* absent */ }
+    };
+    // A new live watcher supersedes any previous crash record — otherwise
+    // `status` would keep reporting a crash that was already recovered from.
+    clearMarker('watch-crashed');
+
     /** Group watch events by the nearest watch-path parent directory for
      *  finer-grained debouncing. A change in src/auth/ and a change in
      *  src/api/ should NOT cancel each other's debounce timer. */
@@ -195,6 +203,9 @@ export async function startWatch(
             const report = await scanWithFallback(extractor, db, config, projectRoot, false /* incremental */);
             const pipeline = await runDocsPipeline(db, config, projectRoot, prevScanAt, report.scannedIds);
             console.log(`[${now}] Done: ${pipeline.autoLink.totalMatched} new mappings`);
+            // A successful scan clears the last-failure marker so `status`
+            // stops reporting a failure the watcher already recovered from.
+            clearMarker('watch-failed');
           } else {
             console.log(`[${now}] Doc change (${key}): ${rel} — re-scanning docs...`);
             // scannedIds=[] keeps pass 1 off (no symbols changed); pass 2
@@ -205,6 +216,7 @@ export async function startWatch(
             // files edited since the real scan.
             const pipeline = await runDocsPipeline(db, config, projectRoot, readLastScanAt(db), []);
             console.log(`[${now}] Done: ${pipeline.autoLink.totalMatched} new mappings`);
+            clearMarker('watch-failed');
           }
         } catch (err: any) {
           watchStatus.errorsEncountered++;
@@ -233,6 +245,11 @@ export async function startWatch(
       const now = new Date().toLocaleTimeString();
       const rel = path.relative(projectRoot, p);
       console.log(`[${now}] File removed: ${rel}`);
+
+      // Serialize with debounced scans: the unlink transaction writes the
+      // same tables a concurrent scan writes, and the design invariant is
+      // that all watch-driven writes execute strictly serially.
+      enqueueScan(async () => {
 
       // Mark linked docs as stale when a source file is deleted.
       // Without this, deleted symbols persist until the next explicit gc run
@@ -276,6 +293,8 @@ export async function startWatch(
         watchStatus.lastError = err instanceof Error ? err.message : String(err);
         console.error(`[${now}] Error processing file removal ${rel}: ${err instanceof Error ? err.message : err}`);
       }
+
+      });
     });
 
     watcher.on("error", (err: any) => {

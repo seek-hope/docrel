@@ -274,17 +274,24 @@ program
     try {
       await ensureContext();
       notifyIfOutdated().catch(() => {}); // fire-and-forget update check
-      const status = docrelayStatus(db);
+      const status = docrelayStatus(db, projectRoot);
       if (status.error) {
         console.error('Status query failed:', status.error);
         exit(1);
       }
       if (opts.format === 'markdown') {
+        const watchLines: string[] = [];
+        if (status.watch?.failed) {
+          watchLines.push(`- ⚠ Watch: last scan failed at ${status.watch.failed.at} — ${status.watch.failed.error}`);
+        }
+        if (status.watch?.crashed) {
+          watchLines.push('- ⚠ Watch: filesystem watcher crashed — re-run `doc-relay watch` to resume');
+        }
         console.log(`## DocRelay Status
 - Symbols: ${status.totalSymbols}
 - Linked: ${status.linkedSymbols} (${status.linkedPercentage}%)
 - Docs in sync: ${status.syncedDocs}/${status.totalDocs} (${status.syncPercentage}%)
-- Pending changes: ${status.pendingChanges}`);
+- Pending changes: ${status.pendingChanges}${watchLines.length > 0 ? '\n' + watchLines.join('\n') : ''}`);
       } else {
         console.log(JSON.stringify(status, null, 2));
       }

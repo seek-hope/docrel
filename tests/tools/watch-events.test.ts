@@ -79,6 +79,59 @@ describe('startWatch event handlers (mocked chokidar)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('clears a stale watch-crashed marker on startup', async () => {
+    const markerDir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(markerDir, { recursive: true });
+    const marker = path.join(markerDir, 'watch-crashed');
+    fs.writeFileSync(marker, JSON.stringify({ at: '2026-01-01T00:00:00Z' }));
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir));
+    try {
+      expect(fs.existsSync(marker)).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  it('clears the watch-failed marker after a successful scan', async () => {
+    const markerDir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(markerDir, { recursive: true });
+    const marker = path.join(markerDir, 'watch-failed');
+    fs.writeFileSync(marker, JSON.stringify({ at: '2026-01-01T00:00:00Z', error: 'transient' }));
+    fs.writeFileSync(path.join(tmpDir, 'src', 'a.ts'), 'export function alpha() { return 1; }\n');
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { debounceMs: 20 });
+    try {
+      hoisted.state.watcher!.emit('change', path.join(tmpDir, 'src', 'a.ts'));
+      await vi.waitFor(() => {
+        expect(fs.existsSync(marker)).toBe(false);
+      }, { timeout: 3000, interval: 50 });
+      expect(getWatchStatus().errorsEncountered).toBe(0);
+    } finally {
+      stop();
+    }
+  });
+
+  it('keeps the watch-failed marker when the scan keeps failing', async () => {
+    const markerDir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(markerDir, { recursive: true });
+    const marker = path.join(markerDir, 'watch-failed');
+    fs.writeFileSync(marker, JSON.stringify({ at: '2026-01-01T00:00:00Z', error: 'first' }));
+
+    const stop = await startWatch(tmpDir, db, new BuiltinExtractor(), makeConfig(tmpDir), { debounceMs: 20 });
+    try {
+      db.close(); // force every scan to fail
+      hoisted.state.watcher!.emit('change', path.join(tmpDir, 'src', 'a.ts'));
+      await vi.waitFor(() => {
+        expect(getWatchStatus().errorsEncountered).toBe(1);
+      }, { timeout: 2000, interval: 50 });
+      // Marker rewritten with the fresh failure — still present.
+      expect(fs.existsSync(marker)).toBe(true);
+    } finally {
+      stop();
+    }
+  });
+
   it('refuses to start a second daemon watcher while the pid file names a live process', async () => {
     const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
     try {

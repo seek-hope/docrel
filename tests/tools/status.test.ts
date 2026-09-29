@@ -34,6 +34,33 @@ describe('docrelayStatus', () => {
     expect(status.syncPercentage).toBe(0);
   });
 
+  it('surfaces watch failure markers when projectRoot is given', () => {
+    const dir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'watch-failed'), JSON.stringify({ at: '2026-09-29T00:00:00Z', error: 'disk full' }));
+    fs.writeFileSync(path.join(dir, 'watch-crashed'), JSON.stringify({ at: '2026-09-29T00:01:00Z', eventsProcessed: 3, errorsEncountered: 1 }));
+
+    const status = docrelayStatus(db, tmpDir);
+    expect(status.watch?.failed?.error).toBe('disk full');
+    expect(status.watch?.crashed?.eventsProcessed).toBe(3);
+  });
+
+  it('omits watch markers when none exist, when unreadable, or when no projectRoot is given', () => {
+    const clean = docrelayStatus(db, tmpDir);
+    expect(clean.watch).toBeUndefined();
+
+    const dir = path.join(tmpDir, '.docrelay');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'watch-failed'), 'not json {');
+    const broken = docrelayStatus(db, tmpDir);
+    expect(broken.watch).toBeUndefined();
+
+    fs.unlinkSync(path.join(dir, 'watch-failed'));
+    fs.writeFileSync(path.join(dir, 'watch-crashed'), JSON.stringify({ at: 'x' }));
+    const noRoot = docrelayStatus(db);
+    expect(noRoot.watch).toBeUndefined();
+  });
+
   it('reports correct counts with data', () => {
     const symId = symbolId('ts', 'login', 'function');
     const docId = docSectionId('docs/api.md', 'auth');

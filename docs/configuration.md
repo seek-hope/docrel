@@ -74,7 +74,8 @@ warning and falls back to defaults for that file.
 | `.docrelay/mappings.json` | export for CodeGraph's `doc_refs` (`export-mappings`; auto-refreshed once present) |
 | `.docrelay/backup-*.db` | database snapshots (`backup`, auto-rotated) |
 | `.docrelay/watch.pid` | watch daemon PID (`watch --daemon`) |
-| `.docrelay/watch-failed` | marker written when a watch scan fails |
+| `.docrelay/watch-failed` | marker written when a watch scan fails (cleared by the next successful scan; surfaced by `status`) |
+| `.docrelay/watch-crashed` | marker written when the filesystem watcher dies (cleared when a new watch starts; surfaced by `status`) |
 
 The database lives inside `.git/` deliberately: it is local state, never
 something to commit. Add `.docrelay/` to your `.gitignore` (DocRelay does not

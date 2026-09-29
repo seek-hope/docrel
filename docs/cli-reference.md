@@ -25,6 +25,9 @@ gemini, antigravity, kiro, oh-my-pi) and write its DocRelay configuration
 
 ### `status [--format json|markdown]`
 Health dashboard: symbol count, linked %, stale doc count, watch state.
+When watch mode has recorded a failure, status surfaces it: `watch.failed`
+(last scan failure, cleared by the next successful scan) and
+`watch.crashed` (the filesystem watcher died — restart `doc-relay watch`).
 
 ### `health [--format json|markdown]`
 13-point system check: config existence/parse/validation, DB queryability and
