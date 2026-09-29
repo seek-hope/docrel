@@ -28,6 +28,7 @@ import {
   scanWithFallback,
   isProjectInitialized as isProjectInitializedSupport,
   runDocsPipeline,
+  refreshMappingsExportIfPresent,
 } from './cli-support.js';
 
 const program = new Command();
@@ -449,6 +450,7 @@ program
         rel_type: opts.type,
       });
       console.log(JSON.stringify(result, null, 2));
+      if (result.action !== 'error') refreshMappingsExportIfPresent(db, projectRoot);
       if (result.action === 'error') exit(1);
     } catch (err: any) {
       console.error('Link failed:', errMsg(err));
@@ -488,6 +490,7 @@ program
             if (result.action === 'updated') confirmed++;
           }
         })();
+        if (confirmed > 0) refreshMappingsExportIfPresent(db, projectRoot);
         console.log(JSON.stringify({ confirmed, total: unreviewed.length }, null, 2));
         return;
       }
@@ -495,6 +498,7 @@ program
       if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all)'); exit(1); }
       const result = docrelayConfirm(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
+      if (result.action !== 'error') refreshMappingsExportIfPresent(db, projectRoot);
       if (result.action === 'error') exit(1);
     } catch (err: any) {
       console.error('Confirm failed:', errMsg(err));
@@ -534,6 +538,7 @@ program
             if (result.action === 'updated') rejected++;
           }
         })();
+        if (rejected > 0) refreshMappingsExportIfPresent(db, projectRoot);
         console.log(JSON.stringify({ rejected, total: unreviewed.length }, null, 2));
         return;
       }
@@ -560,6 +565,7 @@ program
             if (result.action === 'updated') rejected++;
           }
         })();
+        if (rejected > 0) refreshMappingsExportIfPresent(db, projectRoot);
         console.log(JSON.stringify({ rejected, total: matched.length, pattern: opts.pattern,
           names: matched.map(m => m.name) }, null, 2));
         return;
@@ -569,6 +575,7 @@ program
       if (!opts.doc) { console.error('Error: --doc <id> is required (or use --all/--pattern)'); exit(1); }
       const result = docrelayReject(db, opts.symbol, opts.doc, opts.type);
       console.log(JSON.stringify(result, null, 2));
+      if (result.action !== 'error') refreshMappingsExportIfPresent(db, projectRoot);
       if (result.action === 'error') exit(1);
     } catch (err: any) {
       console.error('Reject failed:', errMsg(err));

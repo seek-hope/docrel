@@ -71,7 +71,7 @@ warning and falls back to defaults for that file.
 |------|----------|
 | `.git/docrelay.db` | the SQLite database (WAL mode) — delete with `doc-relay reset` |
 | `.docrelay/config.yaml` | your configuration |
-| `.docrelay/mappings.json` | export for CodeGraph's `doc_refs` (`export-mappings`) |
+| `.docrelay/mappings.json` | export for CodeGraph's `doc_refs` (`export-mappings`; auto-refreshed once present) |
 | `.docrelay/backup-*.db` | database snapshots (`backup`, auto-rotated) |
 | `.docrelay/watch.pid` | watch daemon PID (`watch --daemon`) |
 | `.docrelay/watch-failed` | marker written when a watch scan fails |

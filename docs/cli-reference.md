@@ -127,6 +127,9 @@ prepare-commit-msg hook).
 
 ### `export-mappings`
 Write `.docrelay/mappings.json` for CodeGraph's `doc_refs` integration.
+Once the file exists it is kept fresh automatically: every `scan` (and
+watch-mode scan) plus `link` / `confirm` / `reject` mutations rewrite it,
+so the consumer never reads a silently stale snapshot.
 
 ## Maintenance
 

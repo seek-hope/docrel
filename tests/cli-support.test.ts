@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { errMsg, createExtractor, scanWithFallback, isProjectInitialized, runDocsPipeline } from '../src/cli-support.js';
+import { errMsg, createExtractor, scanWithFallback, isProjectInitialized, runDocsPipeline, refreshMappingsExportIfPresent } from '../src/cli-support.js';
 import { getDb, closeAllDbs } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/schema.js';
 import { upsertSymbol } from '../src/db/symbols.js';
 import { upsertDocSection, getDocSection } from '../src/db/docs.js';
+import { createMapping } from '../src/db/mappings.js';
 import { symbolId, docSectionId } from '../src/utils/hash.js';
 import { BuiltinExtractor } from '../src/extractors/builtin.js';
 import type { SymbolExtractor } from '../src/extractors/interface.js';
@@ -471,4 +472,63 @@ describe('runDocsPipeline', () => {
     expect(mappingCount()).toBe(0);
   });
 
+});
+
+describe('refreshMappingsExportIfPresent', () => {
+  let tmpDir: string;
+  let db: ReturnType<typeof getDb>;
+  const exportPath = () => path.join(tmpDir, '.docrelay', 'mappings.json');
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'docrelay-mapexport-'));
+    fs.mkdirSync(path.join(tmpDir, '.git'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, '.docrelay'), { recursive: true });
+    db = getDb(tmpDir);
+    runMigrations(db);
+  });
+
+  afterEach(() => {
+    closeAllDbs();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('does nothing when the export file does not exist (integration not in use)', () => {
+    refreshMappingsExportIfPresent(db, tmpDir);
+    expect(fs.existsSync(exportPath())).toBe(false);
+  });
+
+  it('rewrites an existing export with the current mappings', () => {
+    fs.writeFileSync(exportPath(), '[]', 'utf-8');
+    const sid = symbolId('typescript', 'src/a.ts::alpha', 'function');
+    const did = docSectionId('docs/g.md', 'alpha');
+    upsertSymbol(db, { id: sid, name: 'alpha', kind: 'function' });
+    upsertDocSection(db, { id: did, file: 'docs/g.md', anchor: 'alpha', doc_type: 'standalone' });
+    createMapping(db, { symbol_id: sid, doc_id: did, rel_type: 'describes' });
+
+    refreshMappingsExportIfPresent(db, tmpDir);
+    const rows = JSON.parse(fs.readFileSync(exportPath(), 'utf-8')) as Array<{ symbol_name: string; doc_file: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ symbol_name: 'alpha', doc_file: 'docs/g.md' });
+  });
+
+  it('warns (never throws) when the export cannot be rewritten', () => {
+    // A directory at the export path makes writeFileSync fail with EISDIR.
+    fs.mkdirSync(exportPath());
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(() => refreshMappingsExportIfPresent(db, tmpDir)).not.toThrow();
+    expect(warn.mock.calls.flat().join(' ')).toContain('could not refresh');
+    warn.mockRestore();
+  });
+
+  it('runDocsPipeline refreshes the export after linking', async () => {
+    fs.mkdirSync(path.join(tmpDir, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, 'docs', 'guide.md'), '# G\n\nThe `alpha()` fn.\n', 'utf-8');
+    fs.writeFileSync(exportPath(), '[]', 'utf-8');
+    const sid = symbolId('typescript', 'src/a.ts::alpha', 'function');
+    upsertSymbol(db, { id: sid, name: 'alpha', kind: 'function' });
+
+    await runDocsPipeline(db, config, tmpDir, undefined, [sid]);
+    const rows = JSON.parse(fs.readFileSync(exportPath(), 'utf-8')) as unknown[];
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+  });
 });

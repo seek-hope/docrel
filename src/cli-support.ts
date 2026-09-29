@@ -16,6 +16,7 @@ import { scanDocs } from './discovery/doc-scanner.js';
 import { autoLink, ingestDocSections } from './discovery/auto-linker.js';
 import { pruneVanishedDocSections } from './db/docs.js';
 import { listSymbols } from './db/symbols.js';
+import { exportMappingsJson } from './db/mappings.js';
 
 /** Safe error message: handles null, undefined, string, and non-Error throws.
  *  Sanitizes absolute filesystem paths to prevent information disclosure. */
@@ -117,6 +118,24 @@ export interface DocsPipelineReport {
 }
 
 /**
+ * Keep `.docrelay/mappings.json` (CodeGraph's `doc_refs` input) in step with
+ * the database — but only once the integration is actually in use. The file
+ * existing at all is the opt-in signal: `export-mappings` creates it, and
+ * from then on every scan and link-family mutation rewrites it, so the
+ * consumer never reads a silently stale snapshot. Best-effort: a failed
+ * refresh warns and never breaks the scan it rode in on.
+ */
+export function refreshMappingsExportIfPresent(cfgDb: Database.Database, cfgRoot: string): void {
+  const outPath = path.join(cfgRoot, '.docrelay', 'mappings.json');
+  if (!fs.existsSync(outPath)) return;
+  try {
+    fs.writeFileSync(outPath, JSON.stringify(exportMappingsJson(cfgDb), null, 2), 'utf-8');
+  } catch (err) {
+    console.warn(`DocRelay: could not refresh .docrelay/mappings.json — ${errMsg(err, cfgRoot)}`);
+  }
+}
+
+/**
  * Documentation half of a scan: parse doc dirs, ingest sections, and
  * auto-link symbol↔doc mappings. Shared by `init` (full run) and `scan`
  * (delta-filtered on --incremental) so both entry points produce identical
@@ -211,6 +230,8 @@ export async function runDocsPipeline(
   if (changedSections.length > 0 && allSymbols.length > 0) {
     mergeLinkResult(autoLink(db, allSymbols, changedSections));
   }
+
+  refreshMappingsExportIfPresent(db, projectRoot);
 
   return {
     docs: {

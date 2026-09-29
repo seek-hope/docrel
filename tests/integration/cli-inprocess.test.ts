@@ -278,6 +278,18 @@ describe('CLI in-process: export / gc / config', () => {
     expect(exported).toHaveLength(1);
   });
 
+  it('link create keeps an existing mappings export fresh', async () => {
+    seedProject();
+    seedDb();
+    expect(await runCli(['export-mappings'])).toBe(0);
+    let exported = JSON.parse(fs.readFileSync(path.join(tmpDir, '.docrelay', 'mappings.json'), 'utf-8')) as unknown[];
+    expect(exported).toHaveLength(0);
+
+    expect(await runCli(['link', 'create', '--symbol', symId, '--doc', docId])).toBe(0);
+    exported = JSON.parse(fs.readFileSync(path.join(tmpDir, '.docrelay', 'mappings.json'), 'utf-8')) as unknown[];
+    expect(exported).toHaveLength(1);
+  });
+
   it('runs gc against the seeded project', async () => {
     seedProject();
     seedDb();
