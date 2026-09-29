@@ -71,7 +71,8 @@ doc-relay status
 | `doc-relay status` | Health dashboard — symbol count, doc sync %, stale docs |
 | `doc-relay check` | List stale documentation. `--strict` exits code 1 for CI |
 | `doc-relay impact <files...>` | Show which docs are affected by changed files |
-| `doc-relay sync --symbol <id>` | CASCADE-update docs linked to a symbol |
+| `doc-relay sync --symbol <id>` | CASCADE-update docs linked to a symbol (accepts a bare name) |
+| `doc-relay ack --doc <id>` / `--all` | Acknowledge stale-but-accurate doc sections (accepts `file#anchor`) |
 | `doc-relay confirm` / `doc-relay reject` | Approve or reject pending sync suggestions (supports `--all`, `--pattern`) |
 | `doc-relay link create --symbol <id> --doc <id>` | Create a manual mapping |
 | `doc-relay diff <symbol_id>` | View change history for a symbol |
@@ -81,10 +82,11 @@ doc-relay status
 | `doc-relay watch` | Watch the codebase and re-scan on change (`--daemon` for background) |
 | `doc-relay health` | 13-point health check (config, DB, hooks, codegraph, freshness) |
 | `doc-relay export-mappings` | Export `.docrelay/mappings.json` for CodeGraph integration |
-| `doc-relay install-hooks` | Install pre-commit, post-commit, pre-push hooks |
+| `doc-relay install-hooks` | Install pre-commit, post-commit, pre-push, prepare-commit-msg hooks |
 | `doc-relay integrate` | Auto-detect your AI agent and write its DocRelay config |
 | `doc-relay gc` | Garbage-collect symbols no longer found in the codebase |
 | `doc-relay backup` / `doc-relay restore` | Back up or restore the DocRelay database |
+| `doc-relay reset` | Re-initialize the database from scratch (destructive, `--force`) |
 | `doc-relay config show/validate/reset` | Inspect, validate, or reset configuration |
 | `doc-relay mcp` | Start the MCP server on stdio (used by agent MCP configs) |
 | `doc-relay update` | Update DocRelay to the latest version via npm |
@@ -109,7 +111,7 @@ Add to your agent's MCP configuration:
 
 Running `doc-relay integrate` writes this configuration for you (Claude Code, Codex, OpenCode, Oh My Pi, and others are auto-detected).
 
-DocRelay exposes 17 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_sync_all`, `docrelay_link`, `docrelay_confirm`, `docrelay_reject`, `docrelay_diff`, `docrelay_history`, `docrelay_scan`, `docrelay_review`, `docrelay_integrate`, `docrelay_watch`, `docrelay_watch_status`, `docrelay_refresh`, `docrelay_health`.
+DocRelay exposes 18 MCP tools mirroring the CLI: `docrelay_status`, `docrelay_check`, `docrelay_impact`, `docrelay_sync`, `docrelay_sync_all`, `docrelay_link`, `docrelay_confirm`, `docrelay_reject`, `docrelay_ack`, `docrelay_diff`, `docrelay_history`, `docrelay_scan`, `docrelay_review`, `docrelay_integrate`, `docrelay_watch`, `docrelay_watch_status`, `docrelay_refresh`, `docrelay_health`.
 
 ### Configuration (`.docrelay/config.yaml`)
 
@@ -215,7 +217,7 @@ src/
 | Symbol Backend | Codegraph MCP Server (`colbymchenry/codegraph`) |
 | CLI | `commander` |
 | Git | native hooks (shell scripts in `.git/hooks`) |
-| Tests | `vitest` (1009 tests, 63 files, 95%+ line coverage) |
+| Tests | `vitest` (1,100+ tests, 95%+ statement coverage, enforced thresholds) |
 
 ## Codegraph Integration
 
@@ -254,7 +256,7 @@ doc-relay export-mappings
 
 **Can I customize sync behavior?** Yes. Each doc type (inline, standalone, generated, architecture) has its own strategy in `.docrelay/config.yaml` — choose between `auto_update`, `mark_stale`, `prompt`, or `ignore`.
 
-**Is this ready for production?** DocRelay is beta-quality (v0.3.x). The DB layer, MCP server, CLI, git hooks, and watch mode are covered by 239 automated tests and run in CI on Node 20/22. Areas still maturing: performance at very large scale and broader language ecosystem testing.
+**Is this ready for production?** DocRelay is beta-quality (v0.3.x). The DB layer, MCP server, CLI, git hooks, and watch mode are covered by an extensive automated test suite (1,100+ tests, >95% statement coverage) and run in CI on Node 20/22. Areas still maturing: performance at very large scale and broader language ecosystem testing.
 
 ## Contributing
 
@@ -264,7 +266,7 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and [UPGRADE.md](UPGRADE.md
 git clone https://github.com/seek-hope/docrel.git
 cd docrel
 npm install
-npm test          # 550 tests with coverage gates
+npm test          # full suite with coverage gates
 npm run lint      # eslint (flat config)
 npm run build     # → dist/
 ```

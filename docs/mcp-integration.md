@@ -69,7 +69,7 @@ Notes:
   missing (rather than silently creating a database in a random directory).
 - Set `DOCRELAY_DEBUG=1` for stack traces in server logs.
 
-## Available tools (17)
+## Available tools (18)
 
 | Tool | Purpose |
 |------|---------|
